@@ -39,13 +39,15 @@ class HiddenMarkovModel(object):
     @property
     def untrained_hmm(self):
         if any(self.data.is_labeled):
+            print('generating supervised hmm')
             hmm_out = hmm.GaussianHMM(n_components=self.nb_states, covariance_type='diag', init_params='')
             (hmm_out.startprob_,
              hmm_out.transmat_,
              hmm_out.means_,
              hmm_out.covars_) = self.get_supervised_params()
         else:
-            hmm_out = hmm.GaussianHMM(n_components=self.nb_states, covariance_type='diag')
+            print('generating unsupervised hmm')
+            hmm_out = hmm.GaussianHMM(n_components=self.nb_states, covariance_type='diag', init_params='stmc')
         return hmm_out
 
     def decode(self, X, lengths=None, algorithm=None):
@@ -72,18 +74,24 @@ class HiddenMarkovModel(object):
 
 
     def train(self):
+        print('construct training matrix')
         train_mat, train_seq_lengths = self.construct_matrix(np.invert(self.data.is_labeled))
+        print('generate new untrained')
         hmm_obj = self.untrained_hmm
         with warnings.catch_warnings():  # catches deprecation warning sklearn: log_multivariate_normal_density
             warnings.filterwarnings("ignore", category=DeprecationWarning)
             try:
+                print('fit new hmm')
                 hmm_obj.fit(train_mat, train_seq_lengths)
             except:
                 print(str(hmm_obj.n_components))
                 print(str(hmm_obj.startprob_))
         self.trained_hmm = hmm_obj
 
-        # update predictions todo: move into separate method some day(?)
+        # update predictions
+        self.predict()
+
+    def predict(self):
         logprob, pred = self.decode(self.data_mat, self.seq_lengths)
         pred_list = np.split(pred, np.cumsum(self.seq_lengths)[:-1])
         self.data.prediction = pred_list
@@ -106,19 +114,47 @@ class HiddenMarkovModel(object):
         for dat_file in dat_files:
             try:
                 fc = np.loadtxt(dat_file)
-                i_don = fc[:, 1]
-                i_acc = fc[:, 2]
-                i_sum = np.sum((i_don, i_acc), axis=0)
-                i_sum = i_sum / i_sum.max()
-                i_fret = np.divide(i_acc, np.sum((i_don, i_acc), axis=0))
-                df_out.at[dat_file, 'i_don'] = i_don
-                df_out.at[dat_file, 'i_acc'] = i_acc
-                df_out.at[dat_file, 'i_sum'] = i_sum
-                df_out.at[dat_file, 'i_fret'] = i_fret
+                fc_out = self.read_line(fc)
+                df_out.at[dat_file, 'i_don'] = fc_out[0]
+                df_out.at[dat_file, 'i_acc'] = fc_out[1]
+                df_out.at[dat_file, 'i_sum'] = fc_out[2]
+                df_out.at[dat_file, 'i_fret'] = fc_out[3]
             except:
                 print('File {} could not be read, skipping'.format(dat_file))
                 df_out.drop([dat_file], inplace=True)
         self._data = df_out
+        self.data_mat, self.seq_lengths = self.construct_matrix()
+
+    def read_line(self, fc):
+        i_don = fc[:, 1]
+        i_acc = fc[:, 2]
+        i_sum = np.sum((i_don, i_acc), axis=0)
+        i_sum = i_sum / i_sum.max()
+        i_fret = np.divide(i_acc, np.sum((i_don, i_acc), axis=0))
+        return i_don, i_acc, i_sum, i_fret
+
+    def add_data_tuple(self, fn, data):
+        nb_files = len(fn)
+        df_out = pd.DataFrame({
+            'i_don': [np.array([], dtype=np.int64)] * nb_files,
+            'i_acc': [np.array([], dtype=np.int64)] * nb_files,
+            'i_sum': [np.array([], dtype=np.float64)] * nb_files,
+            'i_fret': [np.array([], dtype=np.float64)] * nb_files,
+            'is_labeled': [False] * nb_files,
+            'labels': [np.array([], dtype=np.int64)] * nb_files,
+            'prediction': [np.array([], dtype=np.int64)] * nb_files,
+            'logprob': [np.array([], dtype=np.float64)] * nb_files},
+            index=fn)
+        for f, d in zip (fn, data):
+            rl = self.read_line(data)
+            df_out.at[f,'i_don'] = rl[0]
+            df_out.at[f, 'i_acc'] = rl[1]
+            df_out.at[f, 'i_sum'] = rl[2]
+            df_out.at[f, 'i_fret'] = rl[3]
+        if len(self._data) == 0:
+            self._data = df_out
+        else:
+            self._data = pd.concat((self._data, df_out))
         self.data_mat, self.seq_lengths = self.construct_matrix()
 
     def get_supervised_params(self):
@@ -126,6 +162,9 @@ class HiddenMarkovModel(object):
         Extract stat probs, means, covars and transitions from lists of numpy vectors
         containing feature values and labels
         """
+        w1 = 0.2
+        w2 = 1 - w1
+
         feature_list = list()
         for feature_name in self.feature_list:
             feature_vec = self.data.loc[self.data.is_labeled, feature_name]
@@ -177,9 +216,19 @@ class HiddenMarkovModel(object):
                 total_transitions[tra[0]] = transition_dict[tra]
         for tra in transition_dict:
             transmat[tra[0], tra[1]] = transition_dict[tra] / total_transitions[tra[0]]
+
+        # weight influence
+        # if self.trained_hmm is not None:
+        #     start_probs = self.trained_hmm.startprob_ * w2 + start_probs * w1
+        #     means = self.trained_hmm.means_ * w2 + means * w1
+        #     covars = self.trained_hmm.covars_ * w2 + covars * w1
+        #     transmat = self.trained_hmm.transmat_ * w2 + transmat * w1
+
         return start_probs, transmat, means, covars
 
     def construct_matrix(self, bool_idx=None):
+        if self.data.size == 0:
+            return np.array([]), [0]
         if bool_idx is None:
             bool_idx = np.repeat(True, self.data.shape[0])
         data_subset = self.data.loc[bool_idx, :]
