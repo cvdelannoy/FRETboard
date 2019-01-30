@@ -1,36 +1,19 @@
 import numpy as np
 from cached_property import cached_property
 import itertools
-import os
-import pathlib
-import pickle
 import pandas as pd
-from bokeh.plotting import figure, output_file, save
-from bokeh.models import ColumnDataSource
+from bokeh.plotting import figure
+from bokeh.models import ColumnDataSource, PreText
+from bokeh.models.widgets import DataTable, TableColumn
+from bokeh.layouts import column, row
+from bokeh.embed import file_html
+from bokeh.resources import CDN
+
 
 class FretReport(object):
     def __init__(self, gui_obj):
         self.gui_obj = gui_obj
-        self.save_path = self.gui_obj.save_path.value
         self.hmm_obj = self.gui_obj.hmm_obj
-
-        self.draw_Efret_duration_plot()
-        self.transition_density_plot()
-        self.save_dats()
-        self.save_hmm()
-
-    @property
-    def save_path(self):
-        return self._save_path
-
-    @save_path.setter
-    def save_path(self, sp):
-        pathlib.Path(sp).mkdir(parents=True, exist_ok=True)
-        if sp[-1] != '/':
-            sp += '/'
-        pathlib.Path(sp+'dat_files/').mkdir(exist_ok=True)
-        pathlib.Path(sp + 'plots/').mkdir(exist_ok=True)
-        self._save_path = sp
 
     @cached_property
     def out_labels(self):
@@ -44,7 +27,6 @@ class FretReport(object):
                               index=self.hmm_obj.data.index)
         return seq_df.apply(lambda x: self.condense_sequence(x), axis=1)
 
-
     @cached_property
     def event_df(self):
         seq_mat = self.condensed_seq_df.values
@@ -55,7 +37,6 @@ class FretReport(object):
 
     @cached_property
     def transition_df(self):
-        cdf = self.condensed_seq_df
         before = []
         after = []
         for r in self.condensed_seq_df:
@@ -76,20 +57,13 @@ class FretReport(object):
                 seq_condensed.append([s, 1, i])
         return seq_condensed
 
-    def save_dats(self):
-        dat_path = self.save_path + 'dat_files/'
-        for idx in self.hmm_obj.data.index:
-            fc = np.loadtxt(idx)
-            fc = np.hstack((fc, np.expand_dims(self.out_labels.loc[idx], axis=1)))
-            dat_fn = dat_path + os.path.basename(idx)
-            np.savetxt(dat_fn, fc, fmt='%s')
-
-    def save_hmm(self):
-        hmm_fn = self.save_path + 'hmm.pkl'
-        if os.path.isfile(hmm_fn):
-            os.remove(hmm_fn)
-        with open(hmm_fn, 'wb') as fh:
-            pickle.dump(self.hmm_obj, fh, pickle.HIGHEST_PROTOCOL)
+    def construct_html_report(self):
+        ed_scatter = self.draw_Efret_duration_plot()
+        tdp_hex = self.draw_transition_density_plot()
+        hmm_table = self.make_hmm_param_table()
+        # page = column(row(ed_scatter, tdp_hex), hmm_table)
+        page = column(hmm_table, row(ed_scatter, tdp_hex))
+        return file_html(page, CDN, 'FRET report')
 
     # plotting functions
     def draw_Efret_duration_plot(self):
@@ -101,25 +75,43 @@ class FretReport(object):
         ed_scatter.yaxis.axis_label = 'FRET intensity'
         ed_scatter.scatter(x='duration', y='i_fret', color={'field': 'state', 'transform': self.gui_obj.col_mapper},
                            source=cds)
-        output_file(self.save_path+'plots/efret_duration_scatter.html')
-        save(ed_scatter)
+        return ed_scatter
 
-    def transition_density_plot(self):
+    def draw_transition_density_plot(self):
         # todo: add states grid
-        cds = ColumnDataSource(ColumnDataSource.from_df(self.transition_df))
-        tdp_hex = figure(plot_width=500, plot_height=500, #x_range=[0, 1], y_range=[0, 1],
+        tdp_hex = figure(plot_width=500, plot_height=500,
                          background_fill_color='#440154', title='Transition density plot')
         tdp_hex.grid.visible = False
         tdp_hex.xaxis.axis_label = 'I FRET before transition'
         tdp_hex.yaxis.axis_label = 'I FRET after transition'
-        # tdp_hex.hexbin(x='i_fret_before', y='i_fret_after', size=0.01, source=cds) # note: hexbin doesn't recongize source?!
         tdp_hex.hexbin(x=self.transition_df['i_fret_before'], y=self.transition_df['i_fret_after'], size=0.01)
-        output_file(self.save_path + 'plots/transition_density_plot.html')
-        save(tdp_hex)
+        return tdp_hex
 
-    # def hmm_params(self):
-    #     self.hmm_obj
+    def make_hmm_param_table(self):
 
-    # todo: accuracy/posterior probability estimates: hist + text
-    # todo: gauss curves per model
-    # todo: all hmm params: per-state mean/stdev table + transition matrix + P_start
+        state_name_list = ['State ' + str(sn + 1) for sn in range(self.hmm_obj.nb_states)]
+
+        # emisisons table
+        columns = [TableColumn(field='state', title='state')]
+        cds_dict = {'state': state_name_list}
+        for fi, feat in enumerate(self.hmm_obj.feature_list):
+            columns.append(TableColumn(field=str(feat) + ' mu', title=str(feat) + ' mu'))
+            columns.append(TableColumn(field=str(feat) + ' sd', title=str(feat) + ' sd'))
+            cds_dict[str(feat) + ' mu'] = self.hmm_obj.trained_hmm.means_[:, fi]
+            cds_dict[str(feat) + ' sd'] = self.hmm_obj.trained_hmm.covars_[:, fi, fi]
+        em_data_table = DataTable(source=ColumnDataSource(cds_dict), columns=columns)
+        em_obj = column(PreText(text='Emissions probabilities'), em_data_table)
+
+        # transition matrix
+        tm = self.hmm_obj.trained_hmm.transmat_
+        tm_columns = [TableColumn(field='state', title='')]
+        tm_dict = {'state': state_name_list}
+        for si, sn in enumerate(state_name_list):
+            tm_columns.append(TableColumn(field=sn, title=''))
+            tm_dict[sn] = tm[:,si].tolist()
+        tm_table = DataTable(source=ColumnDataSource(tm_dict), columns=tm_columns)
+        tm_obj = column(PreText(text='Transition table'), tm_table)
+        return column(em_obj, tm_obj)
+        # todo: accuracy/posterior probability estimates: hist + text
+        # todo: gauss curves per model
+        # todo: all hmm params: per-state mean/stdev table + transition matrix + P_start
