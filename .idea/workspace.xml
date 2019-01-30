@@ -2,17 +2,8 @@
 <project version="4">
   <component name="ChangeListManager">
     <list default="true" id="68792b69-d3fc-4861-a7f9-9ae12bddddb5" name="Default" comment="first commit">
-      <change beforePath="$PROJECT_DIR$/FretReport.py" beforeDir="false" afterPath="$PROJECT_DIR$/FretReport.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Gui.py" beforeDir="false" afterPath="$PROJECT_DIR$/Gui.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/GuiBokeh.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/GuiServer.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/Gui_old.py" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/fret_finder.py" beforeDir="false" afterPath="$PROJECT_DIR$/fret_finder.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/fret_finder_gui_sandbox.ipynb" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/holoviews_test.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/start_bokehGui.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/startffServer2.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/test_gui.py" beforeDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
@@ -75,7 +66,7 @@
           <entry key="conf" value="240" />
           <entry key="dummy" value="21" />
           <entry key="html" value="12" />
-          <entry key="py" value="37607" />
+          <entry key="py" value="37620" />
           <entry key="txt" value="41" />
         </counts>
       </usages-collector>
@@ -83,7 +74,7 @@
         <counts>
           <entry key="HTML" value="12" />
           <entry key="PLAIN_TEXT" value="302" />
-          <entry key="Python" value="43178" />
+          <entry key="Python" value="43191" />
         </counts>
       </usages-collector>
     </session>
@@ -111,11 +102,11 @@
           </provider>
         </entry>
       </file>
-      <file pinned="false" current-in-tab="false">
+      <file pinned="false" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/Gui.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="210">
-              <caret line="140" column="36" lean-forward="true" selection-start-line="140" selection-start-column="36" selection-end-line="140" selection-end-column="36" />
+            <state relative-caret-position="470">
+              <caret line="284" column="18" lean-forward="true" selection-start-line="284" selection-start-column="18" selection-end-line="284" selection-end-column="18" />
               <folding>
                 <element signature="e#1#19#0" expanded="true" />
               </folding>
@@ -123,11 +114,11 @@
           </provider>
         </entry>
       </file>
-      <file pinned="false" current-in-tab="true">
+      <file pinned="false" current-in-tab="false">
         <entry file="file://$PROJECT_DIR$/fret_finder.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="300">
-              <caret line="20" column="19" lean-forward="true" selection-start-line="20" selection-start-column="19" selection-end-line="20" selection-end-column="19" />
+            <state relative-caret-position="315">
+              <caret line="21" selection-start-line="21" selection-end-line="21" />
               <folding>
                 <element signature="e#0#15#0" expanded="true" />
               </folding>
@@ -138,7 +129,7 @@
       <file pinned="false" current-in-tab="false">
         <entry file="file://$PROJECT_DIR$/FretReport.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="1755">
+            <state relative-caret-position="900">
               <caret line="117" lean-forward="true" selection-start-line="117" selection-end-line="117" />
               <folding>
                 <element signature="e#0#18#0" expanded="true" />
@@ -239,8 +230,8 @@
         <option value="$PROJECT_DIR$/FretReport.py" />
         <option value="$PROJECT_DIR$/main.py" />
         <option value="$PROJECT_DIR$/FretReportServer.py" />
-        <option value="$PROJECT_DIR$/Gui.py" />
         <option value="$PROJECT_DIR$/fret_finder.py" />
+        <option value="$PROJECT_DIR$/Gui.py" />
       </list>
     </option>
   </component>
@@ -531,6 +522,7 @@
   </component>
   <component name="ToolWindowManager">
     <frame x="0" y="-2" width="1920" height="1202" extended-state="6" />
+    <editor active="true" />
     <layout>
       <window_info active="true" content_ui="combo" id="Project" order="0" visible="true" weight="0.24599786" />
       <window_info id="Structure" order="1" weight="0.25" />
@@ -922,7 +914,7 @@
     </entry>
     <entry file="file://$PROJECT_DIR$/FretReport.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="1755">
+        <state relative-caret-position="900">
           <caret line="117" lean-forward="true" selection-start-line="117" selection-end-line="117" />
           <folding>
             <element signature="e#0#18#0" expanded="true" />
@@ -940,6 +932,16 @@
         </state>
       </provider>
     </entry>
+    <entry file="file://$PROJECT_DIR$/fret_finder.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="315">
+          <caret line="21" selection-start-line="21" selection-end-line="21" />
+          <folding>
+            <element signature="e#0#15#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
     <entry file="file://$PROJECT_DIR$/templates/index.html">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="90">
@@ -949,20 +951,10 @@
     </entry>
     <entry file="file://$PROJECT_DIR$/Gui.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="210">
-          <caret line="140" column="36" lean-forward="true" selection-start-line="140" selection-start-column="36" selection-end-line="140" selection-end-column="36" />
+        <state relative-caret-position="470">
+          <caret line="284" column="18" lean-forward="true" selection-start-line="284" selection-start-column="18" selection-end-line="284" selection-end-column="18" />
           <folding>
             <element signature="e#1#19#0" expanded="true" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/fret_finder.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="300">
-          <caret line="20" column="19" lean-forward="true" selection-start-line="20" selection-start-column="19" selection-end-line="20" selection-end-column="19" />
-          <folding>
-            <element signature="e#0#15#0" expanded="true" />
           </folding>
         </state>
       </provider>

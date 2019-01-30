@@ -19,7 +19,7 @@ rect_opts = dict(width=1.01, alpha=1, line_alpha=0)
 white_blue_colors = ['#f7fbff', '#deebf7', '#c6dbef', '#9ecae1', '#6baed6', '#4292c6', '#2171b5', '#084594']
 pastel_colors = ["#75968f", "#a5bab7", "#c9d9d3", "#e2e2e2", "#dfccce", "#ddb7b1", "#cc7878", "#933b41", "#550b1d"]
 # col_mapper = LinearColorMapper(palette=white_blue_colors, low=0, high=1)
-diverging_colors = ['#d53e4f','#f46d43','#fdae61','#fee08b','#e6f598','#abdda4','#66c2a5','#3288bd']
+diverging_colors = ['#d53e4f', '#f46d43', '#fdae61', '#fee08b', '#e6f598', '#abdda4', '#66c2a5', '#3288bd']
 colors = white_blue_colors
 
 upload_impl = """
@@ -144,13 +144,14 @@ if (navigator.msSaveBlob) {
 
 param_state_dict = {18: 2, 30: 3, 44: 4, 60: 5, 78: 6, 98: 7}
 
+
 class Gui(object):
     def __init__(self, hmm_obj):
         self.hmm_obj = hmm_obj
         # self.example_list = hmm_obj.data.index
         self.cur_example_idx = None
 
-        #widgets
+        # widgets
         self.example_select = Select(title='current_example', value='None', options=['None'])
         self.num_states_slider = Slider(title='Number of states', value=self.hmm_obj.nb_states, start=2, end=6, step=1)
         self.sel_state_slider = Slider(title='change selection to state', value=1, start=1,
@@ -166,7 +167,7 @@ class Gui(object):
                                                  rect_height=[], rect_mid=[],
                                                  labels=[], labels_pct=[]))
         ahb = np.arange(start=0, stop=100, step=5)
-        self.new_source = ColumnDataSource({'file_contents':[], 'file_name':[]})
+        self.new_source = ColumnDataSource({'file_contents': [], 'file_name': []})
         self.accuracy_source = ColumnDataSource(data=dict(lb=ahb[:-1], rb=ahb[1:], accuracy_counts=np.repeat(0, 19)))
         self.logprob_source = ColumnDataSource(data=dict(lb=ahb[:-1], rb=ahb[1:],
                                                          accuracy_counts=np.repeat(0, 19), logprob_counts=np.repeat(0, 19)))
@@ -181,10 +182,6 @@ class Gui(object):
     @property
     def nb_examples(self):
         return self.hmm_obj.data.shape[0]
-
-    # @property
-    # def nb_events_choices(self):
-    #     return list(range(self.hmm_obj.nb_states))
 
     @property
     def curve_colors(self):
@@ -236,7 +233,6 @@ class Gui(object):
         startprob = self.hmm_obj.trained_hmm.startprob_.reshape(-1, 1).squeeze()
         params = np.concatenate((tm_array, means, covars, startprob))
         self.hmm_source.data = dict(params=params.tolist())
-        # self.hmm_source['params', 0] = params
 
     def load_hmm_params(self, attr, old, new):
         raw_contents = self.hmm_loaded_source.data['file_contents'][0]
@@ -278,7 +274,7 @@ class Gui(object):
         # print(file_contents)
         if len(file_contents):
             self.hmm_obj.add_data_tuple(self.new_source.data['file_name'], file_contents)
-            self.example_select.options = self.hmm_obj.data.index.tolist()#  set(options=self.hmm_obj.data.index.tolist())
+            self.example_select.options = self.hmm_obj.data.index.tolist()
         if self.cur_example_idx is None:
             self.cur_example_idx = self.example_select.options[0]
             self.train_and_update()
