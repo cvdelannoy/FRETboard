@@ -8,11 +8,13 @@ import base64
 from bokeh.layouts import row, column, widgetbox
 from bokeh.plotting import figure, curdoc
 from bokeh.models import ColumnDataSource, LinearColorMapper, CustomJS
-from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup
+from bokeh.models.tools import WheelPanTool
+from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Div
 from tornado.ioloop import IOLoop
 from hmmlearn import hmm
 
 from FretReport import FretReport
+from ScrollStateTool import ScrollStateTool
 
 line_opts = dict(line_width=1)
 rect_opts = dict(width=1.01, alpha=1, line_alpha=0)
@@ -33,8 +35,16 @@ function read_file(filename, idx) {
         };
     })(idx);
     reader.onerror = error_handler;
+    
     // readAsDataURL represents the file's data as a base64 encoded string
-    reader.readAsDataURL(filename);
+    var re = /(?:\.([^.]+))?$/g;
+    var ext = (re.exec(input.files[idx].name))[1];
+    if (ext == "dat"){
+        reader.readAsDataURL(filename);
+    } else if (ext == "traces"){
+        reader.readAsArrayBuffer(filename);
+        // reader.readAsDataURL(filename);
+    } else{ alert(ext + " extension found, only .dat and .traces files accepted for now")};
 }
 
 function error_handler(evt) {
@@ -149,6 +159,7 @@ class Gui(object):
     def __init__(self, hmm_obj):
         self.hmm_obj = hmm_obj
         # self.example_list = hmm_obj.data.index
+        self.version = '0.0.1'
         self.cur_example_idx = None
 
         # widgets
@@ -156,6 +167,7 @@ class Gui(object):
         self.num_states_slider = Slider(title='Number of states', value=self.hmm_obj.nb_states, start=2, end=6, step=1)
         self.sel_state_slider = Slider(title='change selection to state', value=1, start=1,
                                        end=self.num_states_slider.value, step=1)
+        self.influence_slider = Slider(title='Influence supervision', value=0.2, start=0.0, end=1.0, step=0.01)
         self.notification = PreText(text='', width=300)
         self.stats_text = PreText(text='Accuracy: N/A\n'
                                        'Manually classified: 0%\n')
@@ -178,6 +190,9 @@ class Gui(object):
         self.hmm_loaded_source = ColumnDataSource(data=dict(params=[]))
         self.hmm_source = ColumnDataSource(data=dict(params=[]))
         self.html_source = ColumnDataSource(data=dict(html_text=[]))
+        self.scroll_state_source = ColumnDataSource(data=dict(new_state=[False]))
+
+        self.hmm_data_to_gui()
 
     @property
     def nb_examples(self):
@@ -226,7 +241,7 @@ class Gui(object):
                 del self.__dict__[k]
 
     def train_and_update(self):
-        self.hmm_obj.train()
+        self.hmm_obj.train(influence=self.influence_slider.value)
         tm_array = self.hmm_obj.trained_hmm.transmat_.reshape(-1, 1).squeeze()
         means = self.hmm_obj.trained_hmm.means_.reshape(-1, 1).squeeze()
         covars = self.hmm_obj.trained_hmm.covars_.reshape(-1, 1).squeeze()
@@ -263,15 +278,23 @@ class Gui(object):
         self.hmm_obj.predict()
         self._redraw_all()
 
+    def hmm_data_to_gui(self):
+        """
+        Load data already present in hmm object into GUI. Only used when initializing from commandline with data dir
+        """
+        self.example_select.options = self.hmm_obj.data.index.tolist()
+        if self.cur_example_idx is None:
+            self.cur_example_idx = self.example_select.options[0]
+        self._redraw_all()
+
     def update_data(self, attr, old, new):
         raw_contents = self.new_source.data['file_contents'][0]
         # remove the prefix that JS adds
         _, b64_contents = raw_contents.split(",", 1)
         file_contents = base64.b64decode(b64_contents).decode('utf-8')
-        # file_contents = str(io.StringIO(bytes.decode(file_contents)))
+        fc = base64.b64decode(b64_contents)
+
         file_contents = np.column_stack([np.fromstring(n, sep=' ') for n in file_contents.split('\n') if len(n)]).T
-        # file_io = io.StringIO(bytes.decode(file_contents))
-        # print(file_contents)
         if len(file_contents):
             self.hmm_obj.add_data_tuple(self.new_source.data['file_name'], file_contents)
             self.example_select.options = self.hmm_obj.data.index.tolist()
@@ -367,7 +390,7 @@ class Gui(object):
             self.hmm_obj.data.is_labeled = False
             self.hmm_obj.nb_states = new
             print('retraining hmm')
-            self.hmm_obj.train()
+            self.hmm_obj.train(influence=self.influence_slider.value)
             self.invalidate_cached_properties()
             print('setting new end for sel_state_slider')
             self.sel_state_slider.end = new
@@ -376,11 +399,22 @@ class Gui(object):
             print('update example')
             self.update_example(None, '', self.cur_example_idx)
 
+    def update_scroll_state(self, attr, old, new):
+        if not self.scroll_state_source['new_state'][0]:
+            return
+        if self.sel_state_slider.value + 1 <= self.num_states_slider.value:
+            self.sel_state_slide.value += 1
+        else:
+            self.sel_state_slider = 1
+        self.scroll_state_source['new_state'][0] = False
+
     def export_data(self):
         self.fretReport = FretReport(self)
 
     def make_document(self, doc):
         # --- Define widgets ---
+        ff_title = Div(text=f"""<font size=15><b>FRETfinder</b></font><br>v.{self.version}<hr>""",
+                       width=290, height=70)
         example_button = Button(label='Next example', button_type='success')
         load_button = Button(label='Upload', button_type='success')
         load_button.callback = CustomJS(args=dict(file_source=self.new_source), code=upload_impl)
@@ -396,7 +430,10 @@ class Gui(object):
 
         # --- Define plots ---
         # Main timeseries
-        ts = figure(tools='xbox_select,wheel_zoom,save', plot_width=1000, plot_height=275, active_drag='xbox_select')
+        ts = figure(tools='xbox_select,save,xzoom_in', plot_width=1000, plot_height=275, active_drag='xbox_select')
+        ts.add_tools(ScrollStateTool(source=self.scroll_state_source))
+        # ts.toolbar.active_scroll = ScrollStateTool
+        # ts = figure(tools='xbox_select,save,xzoom_in', plot_width=1000, plot_height=275, active_drag='xbox_select')
         ts.rect('time', 'rect_mid', height='rect_height', fill_color={'field': 'labels_pct', 'transform': self.col_mapper},
                 source=self.source, **rect_opts)
         ts.line('time', 'i_don', color='#4daf4a', source=self.source, **line_opts)
@@ -438,6 +475,7 @@ class Gui(object):
         self.num_states_slider.on_change('value', self.update_num_states)
         self.source.on_change('selected', self.update_classification)
         self.state_radio.on_change('active', lambda attr, old, new: self.update_state_curves())
+        self.scroll_state_source.on_change('data', self.update_scroll_state)
 
         # hidden holder to generate report
         self.holder.js_on_change('text', CustomJS(args=dict(file_source=self.html_source),
@@ -445,9 +483,11 @@ class Gui(object):
 
         # --- Build layout ---
         state_block = row(state_curves, self.state_radio)
-        widgets = column(load_button,
-                         self.sel_state_slider,
+        widgets = column(ff_title,
+                         load_button,
                          self.num_states_slider,
+                         self.sel_state_slider,
+                         self.influence_slider,
                          example_button,
                          row(widgetbox(save_model_button, width=150), widgetbox(load_model_button, width=150), width=300),
                          report_button,
@@ -458,7 +498,7 @@ class Gui(object):
         graphs = column(self.example_select, ts, hists, self.holder)
         layout = row(widgets, graphs)
         doc.add_root(layout)
-        doc.title = "FRET with bokeh test"
+        doc.title = f'FRETfinder v. {self.version}'
 
     def start_gui(self):
         apps = {'/': Application(FunctionHandler(self.make_document))}

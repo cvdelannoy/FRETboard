@@ -4,7 +4,7 @@ import itertools
 import pandas as pd
 from bokeh.plotting import figure
 from bokeh.models import ColumnDataSource, PreText
-from bokeh.models.widgets import DataTable, TableColumn
+from bokeh.models.widgets import DataTable, TableColumn, Div
 from bokeh.layouts import column, row
 from bokeh.embed import file_html
 from bokeh.resources import CDN
@@ -31,7 +31,7 @@ class FretReport(object):
     def event_df(self):
         seq_mat = self.condensed_seq_df.values
         seq_mat = np.array(list(itertools.chain.from_iterable(seq_mat)))
-        event_df = pd.DataFrame({'state': seq_mat[:, 0].astype(int), 'i_fret': seq_mat[:, 2] / seq_mat[:, 1],
+        event_df = pd.DataFrame({'state': seq_mat[:, 0].astype(int), 'i_fret': seq_mat[:, 2],
                                  'duration': seq_mat[:, 1].astype(int)})
         return event_df
 
@@ -41,20 +41,31 @@ class FretReport(object):
         after = []
         for r in self.condensed_seq_df:
             r_array = np.array(r)
-            i_fret_means = r_array[:, 2] / r_array[:, 1]
-            before.extend(i_fret_means[:-1])
-            after.extend(i_fret_means[1:])
+            before.extend(r_array[:-1, 2])
+            after.extend(r_array[1:, 2])
         return pd.DataFrame({'i_fret_before': before, 'i_fret_after': after})
+
+    @ cached_property
+    def k_off(self):
+        for seq in self.condensed_seq_df:
+            pass
 
     @staticmethod
     def condense_sequence(seq):
+        """
+        Take a pd df of labels and Efret values, turn into list of tuples (label, nb_elements, average )
+        :param seq:
+        :return:
+        """
         seq_condensed = [[seq.out_labels[0], 0, 0]]  # symbol, duration, I_fret sum
         for s, i in zip(seq.out_labels, seq.i_fret):
             if s == seq_condensed[-1][0]:
                 seq_condensed[-1][1] += 1
                 seq_condensed[-1][2] += i
             else:
+                seq_condensed[-1][2] = seq_condensed[-1][2] / seq_condensed[-1][1]
                 seq_condensed.append([s, 1, i])
+            seq_condensed[-1][2] = seq_condensed[-1][2] / seq_condensed[-1][1]
         return seq_condensed
 
     def construct_html_report(self):
@@ -82,8 +93,8 @@ class FretReport(object):
         tdp_hex = figure(plot_width=500, plot_height=500,
                          background_fill_color='#440154', title='Transition density plot')
         tdp_hex.grid.visible = False
-        tdp_hex.xaxis.axis_label = 'I FRET before transition'
-        tdp_hex.yaxis.axis_label = 'I FRET after transition'
+        tdp_hex.xaxis.axis_label = 'E FRET before transition'
+        tdp_hex.yaxis.axis_label = 'E FRET after transition'
         tdp_hex.hexbin(x=self.transition_df['i_fret_before'], y=self.transition_df['i_fret_after'], size=0.01)
         return tdp_hex
 
@@ -97,13 +108,23 @@ class FretReport(object):
         for fi, feat in enumerate(self.hmm_obj.feature_list):
             columns.append(TableColumn(field=str(feat) + ' mu', title=str(feat) + ' mu'))
             columns.append(TableColumn(field=str(feat) + ' sd', title=str(feat) + ' sd'))
-            cds_dict[str(feat) + ' mu'] = self.hmm_obj.trained_hmm.means_[:, fi]
-            cds_dict[str(feat) + ' sd'] = self.hmm_obj.trained_hmm.covars_[:, fi, fi]
+            cds_dict[str(feat) + ' mu'] = self.hmm_obj.trained_hmm.means_[:, fi].round(3)
+            cds_dict[str(feat) + ' sd'] = self.hmm_obj.trained_hmm.covars_[:, fi, fi].round(3)
+
+        # cds_dict = {}
+        # header = []
+        # for fi, feat in enumerate(self.hmm_obj.feature_list):
+        #     header.extend(f'<th>{str(feat)} mu</th> <th>{str(feat)} sd</th>')
+        #     cds_dict[str(feat) + ' mu'] = self.hmm_obj.trained_hmm.means_[:, fi].round(3)
+        #     cds_dict[str(feat) + ' sd'] = self.hmm_obj.trained_hmm.covars_[:, fi, fi].round(3)
+        # em_data_table = f"<table>{header}"
+        # for k in cds_dict
+
         em_data_table = DataTable(source=ColumnDataSource(cds_dict), columns=columns)
-        em_obj = column(PreText(text='Emissions probabilities'), em_data_table)
+        em_obj = column(PreText(text='Emission probabilities'), em_data_table)
 
         # transition matrix
-        tm = self.hmm_obj.trained_hmm.transmat_
+        tm = self.hmm_obj.trained_hmm.transmat_.round(3)
         tm_columns = [TableColumn(field='state', title='')]
         tm_dict = {'state': state_name_list}
         for si, sn in enumerate(state_name_list):
@@ -111,7 +132,11 @@ class FretReport(object):
             tm_dict[sn] = tm[:,si].tolist()
         tm_table = DataTable(source=ColumnDataSource(tm_dict), columns=tm_columns)
         tm_obj = column(PreText(text='Transition table'), tm_table)
-        return column(em_obj, tm_obj)
+        return row(em_obj, tm_obj)
         # todo: accuracy/posterior probability estimates: hist + text
         # todo: gauss curves per model
         # todo: all hmm params: per-state mean/stdev table + transition matrix + P_start
+
+    def make_k_table(self):
+        state_name_list = ['State ' + str(sn + 1) for sn in range(self.hmm_obj.nb_states)]
+
