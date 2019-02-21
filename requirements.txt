@@ -1,0 +1,6 @@
+numpy
+cached_property
+bokeh
+hmmlearn
+pandas
+sklearn

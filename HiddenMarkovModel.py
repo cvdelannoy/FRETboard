@@ -6,10 +6,6 @@ from sklearn.utils import check_array
 from hmmlearn.utils import iter_from_X_lengths
 import warnings
 
-import holoviews as hv
-hv.extension('bokeh')
-
-
 class HiddenMarkovModel(object):
     """ A class for the HMM used to detect FRET signals
 
@@ -70,13 +66,15 @@ class HiddenMarkovModel(object):
         return logprob, state_sequence
 
     def train(self, influence=1.0):
-        train_mat, train_seq_lengths = self.construct_matrix(np.invert(self.data.is_labeled))
         hmm_obj = self.get_untrained_hmm(influence=influence)
-        with warnings.catch_warnings():  # catches deprecation warning sklearn: log_multivariate_normal_density
-            warnings.filterwarnings("ignore", category=DeprecationWarning)
-            hmm_obj.fit(train_mat, train_seq_lengths)
-        self.trained_hmm = hmm_obj
-
+        if all(self.data.is_labeled):
+           self.trained_hmm = hmm_obj
+        else:
+            train_mat, train_seq_lengths = self.construct_matrix(np.invert(self.data.is_labeled))
+            with warnings.catch_warnings():  # catches deprecation warning sklearn: log_multivariate_normal_density
+                warnings.filterwarnings("ignore", category=DeprecationWarning)
+                hmm_obj.fit(train_mat, train_seq_lengths)
+            self.trained_hmm = hmm_obj
         # update predictions
         self.predict()
 
@@ -94,16 +92,16 @@ class HiddenMarkovModel(object):
             'i_acc': [np.array([], dtype=np.int64)] * nb_files,
             'i_sum': [np.array([], dtype=np.float64)] * nb_files,
             'i_fret': [np.array([], dtype=np.float64)] * nb_files,
-            'is_labeled': [False] * nb_files,
             'labels': [np.array([], dtype=np.int64)] * nb_files,
             'prediction': [np.array([], dtype=np.int64)] * nb_files,
             'logprob': [np.array([], dtype=np.float64)] * nb_files},
             index=dat_files)
+        df_out['is_labeled'] = pd.Series([False] * nb_files, dtype=np.bool)
 
         for dat_file in dat_files:
             try:
                 fc = np.loadtxt(dat_file)
-                fc_out = self.read_line(fc)
+                fc_out = self.read_line(fc.T)
                 df_out.at[dat_file, 'i_don'] = fc_out[0]
                 df_out.at[dat_file, 'i_acc'] = fc_out[1]
                 df_out.at[dat_file, 'i_sum'] = fc_out[2]
@@ -114,36 +112,23 @@ class HiddenMarkovModel(object):
         self._data = df_out
         self.data_mat, self.seq_lengths = self.construct_matrix()
 
-    def read_line(self, fc):
-        i_don = fc[:, 1]
-        i_acc = fc[:, 2]
+    def read_line(self, fc, full_set=False):
+        i_don = fc[0, :]
+        i_acc = fc[1, :]
         i_sum = np.sum((i_don, i_acc), axis=0)
         i_sum = i_sum / i_sum.max()
         i_fret = np.divide(i_acc, np.sum((i_don, i_acc), axis=0))
+        if full_set:
+            return i_don, i_acc, i_sum, i_fret, np.array([], dtype=np.int64), np.array([], dtype=np.int64), np.array([], dtype=np.float64), False
         return i_don, i_acc, i_sum, i_fret
 
-    def add_data_tuple(self, fn, data):
-        nb_files = len(fn)
-        df_out = pd.DataFrame({
-            'i_don': [np.array([], dtype=np.int64)] * nb_files,
-            'i_acc': [np.array([], dtype=np.int64)] * nb_files,
-            'i_sum': [np.array([], dtype=np.float64)] * nb_files,
-            'i_fret': [np.array([], dtype=np.float64)] * nb_files,
-            'is_labeled': [False] * nb_files,
-            'labels': [np.array([], dtype=np.int64)] * nb_files,
-            'prediction': [np.array([], dtype=np.int64)] * nb_files,
-            'logprob': [np.array([], dtype=np.float64)] * nb_files},
-            index=fn)
-        for f, d in zip (fn, data):
-            rl = self.read_line(data)
-            df_out.at[f,'i_don'] = rl[0]
-            df_out.at[f, 'i_acc'] = rl[1]
-            df_out.at[f, 'i_sum'] = rl[2]
-            df_out.at[f, 'i_fret'] = rl[3]
-        if len(self._data) == 0:
-            self._data = df_out
-        else:
-            self._data = pd.concat((self._data, df_out))
+    def add_data_tuple(self, fn, data, last=True):
+        self._data.loc[fn] = self.read_line(data, full_set=True)
+        if last:
+            self.data_mat, self.seq_lengths = self.construct_matrix()
+
+    def del_data_tuple(self, idx):
+        self._data.drop(idx)
         self.data_mat, self.seq_lengths = self.construct_matrix()
 
     def get_supervised_params(self, influence):
@@ -179,12 +164,15 @@ class HiddenMarkovModel(object):
         start_probs = ws * start_probs_s + wus * self.trained_hmm.startprob_
 
         # means & covars
-        means = np.zeros([self.nb_states, nb_features])
+        means_s = np.zeros([self.nb_states, nb_features])
         covars_s = np.zeros([self.nb_states, nb_features, nb_features])
         for cl in classes:
             feature_cl = np.row_stack([fl[label_vec == cl] for fl in feature_list])
-            covars_s[cl, :, :] = np.cov(feature_cl)
+            if feature_cl.shape[1] != 0:
+                covars_s[cl, :, :] = np.cov(feature_cl)
+                means_s[cl, :] = feature_cl.mean(axis=1)
         covars = covars_s * ws + self.trained_hmm.covars_ * wus
+        means = means_s * ws + self.trained_hmm.means_ * wus
 
         # transition matrix
         transmat = np.zeros((self.nb_states, self.nb_states))
@@ -201,9 +189,13 @@ class HiddenMarkovModel(object):
             else:
                 total_transitions[tra[0]] = transition_dict[tra]
         for tra in transition_dict:
-            transmat[tra[0], tra[1]] = transition_dict[tra] / total_transitions[tra[0]]
+            tt = total_transitions[tra[0]]
+            transmat[tra[0], tra[1]] = transition_dict[tra] / tt if tt != 0 else 0
+        for ti in range(self.nb_states):
+            transmat[ti, ti] = transmat[ti, ti] + (1.0 - transmat[ti, :].sum())  # ensure rows sum to 1
         transmat = transmat * ws + self.trained_hmm.transmat_ * wus
-
+        if any(np.linalg.eigvals(transmat) < 0):
+            cp = 1
         return start_probs, transmat, means, covars
 
     def construct_matrix(self, bool_idx=None):

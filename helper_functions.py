@@ -1,6 +1,7 @@
 import os
 import warnings
 import fnmatch
+from datetime import datetime
 
 
 def parse_input_path(location, pattern=None):
@@ -29,3 +30,8 @@ def parse_input_path(location, pattern=None):
     if not len(all_files):
         ValueError('Input file location(s) did not exist or did not contain any files.')
     return all_files
+
+
+def print_timestamp():
+    dt = datetime.now().strftime('%y-%m-%d_%H:%M:%S')
+    return f'[{dt}]: '

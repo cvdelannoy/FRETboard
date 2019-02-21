@@ -1,4 +1,7 @@
 import numpy as np
+import os
+import tempfile
+import shutil
 from cached_property import cached_property
 from bokeh.server.server import Server
 from bokeh.application import Application
@@ -8,10 +11,10 @@ import base64
 from bokeh.layouts import row, column, widgetbox
 from bokeh.plotting import figure, curdoc
 from bokeh.models import ColumnDataSource, LinearColorMapper, CustomJS
-from bokeh.models.tools import WheelPanTool
-from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Div
+from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Div, CheckboxButtonGroup
 from tornado.ioloop import IOLoop
 from hmmlearn import hmm
+from helper_functions import print_timestamp
 
 from FretReport import FretReport
 from ScrollStateTool import ScrollStateTool
@@ -30,20 +33,24 @@ function read_file(filename, idx) {
     reader.onload = (function(i){
         return function(event){
             var b64string = event.target.result;
-            file_source.data = {'file_contents' : [b64string], 'file_name': [input.files[i].name]};
-            file_source.trigger("change");
+            if (i + 1 == input.files.length){
+                console.log('final entry');
+                var last_bool = true
+            } else {
+                var last_bool = false
+            }
+            last_bool
+            file_source.data = {'file_contents' : [b64string], 'file_name': [input.files[i].name], 'last_bool': [last_bool]};
+            file_source.change.emit();
         };
     })(idx);
     reader.onerror = error_handler;
-    
+
     // readAsDataURL represents the file's data as a base64 encoded string
     var re = /(?:\.([^.]+))?$/g;
     var ext = (re.exec(input.files[idx].name))[1];
-    if (ext == "dat"){
+    if (ext == "dat" || ext == "traces"){
         reader.readAsDataURL(filename);
-    } else if (ext == "traces"){
-        reader.readAsArrayBuffer(filename);
-        // reader.readAsDataURL(filename);
     } else{ alert(ext + " extension found, only .dat and .traces files accepted for now")};
 }
 
@@ -80,7 +87,7 @@ function read_file(filename) {
 function load_handler(event) {
     var b64string = event.target.result;
     file_source.data = {'file_contents' : [b64string]};
-    file_source.trigger("change");
+    file_source.change.emit();
 }
 
 function error_handler(evt) {
@@ -101,6 +108,45 @@ input.onchange = function(){
 input.click();
 """
 
+download_datzip_impl = """
+function str2bytes (str) {
+    var bytes = new Uint8Array(str.length);
+    for (var i=0; i<str.length; i++) {
+        bytes[i] = str.charCodeAt(i);
+    }
+    return bytes;
+}
+
+const filename = 'dat_files.zip'
+var b64data = window.atob(file_source.data.datzip[0])
+const blob = new Blob([str2bytes(b64data)], { type: 'application/octet-stream' })
+//addresses IE
+if (navigator.msSaveBlob) {
+    navigator.msSaveBlob(blob, filename)
+} else {
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = filename
+    link.target = '_blank'
+    link.style.visibility = 'hidden'
+    link.dispatchEvent(new MouseEvent('click'))
+}"""
+
+download_report_impl = """
+const filename = 'FRETboard_report.html'
+const blob = new Blob([file_source.data.html_text], { type: 'text;charset=utf-8;' })
+
+//addresses IE
+if (navigator.msSaveBlob) {
+    navigator.msSaveBlob(blob, filename)
+} else {
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = filename
+    link.target = '_blank'
+    link.style.visibility = 'hidden'
+    link.dispatchEvent(new MouseEvent('click'))
+}"""
 
 download_csv_impl = """
 function table_to_csv(file_source) {
@@ -119,8 +165,7 @@ function table_to_csv(file_source) {
     return lines.join('\\n').concat('\\n')
 }
 
-
-const filename = 'data_result.csv'
+const filename = 'FRETboard_model.csv'
 filetext = table_to_csv(file_source)
 const blob = new Blob([filetext], { type: 'text/csv;charset=utf-8;' })
 
@@ -136,43 +181,27 @@ if (navigator.msSaveBlob) {
     link.dispatchEvent(new MouseEvent('click'))
 }"""
 
-download_report_impl = """
-const filename = 'FRETfinder_report.html'
-const blob = new Blob([file_source.data.html_text], { type: 'text;charset=utf-8;' })
-
-//addresses IE
-if (navigator.msSaveBlob) {
-    navigator.msSaveBlob(blob, filename)
-} else {
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = filename
-    link.target = '_blank'
-    link.style.visibility = 'hidden'
-    link.dispatchEvent(new MouseEvent('click'))
-}"""
 
 param_state_dict = {18: 2, 30: 3, 44: 4, 60: 5, 78: 6, 98: 7}
 
 
 class Gui(object):
     def __init__(self, hmm_obj):
-        self.hmm_obj = hmm_obj
-        # self.example_list = hmm_obj.data.index
         self.version = '0.0.1'
         self.cur_example_idx = None
 
         # widgets
         self.example_select = Select(title='current_example', value='None', options=['None'])
-        self.num_states_slider = Slider(title='Number of states', value=self.hmm_obj.nb_states, start=2, end=6, step=1)
+        self.num_states_slider = Slider(title='Number of states', value=hmm_obj.nb_states, start=2, end=6, step=1)
         self.sel_state_slider = Slider(title='change selection to state', value=1, start=1,
                                        end=self.num_states_slider.value, step=1)
         self.influence_slider = Slider(title='Influence supervision', value=0.2, start=0.0, end=1.0, step=0.01)
-        self.notification = PreText(text='', width=300)
-        self.stats_text = PreText(text='Accuracy: N/A\n'
-                                       'Manually classified: 0%\n')
-        self.state_radio = RadioGroup(labels=self.hmm_obj.feature_list, active=0)
-        self.holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
+        self.notification = PreText(text='', width=1000, height=15)
+        self.acc_text = PreText(text='N/A')
+        self.mc_text = PreText(text='0%')
+        self.state_radio = RadioGroup(labels=hmm_obj.feature_list, active=0)
+        self.report_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
+        self.datzip_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
 
         # ColumnDataSources
         self.source = ColumnDataSource(data=dict(i_don=[], i_acc=[], time=[],
@@ -190,9 +219,27 @@ class Gui(object):
         self.hmm_loaded_source = ColumnDataSource(data=dict(params=[]))
         self.hmm_source = ColumnDataSource(data=dict(params=[]))
         self.html_source = ColumnDataSource(data=dict(html_text=[]))
+        self.datzip_source = ColumnDataSource(data=dict(datzip=[]))
         self.scroll_state_source = ColumnDataSource(data=dict(new_state=[False]))
+        self.model_loaded = False
 
-        self.hmm_data_to_gui()
+        # HMM object
+        self.hmm_obj = hmm_obj
+
+    @property
+    def hmm_obj(self):
+        return self._hmm_obj
+
+    @hmm_obj.setter
+    def hmm_obj(self, hmm_obj):
+        self._hmm_obj = hmm_obj
+        if hmm_obj.data.shape[0] == 0:
+            return
+        self.example_select.options = self.hmm_obj.data.index.tolist()
+        if self.cur_example_idx is None:
+            self.cur_example_idx = self.example_select.options[0]
+        self._redraw_all()
+
 
     @property
     def nb_examples(self):
@@ -244,9 +291,13 @@ class Gui(object):
         self.hmm_obj.train(influence=self.influence_slider.value)
         tm_array = self.hmm_obj.trained_hmm.transmat_.reshape(-1, 1).squeeze()
         means = self.hmm_obj.trained_hmm.means_.reshape(-1, 1).squeeze()
-        covars = self.hmm_obj.trained_hmm.covars_.reshape(-1, 1).squeeze()
+        covar_list = [blk.reshape(1, -1).squeeze() for blk in
+                      np.split(self.hmm_obj.trained_hmm.covars_, axis=0, indices_or_sections=3)]
+        covars = np.concatenate(covar_list)
+        # covars = self.hmm_obj.trained_hmm.covars_.reshape(-1, 1).squeeze()
         startprob = self.hmm_obj.trained_hmm.startprob_.reshape(-1, 1).squeeze()
-        params = np.concatenate((tm_array, means, covars, startprob))
+        nb_states = np.expand_dims(self.num_states_slider.value, 0)
+        params = np.concatenate((nb_states, tm_array, means, covars, startprob))
         self.hmm_source.data = dict(params=params.tolist())
 
     def load_hmm_params(self, attr, old, new):
@@ -254,53 +305,59 @@ class Gui(object):
         # remove the prefix that JS adds
         _, b64_contents = raw_contents.split(",", 1)
         file_contents = base64.b64decode(b64_contents).decode('utf-8').split('\n')[1:-1]
-        print(file_contents)
         params = [float(i) for i in file_contents]
-        print(params)
-        nb_states = param_state_dict[len(params)]
-        print(f'nb_states {nb_states}')
+        nb_states = int(params[0])
+        params = params[1:]
         self.num_states_slider.value = nb_states
-        self.hmm_obj.data.is_labeled = False
         self.hmm_obj.nb_states = nb_states
-        new_hmm = hmm.GaussianHMM(n_components=nb_states, covariance_type='diag', init_params='')
-        param_idx = np.cumsum([nb_states ** 2, nb_states, nb_states * 2])
+        new_hmm = hmm.GaussianHMM(n_components=nb_states, covariance_type='full', init_params='')
+        param_idx = np.cumsum([nb_states ** 2, nb_states * 2, nb_states * 2 * 2])
         print(f'param_idx: {param_idx}')
-        tm, start_prob, means, covars = np.split(params, param_idx)
-        print(tm.reshape(nb_states, nb_states, 'F'))
+        tm, means, covars, start_prob = np.split(params, param_idx)
         new_hmm.transmat_ = tm.reshape(nb_states, nb_states)
-        print(means.reshape(nb_states, 2, 'F'))
         new_hmm.means_ = means.reshape(nb_states, 2)
-        print(covars.reshape(nb_states, 2, 2))
         new_hmm.covars_ = covars.reshape(nb_states, 2, 2)
-        print(start_prob)
         new_hmm.startprob_ = start_prob
         self.hmm_obj.trained_hmm = new_hmm
-        self.hmm_obj.predict()
-        self._redraw_all()
-
-    def hmm_data_to_gui(self):
-        """
-        Load data already present in hmm object into GUI. Only used when initializing from commandline with data dir
-        """
-        self.example_select.options = self.hmm_obj.data.index.tolist()
-        if self.cur_example_idx is None:
-            self.cur_example_idx = self.example_select.options[0]
-        self._redraw_all()
+        self.model_loaded = True
+        self.notification.text += f'{print_timestamp()}Model loaded'
+        if self.hmm_obj.data.shape[0] != 0:
+            self.hmm_obj.data.is_labeled = False
+            self.hmm_obj.predict()
+            self._redraw_all()
 
     def update_data(self, attr, old, new):
         raw_contents = self.new_source.data['file_contents'][0]
-        # remove the prefix that JS adds
-        _, b64_contents = raw_contents.split(",", 1)
-        file_contents = base64.b64decode(b64_contents).decode('utf-8')
-        fc = base64.b64decode(b64_contents)
+        _, b64_contents = raw_contents.split(",", 1)  # remove the prefix that JS adds
+        file_contents = base64.b64decode(b64_contents)
+        fn = self.new_source.data['file_name'][0]
+        last_bool = self.new_source.data['last_bool'][0]
 
-        file_contents = np.column_stack([np.fromstring(n, sep=' ') for n in file_contents.split('\n') if len(n)]).T
-        if len(file_contents):
-            self.hmm_obj.add_data_tuple(self.new_source.data['file_name'], file_contents)
-            self.example_select.options = self.hmm_obj.data.index.tolist()
-        if self.cur_example_idx is None:
-            self.cur_example_idx = self.example_select.options[0]
-            self.train_and_update()
+        # Process .trace files
+        if '.traces' in fn:
+            nb_frames, _, nb_traces = np.frombuffer(file_contents, dtype=np.int16, count=3)
+            traces_vec = np.frombuffer(file_contents, dtype=np.int16, count=nb_frames * nb_traces + 3)
+            file_contents = traces_vec[3:].reshape((2, nb_traces // 2, nb_frames), order='F')
+            fn_clean = os.path.splitext(fn)[0]
+            for fi, f in enumerate(np.hsplit(file_contents, file_contents.shape[1])):
+                last_trace_bool = fi+1 == file_contents.shape[1]
+                self.hmm_obj.add_data_tuple(f'{fn_clean}_tr{fi+1}', f.squeeze(), last=last_bool * last_trace_bool)
+
+        # Process .dat files
+        elif '.dat' in fn:
+            file_contents = base64.b64decode(b64_contents).decode('utf-8')
+            file_contents = np.column_stack([np.fromstring(n, sep=' ') for n in file_contents.split('\n') if len(n)])[1:, :]
+            if len(file_contents):
+                self.hmm_obj.add_data_tuple(self.new_source.data['file_name'][0], file_contents, last=last_bool)
+
+        if last_bool:
+            if len(file_contents): self.example_select.options = self.hmm_obj.data.index.tolist()
+            if self.cur_example_idx is None: self.cur_example_idx = self.example_select.options[0]
+            if self.model_loaded:
+                self.hmm_obj.predict()
+            else:
+                self.train_and_update()
+                self.model_loaded = True
             self._redraw_all()
 
     def update_example(self, attr, old, new):
@@ -308,32 +365,38 @@ class Gui(object):
             return
         if old is not None:
             self.set_value('labels', self.source.data['labels'])
-        self.train_and_update()
+        # self.train_and_update()
         self.cur_example_idx = new
         self._redraw_all()
 
-    def update_example_logprob(self):
+    def update_example_retrain(self):
+        """
+        Assume current example is labeled correctly, retrain and display new random example
+        Note: this should be the only way to set an example to 'labeled training example' mode (is_labeled == True)
+        """
         if all(self.hmm_obj.data.is_labeled):
-            self.notification.text = 'All examples have already\nbeen manually classified'
+            self.notification.text += f'{print_timestamp()}All examples have already been manually classified'
         else:
+            self.set_value('labels', self.hmm_obj.data.loc[self.cur_example_idx].prediction.copy())
+            self.set_value('is_labeled', True)
             self.train_and_update()
-            # self.cur_example_idx = self.hmm_obj.data.loc[np.invert(self.hmm_obj.data.is_labeled), 'logprob'].idxmin()
-            self.cur_example_idx = np.random.choice(self.hmm_obj.data.loc[np.invert(self.hmm_obj.data.is_labeled), 'logprob'].index)
+            new_example_idx = np.random.choice(self.hmm_obj.data.loc[np.invert(self.hmm_obj.data.is_labeled), 'logprob'].index)
             self.example_select.value = self.cur_example_idx
-            self._redraw_all()
+            self.update_example(None, None, new_example_idx)
 
     def _redraw_all(self):
         self.invalidate_cached_properties()
-        y_height = np.max(np.concatenate((self.i_acc, self.i_don)))
         nb_samples = self.i_don.size
-        if not self.hmm_obj.data.loc[self.cur_example_idx].is_labeled:
+        if not len(self.hmm_obj.data.loc[self.cur_example_idx].labels):
             self.set_value('labels', self.hmm_obj.data.loc[self.cur_example_idx].prediction.copy())
-            self.set_value('is_labeled', True)
+        all_ts = np.concatenate((self.i_don, self.i_acc))
+        rect_mid = (all_ts.min() + all_ts.max()) / 2
+        rect_height = np.abs(all_ts.min()) + np.abs(all_ts.max())
         self.source.data = dict(i_don=self.i_don, i_acc=self.i_acc, time=np.arange(nb_samples),
-                                rect_height=np.repeat(y_height, nb_samples), rect_mid=np.repeat(0, nb_samples),
+                                rect_height=np.repeat(rect_height, nb_samples),
+                                rect_mid=np.repeat(rect_mid, nb_samples),
                                 labels=self.hmm_obj.data.loc[self.cur_example_idx, 'labels'],
                                 labels_pct=self.hmm_obj.data.loc[self.cur_example_idx, 'labels'] * 1.0 / self.num_states_slider.value)
-
         self.update_accuracy_hist()
         self.update_logprob_hist()
         self.update_state_curves()
@@ -341,7 +404,7 @@ class Gui(object):
 
     def generate_report(self):
         self.html_source.data['html_text'] = [FretReport(self).construct_html_report()]
-        self.holder.text = 'trigger'
+        self.report_holder.text += ' '
 
     def update_classification(self, attr, old, new):
         index = self.source.selected.indices
@@ -367,9 +430,8 @@ class Gui(object):
             acc = 'N/A'
         else:
             acc = round(self.hmm_obj.accuracy.mean(), 1)
-        self.stats_text.text = ('Accuracy: {acc}\n'
-                                'Manually classified: {mc}%\n').format(acc=acc,
-                                                                       mc=pct_labeled)
+        self.acc_text.text = f'{acc}'
+        self.mc_text.text = f'{pct_labeled}'
 
     def update_state_curves(self):
         fidx = self.state_radio.active
@@ -386,13 +448,21 @@ class Gui(object):
 
     def update_num_states(self, attr, old, new):
         if new != self.hmm_obj.nb_states:
-            print('changing hmm_obj states')
+
             self.hmm_obj.data.is_labeled = False
             self.hmm_obj.nb_states = new
-            print('retraining hmm')
+
+            # Update widget: show-me checkboxes
+            showme_idx = [n - 1 for n in range(1,new)]
+            showme_states = [str(n) for n in range(1,new)]
+            self.showme_checkboxes.labels = showme_states
+            self.showme_checkboxes.active = showme_idx
+
+            # retraining hmm
             self.hmm_obj.train(influence=self.influence_slider.value)
             self.invalidate_cached_properties()
-            print('setting new end for sel_state_slider')
+
+            # Update widget: selected state slider
             self.sel_state_slider.end = new
             self.update_state_curves()
 
@@ -411,30 +481,91 @@ class Gui(object):
     def export_data(self):
         self.fretReport = FretReport(self)
 
+    def generate_dats(self):
+        tfh = tempfile.TemporaryDirectory()
+        for fn, tup in self.hmm_obj.data.iterrows():
+            labels = tup.labels + 1 if len(tup.labels) != 0 else tup.prediction + 1
+            sm_bool = [True for sm in self.saveme_checkboxes.active if sm + 1 in labels]
+            if not all(sm_bool): continue
+            time = np.arange(labels.size)
+            arr_out = np.vstack((time, tup.i_don, tup.i_acc, labels)).T.astype(int)
+            np.savetxt(f'{tfh.name}/{fn}', arr_out, fmt='%i')
+        zip_dir = tempfile.TemporaryDirectory()
+        zip_fn = shutil.make_archive(f'{zip_dir.name}/dat_files', 'zip', tfh.name)
+        with open(zip_fn, 'rb') as f:
+            self.datzip_source.data['datzip'] = [base64.b64encode(f.read()).decode('ascii')]
+        tfh.cleanup()
+        zip_dir.cleanup()
+        self.datzip_holder.text += ' '
+
+    def del_trace(self):
+        self.hmm_obj.del_data_tuple(self.cur_example_idx)
+        self.example_select.options.remove(self.cur_example_idx)
+        self.update_example_retrain()
+
+    def update_showme(self, attr, old, new):
+        if old == new: return
+        valid_bool = self.hmm_obj.data.apply(lambda x: np.invert(x.is_labeled)
+                                                       and any(i in new for i in x.prediction), axis=1)
+        if any(valid_bool):
+            self.example_select.options = list(self.hmm_obj.data.index[valid_bool])
+            if self.cur_example_idx not in self.example_select.options:
+                new_example_idx = np.random.choice(self.example_select.options)
+                self.update_example(None, '', new_example_idx)
+        else:
+            self.notification.text += f'''\n{print_timestamp()}No valid (unclassified) traces to display for classes {', '.join([str(ts+1) for ts in new]) }'''
+
     def make_document(self, doc):
         # --- Define widgets ---
-        ff_title = Div(text=f"""<font size=15><b>FRETfinder</b></font><br>v.{self.version}<hr>""",
-                       width=290, height=70)
-        example_button = Button(label='Next example', button_type='success')
-        load_button = Button(label='Upload', button_type='success')
+
+        ff_title = Div(text=f"""<font size=15><b>FRETboard</b></font><br>v.{self.version}<hr>""",
+                       width=280, height=70)
+
+        # --- 1. Load ---
+        load_button = Button(label='Data', button_type='success')
         load_button.callback = CustomJS(args=dict(file_source=self.new_source), code=upload_impl)
 
-        save_model_button = Button(label='Save model')
-        save_model_button.callback = CustomJS(args=dict(file_source=self.hmm_source),
-                                              code=download_csv_impl)
-        load_model_button = Button(label='Load model')
+        load_model_button = Button(label='Model')
         load_model_button.callback = CustomJS(args=dict(file_source=self.hmm_loaded_source),
                                               code=upload_model_impl)
+
+
+        # --- 2. Teach ---
+        del_trace_button = Button(label='Delete', button_type='danger')
+        del_trace_button.on_click(self.del_trace)
+
+        showme_states = [str(n + 1) for n in range(self.num_states_slider.value)]
+        showme_idx = list(range(self.num_states_slider.value))
+
+        self.showme_checkboxes = CheckboxButtonGroup(labels=showme_states, active=showme_idx)
+        self.showme_checkboxes.on_change('active', self.update_showme)
+        showme_col = column(Div(text='Show traces with states:', width=300, height=16),
+                            self.showme_checkboxes,
+                            width=300)
+
+        example_button = Button(label='Next example', button_type='success')
+
+        # --- 3. Save ---
+        save_model_button = Button(label='Model')
+        save_model_button.callback = CustomJS(args=dict(file_source=self.hmm_source),
+                                              code=download_csv_impl)
+        save_data_button = Button(label='Data')
+        save_data_button.on_click(self.generate_dats)
+
         report_button = Button(label='report', button_type='success')
         report_button.on_click(self.generate_report)
 
+        self.saveme_checkboxes = CheckboxButtonGroup(labels=showme_states, active=showme_idx)
+        saveme_col = column(Div(text='Save traces with states:', width=300, height=16),
+                            self.saveme_checkboxes,
+                            width=300)
+
         # --- Define plots ---
         # Main timeseries
-        ts = figure(tools='xbox_select,save,xzoom_in', plot_width=1000, plot_height=275, active_drag='xbox_select')
+        ts = figure(tools='xbox_select,save', plot_width=1000, plot_height=275, active_drag='xbox_select')
         ts.add_tools(ScrollStateTool(source=self.scroll_state_source))
-        # ts.toolbar.active_scroll = ScrollStateTool
-        # ts = figure(tools='xbox_select,save,xzoom_in', plot_width=1000, plot_height=275, active_drag='xbox_select')
-        ts.rect('time', 'rect_mid', height='rect_height', fill_color={'field': 'labels_pct', 'transform': self.col_mapper},
+        ts.rect('time', 'rect_mid', height='rect_height', fill_color={'field': 'labels_pct',
+                                                                      'transform': self.col_mapper},
                 source=self.source, **rect_opts)
         ts.line('time', 'i_don', color='#4daf4a', source=self.source, **line_opts)
         ts.line('time', 'i_acc', color='#e41a1c', source=self.source, **line_opts)
@@ -465,40 +596,57 @@ class Gui(object):
         state_curves.yaxis.axis_label = 'Density'
         state_curves.multi_line('xs', 'ys', line_color='color', source=self.state_source)
 
+        # Stats in text
+        stats_text = column( row(Div(text='Accuracy: ', width=120, height=18), self.acc_text, height=18),
+                             row(Div(text='Manually classified: ', width=120, height=18), self.mc_text, height=18))
+
         # todo: Average accuracy and posterior
 
         # --- Define update behavior ---
         self.new_source.on_change('data', self.update_data)
         self.hmm_loaded_source.on_change('data', self.load_hmm_params)
         self.example_select.on_change('value', self.update_example)
-        example_button.on_click(self.update_example_logprob)
+        example_button.on_click(self.update_example_retrain)
         self.num_states_slider.on_change('value', self.update_num_states)
         self.source.on_change('selected', self.update_classification)
         self.state_radio.on_change('active', lambda attr, old, new: self.update_state_curves())
         self.scroll_state_source.on_change('data', self.update_scroll_state)
 
-        # hidden holder to generate report
-        self.holder.js_on_change('text', CustomJS(args=dict(file_source=self.html_source),
-                                                  code=download_report_impl))
+        # hidden holders to generate saves
+        self.report_holder.js_on_change('text', CustomJS(args=dict(file_source=self.html_source),
+                                                         code=download_report_impl))
+        self.datzip_holder.js_on_change('text', CustomJS(args=dict(file_source=self.datzip_source),
+                                                         code=download_datzip_impl))
 
         # --- Build layout ---
         state_block = row(state_curves, self.state_radio)
         widgets = column(ff_title,
-                         load_button,
+                         Div(text="<font size=4>1. Load</font>", width=280, height=15),
+                         row(widgetbox(load_button, width=150), widgetbox(load_model_button, width=150),
+                             width=300),
+                         Div(text="<font size=4>2. Teach</font>", width=280, height=15),
                          self.num_states_slider,
                          self.sel_state_slider,
                          self.influence_slider,
+                         showme_col,
+                         del_trace_button,
                          example_button,
-                         row(widgetbox(save_model_button, width=150), widgetbox(load_model_button, width=150), width=300),
+                         Div(text="<font size=4>3. Save</font>", width=280, height=15),
+                         saveme_col,
                          report_button,
-                         self.stats_text,
-                         self.notification,
+                         row(widgetbox(save_data_button, width=150), widgetbox(save_model_button, width=150)),
                          width=300)
         hists = row(acc_hist, logprob_hist, state_block)
-        graphs = column(self.example_select, ts, hists, self.holder)
+        graphs = column(self.example_select,
+                        ts,
+                        hists,
+                        stats_text,
+                        Div(text='Notifications: ', width=100, height=15),
+                        self.notification,
+                        self.report_holder, self.datzip_holder)
         layout = row(widgets, graphs)
         doc.add_root(layout)
-        doc.title = f'FRETfinder v. {self.version}'
+        doc.title = f'FRETboard v. {self.version}'
 
     def start_gui(self):
         apps = {'/': Application(FunctionHandler(self.make_document))}
