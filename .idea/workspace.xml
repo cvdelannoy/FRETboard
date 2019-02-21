@@ -5,13 +5,7 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="68792b69-d3fc-4861-a7f9-9ae12bddddb5" name="Default" comment="first commit">
-      <change beforePath="$PROJECT_DIR$/.idea/inspectionProfiles/Project_Default.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/Project_Default.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Gui.py" beforeDir="false" afterPath="$PROJECT_DIR$/Gui.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/HiddenMarkovModel.py" beforeDir="false" afterPath="$PROJECT_DIR$/HiddenMarkovModel.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/applyTraceAnalysisCode.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/fret_finder.py" beforeDir="false" afterPath="$PROJECT_DIR$/fret_finder.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/helper_functions.py" beforeDir="false" afterPath="$PROJECT_DIR$/helper_functions.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/procfile" afterDir="false" />
     </list>
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
@@ -60,6 +54,7 @@
           <entry key="conf" value="2" />
           <entry key="html" value="5" />
           <entry key="js" value="2" />
+          <entry key="procfile" value="1" />
           <entry key="py" value="155" />
           <entry key="so" value="1" />
           <entry key="txt" value="3" />
@@ -69,7 +64,7 @@
         <counts>
           <entry key="HTML" value="5" />
           <entry key="JavaScript" value="2" />
-          <entry key="PLAIN_TEXT" value="6" />
+          <entry key="PLAIN_TEXT" value="7" />
           <entry key="Python" value="153" />
           <entry key="Scratch" value="2" />
         </counts>
@@ -80,6 +75,7 @@
           <entry key="conf" value="240" />
           <entry key="dummy" value="21" />
           <entry key="html" value="12" />
+          <entry key="procfile" value="18" />
           <entry key="py" value="53627" />
           <entry key="txt" value="119" />
         </counts>
@@ -87,7 +83,7 @@
       <usages-collector id="statistics.file.types.edit">
         <counts>
           <entry key="HTML" value="12" />
-          <entry key="PLAIN_TEXT" value="380" />
+          <entry key="PLAIN_TEXT" value="398" />
           <entry key="Python" value="67142" />
           <entry key="Scratch" value="379" />
         </counts>
@@ -95,37 +91,29 @@
     </session>
   </component>
   <component name="FileEditorManager">
-    <splitter split-orientation="horizontal" split-proportion="0.5">
-      <split-first>
-        <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
-          <file pinned="false" current-in-tab="true">
-            <entry file="file://$PROJECT_DIR$/FretReport.py">
-              <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="120">
-                  <caret line="8" column="31" lean-forward="true" selection-start-line="8" selection-start-column="31" selection-end-line="8" selection-end-column="31" />
-                  <folding>
-                    <marker date="1549033103076" expanded="true" signature="1702:1767" ph="..." />
-                  </folding>
-                </state>
-              </provider>
-            </entry>
-          </file>
-        </leaf>
-      </split-first>
-      <split-second>
-        <leaf>
-          <file pinned="false" current-in-tab="true">
-            <entry file="file://$PROJECT_DIR$/requirements.txt">
-              <provider selected="true" editor-type-id="text-editor">
-                <state relative-caret-position="75">
-                  <caret line="5" column="7" selection-start-line="5" selection-start-column="7" selection-end-line="5" selection-end-column="7" />
-                </state>
-              </provider>
-            </entry>
-          </file>
-        </leaf>
-      </split-second>
-    </splitter>
+    <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
+      <file pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/FretReport.py">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="120">
+              <caret line="8" column="31" selection-start-line="8" selection-start-column="31" selection-end-line="8" selection-end-column="31" />
+              <folding>
+                <marker date="1549033103076" expanded="true" signature="1702:1767" ph="..." />
+              </folding>
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file pinned="false" current-in-tab="true">
+        <entry file="file://$PROJECT_DIR$/procfile">
+          <provider selected="true" editor-type-id="text-editor">
+            <state>
+              <caret column="63" selection-start-column="63" selection-end-column="63" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+    </leaf>
   </component>
   <component name="FileTemplateManagerImpl">
     <option name="RECENT_TEMPLATES">
@@ -213,6 +201,7 @@
         <option value="$PROJECT_DIR$/ScrollStateTool.py" />
         <option value="$PROJECT_DIR$/fret_finder.py" />
         <option value="$PROJECT_DIR$/requirements.txt" />
+        <option value="$PROJECT_DIR$/procfile" />
       </list>
     </option>
   </component>
@@ -300,11 +289,6 @@
             <path>
               <item name="fret_finder" type="b2602c69:ProjectViewProjectNode" />
               <item name="fret_finder" type="462c0819:PsiDirectoryNode" />
-            </path>
-            <path>
-              <item name="fret_finder" type="b2602c69:ProjectViewProjectNode" />
-              <item name="fret_finder" type="462c0819:PsiDirectoryNode" />
-              <item name="templates" type="462c0819:PsiDirectoryNode" />
             </path>
           </expand>
           <select />
@@ -640,13 +624,6 @@
     </breakpoint-manager>
   </component>
   <component name="editorHistoryManager">
-    <entry file="file://$USER_HOME$/miniconda3/envs/fret_finder/lib/python3.6/site-packages/sklearn/utils/validation.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="495">
-          <caret line="309" column="4" selection-start-line="309" selection-start-column="4" selection-end-line="309" selection-end-column="4" />
-        </state>
-      </provider>
-    </entry>
     <entry file="file://$USER_HOME$/miniconda3/envs/fret_finder/lib/python3.6/site-packages/bokeh/core/property/descriptors.py">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="190">
@@ -921,10 +898,17 @@
     <entry file="file://$PROJECT_DIR$/FretReport.py">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="120">
-          <caret line="8" column="31" lean-forward="true" selection-start-line="8" selection-start-column="31" selection-end-line="8" selection-end-column="31" />
+          <caret line="8" column="31" selection-start-line="8" selection-start-column="31" selection-end-line="8" selection-end-column="31" />
           <folding>
             <marker date="1549033103076" expanded="true" signature="1702:1767" ph="..." />
           </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/procfile">
+      <provider selected="true" editor-type-id="text-editor">
+        <state>
+          <caret column="63" selection-start-column="63" selection-end-column="63" />
         </state>
       </provider>
     </entry>
