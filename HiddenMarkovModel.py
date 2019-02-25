@@ -13,7 +13,7 @@ class HiddenMarkovModel(object):
 
     def __init__(self, **kwargs):
         self.trained_hmm = None
-        self.feature_list = ['i_fret', 'i_sum']
+        self.feature_list = ['E_FRET', 'i_sum']
         self.nb_states = kwargs['nb_states']
         self.data = kwargs['data']
 
@@ -59,7 +59,9 @@ class HiddenMarkovModel(object):
         state_sequence = np.empty(n_samples, dtype=int)
         for i, j in iter_from_X_lengths(X, lengths):
             # XXX decoder works on a single sample at a time!
-            logprobij, state_sequenceij = decoder(X[i:j])
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=DeprecationWarning)
+                logprobij, state_sequenceij = decoder(X[i:j])
             logprob.append(logprobij)
             state_sequence[i:j] = state_sequenceij
 
@@ -91,7 +93,7 @@ class HiddenMarkovModel(object):
             'i_don': [np.array([], dtype=np.int64)] * nb_files,
             'i_acc': [np.array([], dtype=np.int64)] * nb_files,
             'i_sum': [np.array([], dtype=np.float64)] * nb_files,
-            'i_fret': [np.array([], dtype=np.float64)] * nb_files,
+            'E_FRET': [np.array([], dtype=np.float64)] * nb_files,
             'labels': [np.array([], dtype=np.int64)] * nb_files,
             'prediction': [np.array([], dtype=np.int64)] * nb_files,
             'logprob': [np.array([], dtype=np.float64)] * nb_files},
@@ -105,7 +107,7 @@ class HiddenMarkovModel(object):
                 df_out.at[dat_file, 'i_don'] = fc_out[0]
                 df_out.at[dat_file, 'i_acc'] = fc_out[1]
                 df_out.at[dat_file, 'i_sum'] = fc_out[2]
-                df_out.at[dat_file, 'i_fret'] = fc_out[3]
+                df_out.at[dat_file, 'E_FRET'] = fc_out[3]
             except:
                 print('File {} could not be read, skipping'.format(dat_file))
                 df_out.drop([dat_file], inplace=True)
@@ -117,10 +119,10 @@ class HiddenMarkovModel(object):
         i_acc = fc[1, :]
         i_sum = np.sum((i_don, i_acc), axis=0)
         i_sum = i_sum / i_sum.max()
-        i_fret = np.divide(i_acc, np.sum((i_don, i_acc), axis=0))
+        E_FRET = np.divide(i_acc, np.sum((i_don, i_acc), axis=0))
         if full_set:
-            return i_don, i_acc, i_sum, i_fret, np.array([], dtype=np.int64), np.array([], dtype=np.int64), np.array([], dtype=np.float64), False
-        return i_don, i_acc, i_sum, i_fret
+            return i_don, i_acc, i_sum, E_FRET, np.array([], dtype=np.int64), np.array([], dtype=np.int64), np.array([], dtype=np.float64), False
+        return i_don, i_acc, i_sum, E_FRET
 
     def add_data_tuple(self, fn, data, last=True):
         self._data.loc[fn] = self.read_line(data, full_set=True)
@@ -145,7 +147,7 @@ class HiddenMarkovModel(object):
             feature_vec = np.concatenate(feature_vec).reshape(-1,1)
             feature_list.append(feature_vec)
         nb_features = len(feature_list)
-        # feature_list = self.data.loc[self.data.is_labeled, 'i_fret']
+        # feature_list = self.data.loc[self.data.is_labeled, 'E_FRET']
         label_list = self.data.loc[self.data.is_labeled, 'labels']
         label_vec = np.concatenate(label_list).reshape(-1, 1)
 
@@ -205,7 +207,7 @@ class HiddenMarkovModel(object):
             bool_idx = np.repeat(True, self.data.shape[0])
         data_subset = self.data.loc[bool_idx, :]
         vec_list = list()
-        seq_lengths = data_subset.apply(lambda x: x.i_fret.size, axis=1)
+        seq_lengths = data_subset.apply(lambda x: x.E_FRET.size, axis=1)
         for feature in self.feature_list:
             vec = np.concatenate(data_subset.loc[:,feature].values).reshape(-1,1)
             vec_list.append(vec)

@@ -39,7 +39,6 @@ function read_file(filename, idx) {
             } else {
                 var last_bool = false
             }
-            last_bool
             file_source.data = {'file_contents' : [b64string], 'file_name': [input.files[i].name], 'last_bool': [last_bool]};
             file_source.change.emit();
         };
@@ -74,6 +73,47 @@ input.onchange = function(){
 }
 input.click();
 """
+
+# upload_impl = """
+# var reader = {};
+# var file = {};
+# var slice_size = 1000 * 1024;
+#
+# function upload_slice(start) {
+#     var next_slice = start + slice_size + 1;
+#     var blob = file.slice( start, next_slice );
+#
+#     reader.onloadend = function( event ) {
+#         // if ( event.target.readyState == FileReader.DONE ) {return}
+#         var b64string = event.target.result;
+#         file_source.data = {'file_contents' : [b64string], 'file_name': ['tst']};
+#         file_source.change.emit();
+#         //if ( next_slice < file.size) {upload_slice(next_slice)}
+#     reader.readAsDataURL( blob );
+# 		}
+# }
+#
+# function upload_file(file) {
+#     reader = new FileReader();
+#     upload_file(0);
+# }
+#
+# var input = document.createElement('input');
+# input.setAttribute('type', 'file');
+# input.multiple=true
+# input.onchange = function(){
+#     if (window.FileReader) {
+#         for (var i = 0; i < input.files.length; i++){
+#             console.log(input.files[i].name)
+#             upload_file(input.files[i]);
+#         }
+#     } else {
+#         alert('FileReader is not supported in this browser');
+#     }
+# }
+#
+# input.click();
+# """
 
 upload_model_impl = """
 function read_file(filename) {
@@ -195,7 +235,7 @@ class Gui(object):
         self.num_states_slider = Slider(title='Number of states', value=hmm_obj.nb_states, start=2, end=6, step=1)
         self.sel_state_slider = Slider(title='change selection to state', value=1, start=1,
                                        end=self.num_states_slider.value, step=1)
-        self.influence_slider = Slider(title='Influence supervision', value=0.2, start=0.0, end=1.0, step=0.01)
+        self.influence_slider = Slider(title='Influence supervision', value=1.0, start=0.0, end=1.0, step=0.01)
         self.notification = PreText(text='', width=1000, height=15)
         self.acc_text = PreText(text='N/A')
         self.mc_text = PreText(text='0%')
@@ -256,8 +296,8 @@ class Gui(object):
         return LinearColorMapper(palette=colors, low=0, high=0.99)
 
     @cached_property
-    def i_fret(self):
-        return self.hmm_obj.data.loc[self.cur_example_idx].i_fret
+    def E_FRET(self):
+        return self.hmm_obj.data.loc[self.cur_example_idx].E_FRET
 
     @cached_property
     def i_don(self):
@@ -282,7 +322,7 @@ class Gui(object):
             self.hmm_obj.data.at[self.cur_example_idx, column][idx] = value
 
     def invalidate_cached_properties(self):
-        for k in ['i_fret', 'tp', 'ts', 'ts_don', 'ts_acc', 'i_don', 'i_acc',
+        for k in ['E_FRET', 'tp', 'ts', 'ts_don', 'ts_acc', 'i_don', 'i_acc',
                   'accuracy_hist']:
             if k in self.__dict__:
                 del self.__dict__[k]
@@ -332,12 +372,18 @@ class Gui(object):
         file_contents = base64.b64decode(b64_contents)
         fn = self.new_source.data['file_name'][0]
         last_bool = self.new_source.data['last_bool'][0]
-
+        nb_colors = 2
         # Process .trace files
         if '.traces' in fn:
             nb_frames, _, nb_traces = np.frombuffer(file_contents, dtype=np.int16, count=3)
             traces_vec = np.frombuffer(file_contents, dtype=np.int16, count=nb_frames * nb_traces + 3)
-            file_contents = traces_vec[3:].reshape((2, nb_traces // 2, nb_frames), order='F')
+            try:
+                traces_vec = traces_vec[3:]
+                traces_vec = traces_vec[:nb_colors * (nb_traces // nb_colors) * nb_frames]
+                file_contents = traces_vec[3:].reshape((nb_colors, nb_traces // nb_colors, nb_frames), order='F')
+            except:
+                print(traces_vec[:20])
+                return
             fn_clean = os.path.splitext(fn)[0]
             for fi, f in enumerate(np.hsplit(file_contents, file_contents.shape[1])):
                 last_trace_bool = fi+1 == file_contents.shape[1]
@@ -436,6 +482,7 @@ class Gui(object):
     def update_state_curves(self):
         fidx = self.state_radio.active
         # feature_idx = [i for i, n in enumerate(self.hmm_obj.feature_list) if n == feature_name]
+        if self.hmm_obj.trained_hmm is None: return
         mus = self.hmm_obj.trained_hmm.means_[:, fidx]
         sds = self.hmm_obj.trained_hmm.covars_[:, fidx, fidx]
 
@@ -453,21 +500,23 @@ class Gui(object):
             self.hmm_obj.nb_states = new
 
             # Update widget: show-me checkboxes
-            showme_idx = [n - 1 for n in range(1,new)]
-            showme_states = [str(n) for n in range(1,new)]
+            showme_idx = list(range(new))
+            showme_states = [str(n) for n in range(1,new+1)]
             self.showme_checkboxes.labels = showme_states
             self.showme_checkboxes.active = showme_idx
-
-            # retraining hmm
-            self.hmm_obj.train(influence=self.influence_slider.value)
-            self.invalidate_cached_properties()
+            self.saveme_checkboxes.labels = showme_states
+            self.saveme_checkboxes.active = showme_idx
 
             # Update widget: selected state slider
             self.sel_state_slider.end = new
-            self.update_state_curves()
+            if self.sel_state_slider.value > new: self.sel_state_slider.value = new
 
-            print('update example')
-            self.update_example(None, '', self.cur_example_idx)
+            # retraining hmm
+            if self.hmm_obj.data.shape[0] != 0:
+                self.invalidate_cached_properties()
+                self.hmm_obj.train(influence=self.influence_slider.value)
+                self.update_state_curves()
+                self.update_example(None, '', self.cur_example_idx)
 
     def update_scroll_state(self, attr, old, new):
         if not self.scroll_state_source['new_state'][0]:
@@ -505,6 +554,7 @@ class Gui(object):
 
     def update_showme(self, attr, old, new):
         if old == new: return
+        if self.hmm_obj.data.shape[0] == 0: return
         valid_bool = self.hmm_obj.data.apply(lambda x: np.invert(x.is_labeled)
                                                        and any(i in new for i in x.prediction), axis=1)
         if any(valid_bool):
@@ -522,7 +572,7 @@ class Gui(object):
                        width=280, height=70)
 
         # --- 1. Load ---
-        load_button = Button(label='Data', button_type='success')
+        load_button = Button(label='Data')
         load_button.callback = CustomJS(args=dict(file_source=self.new_source), code=upload_impl)
 
         load_model_button = Button(label='Model')
@@ -541,9 +591,9 @@ class Gui(object):
         self.showme_checkboxes.on_change('active', self.update_showme)
         showme_col = column(Div(text='Show traces with states:', width=300, height=16),
                             self.showme_checkboxes,
-                            width=300)
+                            height=80, width=300)
 
-        example_button = Button(label='Next example', button_type='success')
+        example_button = Button(label='Train', button_type='success')
 
         # --- 3. Save ---
         save_model_button = Button(label='Model')
@@ -552,13 +602,13 @@ class Gui(object):
         save_data_button = Button(label='Data')
         save_data_button.on_click(self.generate_dats)
 
-        report_button = Button(label='report', button_type='success')
+        report_button = Button(label='report')
         report_button.on_click(self.generate_report)
 
         self.saveme_checkboxes = CheckboxButtonGroup(labels=showme_states, active=showme_idx)
         saveme_col = column(Div(text='Save traces with states:', width=300, height=16),
                             self.saveme_checkboxes,
-                            width=300)
+                            height=80, width=300)
 
         # --- Define plots ---
         # Main timeseries
@@ -629,12 +679,10 @@ class Gui(object):
                          self.sel_state_slider,
                          self.influence_slider,
                          showme_col,
-                         del_trace_button,
-                         example_button,
+                         row(widgetbox(del_trace_button, width=150), widgetbox(example_button, width=150)),
                          Div(text="<font size=4>3. Save</font>", width=280, height=15),
                          saveme_col,
-                         report_button,
-                         row(widgetbox(save_data_button, width=150), widgetbox(save_model_button, width=150)),
+                         row(widgetbox(report_button, width=100), widgetbox(save_data_button, width=100), widgetbox(save_model_button, width=100)),
                          width=300)
         hists = row(acc_hist, logprob_hist, state_block)
         graphs = column(self.example_select,
@@ -650,7 +698,7 @@ class Gui(object):
 
     def start_gui(self):
         apps = {'/': Application(FunctionHandler(self.make_document))}
-        server = Server(apps, port=0)
+        server = Server(apps, port=0, websocket_max_message_size=100000000)
         server.show('/')
         loop = IOLoop.current()
         loop.start()

@@ -22,7 +22,7 @@ class FretReport(object):
 
     @cached_property
     def condensed_seq_df(self):
-        seq_df = pd.DataFrame({'i_fret': self.hmm_obj.data.i_fret,
+        seq_df = pd.DataFrame({'E_FRET': self.hmm_obj.data.E_FRET,
                                'out_labels': self.out_labels},
                               index=self.hmm_obj.data.index)
         return seq_df.apply(lambda x: self.condense_sequence(x), axis=1)
@@ -31,7 +31,7 @@ class FretReport(object):
     def event_df(self):
         seq_mat = self.condensed_seq_df.values
         seq_mat = np.array(list(itertools.chain.from_iterable(seq_mat)))
-        event_df = pd.DataFrame({'state': seq_mat[:, 0].astype(int), 'i_fret': seq_mat[:, 2],
+        event_df = pd.DataFrame({'state': seq_mat[:, 0].astype(int), 'E_FRET': seq_mat[:, 2],
                                  'duration': seq_mat[:, 1].astype(int)})
         return event_df
 
@@ -43,7 +43,7 @@ class FretReport(object):
             r_array = np.array(r)
             before.extend(r_array[:-1, 2])
             after.extend(r_array[1:, 2])
-        return pd.DataFrame({'i_fret_before': before, 'i_fret_after': after})
+        return pd.DataFrame({'E_FRET_before': before, 'E_FRET_after': after})
 
     @ cached_property
     def k_off(self):
@@ -57,8 +57,8 @@ class FretReport(object):
         :param seq:
         :return:
         """
-        seq_condensed = [[seq.out_labels[0], 0, 0]]  # symbol, duration, I_fret sum
-        for s, i in zip(seq.out_labels, seq.i_fret):
+        seq_condensed = [[seq.out_labels[0], 0, 0]]  # symbol, duration, E_FRET sum
+        for s, i in zip(seq.out_labels, seq.E_FRET):
             if s == seq_condensed[-1][0]:
                 seq_condensed[-1][1] += 1
                 seq_condensed[-1][2] += i
@@ -84,7 +84,7 @@ class FretReport(object):
         ed_scatter.grid.visible = False
         ed_scatter.xaxis.axis_label = 'duration (# measurements)'
         ed_scatter.yaxis.axis_label = 'FRET intensity'
-        ed_scatter.scatter(x='duration', y='i_fret', color={'field': 'state', 'transform': self.gui_obj.col_mapper},
+        ed_scatter.scatter(x='duration', y='E_FRET', color={'field': 'state', 'transform': self.gui_obj.col_mapper},
                            source=cds)
         return ed_scatter
 
@@ -95,43 +95,30 @@ class FretReport(object):
         tdp_hex.grid.visible = False
         tdp_hex.xaxis.axis_label = 'E FRET before transition'
         tdp_hex.yaxis.axis_label = 'E FRET after transition'
-        tdp_hex.hexbin(x=self.transition_df['i_fret_before'], y=self.transition_df['i_fret_after'], size=0.01)
+        tdp_hex.hexbin(x=self.transition_df['E_FRET_before'], y=self.transition_df['E_FRET_after'], size=0.01)
         return tdp_hex
 
     def make_hmm_param_table(self):
 
-        state_name_list = ['State ' + str(sn + 1) for sn in range(self.hmm_obj.nb_states)]
+        # Transition matrix
+        state_list = [str(nb+1) for nb in range(self.hmm_obj.nb_states)]
+        tm_vecs = np.split(self.hmm_obj.trained_hmm.transmat_, indices_or_sections=self.hmm_obj.nb_states, axis=0)
+        tm_dict = {str(i + 1): np.round(tmi, 3).squeeze().tolist() for i, tmi, in enumerate(tm_vecs)}
+        tm = pd.DataFrame(tm_dict, index=state_list)
+        tm_obj = Div(text=tm.to_html(border=0), width=50, height=500)
 
-        # emisisons table
-        columns = [TableColumn(field='state', title='state')]
-        cds_dict = {'state': state_name_list}
-        for fi, feat in enumerate(self.hmm_obj.feature_list):
-            columns.append(TableColumn(field=str(feat) + ' mu', title=str(feat) + ' mu'))
-            columns.append(TableColumn(field=str(feat) + ' sd', title=str(feat) + ' sd'))
-            cds_dict[str(feat) + ' mu'] = self.hmm_obj.trained_hmm.means_[:, fi].round(3)
-            cds_dict[str(feat) + ' sd'] = self.hmm_obj.trained_hmm.covars_[:, fi, fi].round(3)
+        # Emisisons table
+        nb_features = len(self.hmm_obj.feature_list)
+        mu_vecs = np.split(self.hmm_obj.trained_hmm.means_.round(3), nb_features, axis=1)
+        mu_vecs = [m.squeeze() for m in mu_vecs]
+        cv_vecs = np.split(self.hmm_obj.trained_hmm.covars_.round(3), nb_features, axis=1)
+        cv_vecs = [cv.squeeze()[:,i] for i, cv in enumerate(cv_vecs)]
+        em_cols = [f'mu {fn}' for fn in self.hmm_obj.feature_list] + [f'sd {fn}' for fn in self.hmm_obj.feature_list]
+        em_dict = {cn: mc.tolist() for cn, mc in zip(em_cols, np.concatenate((mu_vecs, cv_vecs)))}
 
-        # cds_dict = {}
-        # header = []
-        # for fi, feat in enumerate(self.hmm_obj.feature_list):
-        #     header.extend(f'<th>{str(feat)} mu</th> <th>{str(feat)} sd</th>')
-        #     cds_dict[str(feat) + ' mu'] = self.hmm_obj.trained_hmm.means_[:, fi].round(3)
-        #     cds_dict[str(feat) + ' sd'] = self.hmm_obj.trained_hmm.covars_[:, fi, fi].round(3)
-        # em_data_table = f"<table>{header}"
-        # for k in cds_dict
+        em_df = pd.DataFrame(em_dict, index=state_list)
+        em_obj = Div(text=em_df.to_html(border=0), width=50, height=500)
 
-        em_data_table = DataTable(source=ColumnDataSource(cds_dict), columns=columns)
-        em_obj = column(PreText(text='Emission probabilities'), em_data_table)
-
-        # transition matrix
-        tm = self.hmm_obj.trained_hmm.transmat_.round(3)
-        tm_columns = [TableColumn(field='state', title='')]
-        tm_dict = {'state': state_name_list}
-        for si, sn in enumerate(state_name_list):
-            tm_columns.append(TableColumn(field=sn, title=''))
-            tm_dict[sn] = tm[:,si].tolist()
-        tm_table = DataTable(source=ColumnDataSource(tm_dict), columns=tm_columns)
-        tm_obj = column(PreText(text='Transition table'), tm_table)
         return row(em_obj, tm_obj)
         # todo: accuracy/posterior probability estimates: hist + text
         # todo: gauss curves per model
