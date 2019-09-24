@@ -10,15 +10,19 @@ import base64
 
 from bokeh.layouts import row, column, widgetbox
 from bokeh.plotting import figure, curdoc
-from bokeh.models import ColumnDataSource, LinearColorMapper, CustomJS
+from bokeh.models import ColumnDataSource, LinearColorMapper#, CustomJS
+from bokeh.models.callbacks import CustomJS
 from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Div, CheckboxButtonGroup
+from bokeh.models.widgets.panels import Panel, Tabs
 from tornado.ioloop import IOLoop
 from hmmlearn import hmm
 from helper_functions import print_timestamp
+import pandas as pd
 
 from FretReport import FretReport
-from ScrollStateTool import ScrollStateTool
 
+
+__location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 line_opts = dict(line_width=1)
 rect_opts = dict(width=1.01, alpha=1, line_alpha=0)
 white_blue_colors = ['#f7fbff', '#deebf7', '#c6dbef', '#9ecae1', '#6baed6', '#4292c6', '#2171b5', '#084594']
@@ -27,200 +31,11 @@ pastel_colors = ["#75968f", "#a5bab7", "#c9d9d3", "#e2e2e2", "#dfccce", "#ddb7b1
 diverging_colors = ['#d53e4f', '#f46d43', '#fdae61', '#fee08b', '#e6f598', '#abdda4', '#66c2a5', '#3288bd']
 colors = white_blue_colors
 
-upload_impl = """
-function read_file(filename, idx) {
-    var reader = new FileReader();
-    reader.onload = (function(i){
-        return function(event){
-            var b64string = event.target.result;
-            if (i + 1 == input.files.length){
-                console.log('final entry');
-                var last_bool = true
-            } else {
-                var last_bool = false
-            }
-            file_source.data = {'file_contents' : [b64string], 'file_name': [input.files[i].name], 'last_bool': [last_bool]};
-            file_source.change.emit();
-        };
-    })(idx);
-    reader.onerror = error_handler;
-
-    // readAsDataURL represents the file's data as a base64 encoded string
-    var re = /(?:\.([^.]+))?$/g;
-    var ext = (re.exec(input.files[idx].name))[1];
-    if (ext == "dat" || ext == "traces"){
-        reader.readAsDataURL(filename);
-    } else{ alert(ext + " extension found, only .dat and .traces files accepted for now")};
-}
-
-function error_handler(evt) {
-    if(evt.target.error.name == "NotReadableError") {
-        alert("Can't read file!");
-    }
-}
-
-var input = document.createElement('input');
-input.setAttribute('type', 'file');
-input.multiple=true
-input.onchange = function(){
-    if (window.FileReader) {
-        for (var i = 0; i < input.files.length; i++){
-            read_file(input.files[i], i);
-        }
-    } else {
-        alert('FileReader is not supported in this browser');
-    }
-}
-input.click();
-"""
-
-# upload_impl = """
-# var reader = {};
-# var file = {};
-# var slice_size = 1000 * 1024;
-#
-# function upload_slice(start) {
-#     var next_slice = start + slice_size + 1;
-#     var blob = file.slice( start, next_slice );
-#
-#     reader.onloadend = function( event ) {
-#         // if ( event.target.readyState == FileReader.DONE ) {return}
-#         var b64string = event.target.result;
-#         file_source.data = {'file_contents' : [b64string], 'file_name': ['tst']};
-#         file_source.change.emit();
-#         //if ( next_slice < file.size) {upload_slice(next_slice)}
-#     reader.readAsDataURL( blob );
-# 		}
-# }
-#
-# function upload_file(file) {
-#     reader = new FileReader();
-#     upload_file(0);
-# }
-#
-# var input = document.createElement('input');
-# input.setAttribute('type', 'file');
-# input.multiple=true
-# input.onchange = function(){
-#     if (window.FileReader) {
-#         for (var i = 0; i < input.files.length; i++){
-#             console.log(input.files[i].name)
-#             upload_file(input.files[i]);
-#         }
-#     } else {
-#         alert('FileReader is not supported in this browser');
-#     }
-# }
-#
-# input.click();
-# """
-
-upload_model_impl = """
-function read_file(filename) {
-    var reader = new FileReader();
-    reader.onload = load_handler;
-    reader.onerror = error_handler;
-    // readAsDataURL represents the file's data as a base64 encoded string
-    reader.readAsDataURL(filename);
-}
-
-function load_handler(event) {
-    var b64string = event.target.result;
-    file_source.data = {'file_contents' : [b64string]};
-    file_source.change.emit();
-}
-
-function error_handler(evt) {
-    if(evt.target.error.name == "NotReadableError") {
-        alert("Can't read file!");
-    }
-}
-
-var input = document.createElement('input');
-input.setAttribute('type', 'file');
-input.onchange = function(){
-    if (window.FileReader) {
-        read_file(input.files[0]);
-    } else {
-        alert('FileReader is not supported in this browser');
-    }
-}
-input.click();
-"""
-
-download_datzip_impl = """
-function str2bytes (str) {
-    var bytes = new Uint8Array(str.length);
-    for (var i=0; i<str.length; i++) {
-        bytes[i] = str.charCodeAt(i);
-    }
-    return bytes;
-}
-
-const filename = 'dat_files.zip'
-var b64data = window.atob(file_source.data.datzip[0])
-const blob = new Blob([str2bytes(b64data)], { type: 'application/octet-stream' })
-//addresses IE
-if (navigator.msSaveBlob) {
-    navigator.msSaveBlob(blob, filename)
-} else {
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = filename
-    link.target = '_blank'
-    link.style.visibility = 'hidden'
-    link.dispatchEvent(new MouseEvent('click'))
-}"""
-
-download_report_impl = """
-const filename = 'FRETboard_report.html'
-const blob = new Blob([file_source.data.html_text], { type: 'text;charset=utf-8;' })
-
-//addresses IE
-if (navigator.msSaveBlob) {
-    navigator.msSaveBlob(blob, filename)
-} else {
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = filename
-    link.target = '_blank'
-    link.style.visibility = 'hidden'
-    link.dispatchEvent(new MouseEvent('click'))
-}"""
-
-download_csv_impl = """
-function table_to_csv(file_source) {
-    const columns = Object.keys(file_source.data)
-    const nrows = file_source.get_length()
-    const lines = [columns.join(',')]
-
-    for (let i = 0; i < nrows; i++) {
-        let row = [];
-        for (let j = 0; j < columns.length; j++) {
-            const column = columns[j]
-            row.push(file_source.data[column][i].toString())
-        }
-        lines.push(row.join(','))
-    }
-    return lines.join('\\n').concat('\\n')
-}
-
-const filename = 'FRETboard_model.csv'
-filetext = table_to_csv(file_source)
-const blob = new Blob([filetext], { type: 'text/csv;charset=utf-8;' })
-
-//addresses IE
-if (navigator.msSaveBlob) {
-    navigator.msSaveBlob(blob, filename)
-} else {
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = filename
-    link.target = '_blank'
-    link.style.visibility = 'hidden'
-    link.dispatchEvent(new MouseEvent('click'))
-}"""
-
+with open(f'{__location__}/js_widgets/upload.js', 'r') as fh: upload_js = fh.read()
+with open(f'{__location__}/js_widgets/upload_model.js', 'r') as fh: upload_model_js = fh.read()
+with open(f'{__location__}/js_widgets/download_datzip.js', 'r') as fh: download_datzip_js = fh.read()
+with open(f'{__location__}/js_widgets/download_report.js', 'r') as fh: download_report_js = fh.read()
+with open(f'{__location__}/js_widgets/download_csv.js', 'r') as fh: download_csv_js = fh.read()
 
 param_state_dict = {18: 2, 30: 3, 44: 4, 60: 5, 78: 6, 98: 7}
 
@@ -244,8 +59,9 @@ class Gui(object):
         self.datzip_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
 
         # ColumnDataSources
-        self.source = ColumnDataSource(data=dict(i_don=[], i_acc=[], time=[],
+        self.source = ColumnDataSource(data=dict(i_don=[], i_acc=[], E_FRET=[], sd_roll=[], i_sum=[], time=[],
                                                  rect_height=[], rect_mid=[],
+                                                 i_sum_height=[], i_sum_mid=[],
                                                  labels=[], labels_pct=[]))
         ahb = np.arange(start=0, stop=100, step=5)
         self.new_source = ColumnDataSource({'file_contents': [], 'file_name': []})
@@ -265,6 +81,9 @@ class Gui(object):
 
         # HMM object
         self.hmm_obj = hmm_obj
+
+        self.new_tot = ColumnDataSource(data=dict(value=[0]))
+        self.new_cur = 0
 
     @property
     def hmm_obj(self):
@@ -300,6 +119,10 @@ class Gui(object):
         return self.hmm_obj.data.loc[self.cur_example_idx].E_FRET
 
     @cached_property
+    def sd_roll(self):
+        return self.hmm_obj.data.loc[self.cur_example_idx].sd_roll
+
+    @cached_property
     def i_don(self):
         return self.hmm_obj.data.loc[self.cur_example_idx].i_don
 
@@ -310,6 +133,10 @@ class Gui(object):
     @cached_property
     def i_acc(self):
         return self.hmm_obj.data.loc[self.cur_example_idx].i_acc
+
+    @cached_property
+    def i_sum(self):
+        return self.hmm_obj.data.loc[self.cur_example_idx].i_sum
 
     def set_value(self, column, value, idx=None):
         """
@@ -322,7 +149,7 @@ class Gui(object):
             self.hmm_obj.data.at[self.cur_example_idx, column][idx] = value
 
     def invalidate_cached_properties(self):
-        for k in ['E_FRET', 'tp', 'ts', 'ts_don', 'ts_acc', 'i_don', 'i_acc',
+        for k in ['E_FRET', 'sd_roll', 'i_sum', 'tp', 'ts', 'ts_don', 'ts_acc', 'i_don', 'i_acc',
                   'accuracy_hist']:
             if k in self.__dict__:
                 del self.__dict__[k]
@@ -332,7 +159,7 @@ class Gui(object):
         tm_array = self.hmm_obj.trained_hmm.transmat_.reshape(-1, 1).squeeze()
         means = self.hmm_obj.trained_hmm.means_.reshape(-1, 1).squeeze()
         covar_list = [blk.reshape(1, -1).squeeze() for blk in
-                      np.split(self.hmm_obj.trained_hmm.covars_, axis=0, indices_or_sections=3)]
+                      np.split(self.hmm_obj.trained_hmm.covars_, axis=0, indices_or_sections=self.num_states_slider.value)]
         covars = np.concatenate(covar_list)
         # covars = self.hmm_obj.trained_hmm.covars_.reshape(-1, 1).squeeze()
         startprob = self.hmm_obj.trained_hmm.startprob_.reshape(-1, 1).squeeze()
@@ -371,7 +198,7 @@ class Gui(object):
         _, b64_contents = raw_contents.split(",", 1)  # remove the prefix that JS adds
         file_contents = base64.b64decode(b64_contents)
         fn = self.new_source.data['file_name'][0]
-        last_bool = self.new_source.data['last_bool'][0]
+        # last_bool = self.new_source.data['last_bool'][0]
         nb_colors = 2
         # Process .trace files
         if '.traces' in fn:
@@ -387,16 +214,21 @@ class Gui(object):
             fn_clean = os.path.splitext(fn)[0]
             for fi, f in enumerate(np.hsplit(file_contents, file_contents.shape[1])):
                 last_trace_bool = fi+1 == file_contents.shape[1]
-                self.hmm_obj.add_data_tuple(f'{fn_clean}_tr{fi+1}', f.squeeze(), last=last_bool * last_trace_bool)
+                self.hmm_obj.add_data_tuple(f'{fn_clean}_tr{fi+1}', f.squeeze(), last=False)
 
         # Process .dat files
         elif '.dat' in fn:
             file_contents = base64.b64decode(b64_contents).decode('utf-8')
-            file_contents = np.column_stack([np.fromstring(n, sep=' ') for n in file_contents.split('\n') if len(n)])[1:, :]
+            file_contents = np.column_stack([np.fromstring(n, sep=' ') for n in file_contents.split('\n') if len(n)])
             if len(file_contents):
-                self.hmm_obj.add_data_tuple(self.new_source.data['file_name'][0], file_contents, last=last_bool)
+                self.hmm_obj.add_data_tuple(self.new_source.data['file_name'][0], file_contents, last=False)
 
-        if last_bool:
+        self.new_cur += 1
+
+        # Reload/retrain hmm
+        if self.new_tot.data['value'][0] == self.new_cur:
+            self.new_cur = 0
+            self.hmm_obj.set_matrix()
             if len(file_contents): self.example_select.options = self.hmm_obj.data.index.tolist()
             if self.cur_example_idx is None: self.cur_example_idx = self.example_select.options[0]
             if self.model_loaded:
@@ -423,7 +255,7 @@ class Gui(object):
         if all(self.hmm_obj.data.is_labeled):
             self.notification.text += f'{print_timestamp()}All examples have already been manually classified'
         else:
-            self.set_value('labels', self.hmm_obj.data.loc[self.cur_example_idx].prediction.copy())
+            # self.set_value('labels', self.hmm_obj.data.loc[self.cur_example_idx].prediction.copy())
             self.set_value('is_labeled', True)
             self.train_and_update()
             new_example_idx = np.random.choice(self.hmm_obj.data.loc[np.invert(self.hmm_obj.data.is_labeled), 'logprob'].index)
@@ -439,8 +271,11 @@ class Gui(object):
         rect_mid = (all_ts.min() + all_ts.max()) / 2
         rect_height = np.abs(all_ts.min()) + np.abs(all_ts.max())
         self.source.data = dict(i_don=self.i_don, i_acc=self.i_acc, time=np.arange(nb_samples),
+                                E_FRET=self.E_FRET, sd_roll=self.sd_roll, i_sum=self.i_sum,
                                 rect_height=np.repeat(rect_height, nb_samples),
                                 rect_mid=np.repeat(rect_mid, nb_samples),
+                                i_sum_height=np.repeat(self.i_sum.max(), nb_samples),
+                                i_sum_mid=np.repeat(self.i_sum.mean(), nb_samples),
                                 labels=self.hmm_obj.data.loc[self.cur_example_idx, 'labels'],
                                 labels_pct=self.hmm_obj.data.loc[self.cur_example_idx, 'labels'] * 1.0 / self.num_states_slider.value)
         self.update_accuracy_hist()
@@ -533,12 +368,12 @@ class Gui(object):
     def generate_dats(self):
         tfh = tempfile.TemporaryDirectory()
         for fn, tup in self.hmm_obj.data.iterrows():
-            labels = tup.labels + 1 if len(tup.labels) != 0 else tup.prediction + 1
+            labels = tup.labels + 1 if len(tup.labels) != 0 else [None] * len(tup.time)
             sm_bool = [True for sm in self.saveme_checkboxes.active if sm + 1 in labels]
             if not all(sm_bool): continue
-            time = np.arange(labels.size)
-            arr_out = np.vstack((time, tup.i_don, tup.i_acc, labels)).T.astype(int)
-            np.savetxt(f'{tfh.name}/{fn}', arr_out, fmt='%i')
+            out_df = pd.DataFrame(dict(time=tup.time, i_don=tup.i_don, i_acc=tup.i_acc,
+                                       label=labels, predicted=tup.prediction))
+            out_df.to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
         zip_dir = tempfile.TemporaryDirectory()
         zip_fn = shutil.make_archive(f'{zip_dir.name}/dat_files', 'zip', tfh.name)
         with open(zip_fn, 'rb') as f:
@@ -569,15 +404,15 @@ class Gui(object):
         # --- Define widgets ---
 
         ff_title = Div(text=f"""<font size=15><b>FRETboard</b></font><br>v.{self.version}<hr>""",
-                       width=280, height=70)
+                       width=280, height=90)
 
         # --- 1. Load ---
         load_button = Button(label='Data')
-        load_button.callback = CustomJS(args=dict(file_source=self.new_source), code=upload_impl)
+        load_button.callback = CustomJS(args=dict(file_source=self.new_source, new_counter=self.new_tot), code=upload_js)
 
         load_model_button = Button(label='Model')
         load_model_button.callback = CustomJS(args=dict(file_source=self.hmm_loaded_source),
-                                              code=upload_model_impl)
+                                              code=upload_model_js)
 
 
         # --- 2. Teach ---
@@ -598,11 +433,11 @@ class Gui(object):
         # --- 3. Save ---
         save_model_button = Button(label='Model')
         save_model_button.callback = CustomJS(args=dict(file_source=self.hmm_source),
-                                              code=download_csv_impl)
+                                              code=download_csv_js)
         save_data_button = Button(label='Data')
         save_data_button.on_click(self.generate_dats)
 
-        report_button = Button(label='report')
+        report_button = Button(label='Report')
         report_button.on_click(self.generate_report)
 
         self.saveme_checkboxes = CheckboxButtonGroup(labels=showme_states, active=showme_idx)
@@ -611,14 +446,37 @@ class Gui(object):
                             height=80, width=300)
 
         # --- Define plots ---
+
         # Main timeseries
-        ts = figure(tools='xbox_select,save', plot_width=1000, plot_height=275, active_drag='xbox_select')
-        ts.add_tools(ScrollStateTool(source=self.scroll_state_source))
+        ts = figure(tools='xbox_select,save,xwheel_zoom,xpan', plot_width=1000, plot_height=275, active_drag='xbox_select')
+        # ts.add_tools(ScrollStateTool(source=self.scroll_state_source))
         ts.rect('time', 'rect_mid', height='rect_height', fill_color={'field': 'labels_pct',
                                                                       'transform': self.col_mapper},
                 source=self.source, **rect_opts)
         ts.line('time', 'i_don', color='#4daf4a', source=self.source, **line_opts)
         ts.line('time', 'i_acc', color='#e41a1c', source=self.source, **line_opts)
+        ts_panel = Panel(child=ts, title='Traces')
+
+        # E_FRET series
+        ts_efret = figure(tools='xbox_select,save,xwheel_zoom,xpan', plot_width=1000, plot_height=275,
+                    active_drag='xbox_select')  #  todo: add tooltips=[('$index')]
+        ts_efret.rect('time', 0.5, height=1.0, fill_color={'field': 'labels_pct',
+                                                                            'transform': self.col_mapper},
+                source=self.source, **rect_opts)
+        ts_efret.line('time', 'E_FRET', color='#1f78b4', source=self.source, **line_opts)
+        ts_efret.line('time', 'sd_roll', color='#b2df8a', source=self.source, **line_opts)
+        efret_panel = Panel(child=ts_efret, title='E_FRET')
+
+        # i_sum series
+        ts_i_sum = figure(tools='xbox_select,save,xwheel_zoom,xpan', plot_width=1000, plot_height=275,
+                          active_drag='xbox_select')
+        ts_i_sum.rect('time', 'i_sum_mid', height='i_sum_height', fill_color={'field': 'labels_pct',
+                                                           'transform': self.col_mapper},
+                      source=self.source, **rect_opts)
+        ts_i_sum.line('time', 'i_sum', color='#1f78b4', source=self.source, **line_opts)
+        i_sum_panel = Panel(child=ts_i_sum, title='I sum')
+
+        tabs = Tabs(tabs=[ts_panel, efret_panel, i_sum_panel])
 
         # accuracy histogram
         acc_hist = figure(toolbar_location=None, plot_width=275, plot_height=275, x_range=[0, 100],
@@ -653,20 +511,21 @@ class Gui(object):
         # todo: Average accuracy and posterior
 
         # --- Define update behavior ---
+        self.source.selected.on_change('indices', self.update_classification)  # for manual selection on trace
         self.new_source.on_change('data', self.update_data)
         self.hmm_loaded_source.on_change('data', self.load_hmm_params)
         self.example_select.on_change('value', self.update_example)
         example_button.on_click(self.update_example_retrain)
         self.num_states_slider.on_change('value', self.update_num_states)
-        self.source.on_change('selected', self.update_classification)
+        # self.source.on_change('selected', self.update_classification)
         self.state_radio.on_change('active', lambda attr, old, new: self.update_state_curves())
         self.scroll_state_source.on_change('data', self.update_scroll_state)
 
         # hidden holders to generate saves
         self.report_holder.js_on_change('text', CustomJS(args=dict(file_source=self.html_source),
-                                                         code=download_report_impl))
+                                                         code=download_report_js))
         self.datzip_holder.js_on_change('text', CustomJS(args=dict(file_source=self.datzip_source),
-                                                         code=download_datzip_impl))
+                                                         code=download_datzip_js))
 
         # --- Build layout ---
         state_block = row(state_curves, self.state_radio)
@@ -686,7 +545,7 @@ class Gui(object):
                          width=300)
         hists = row(acc_hist, logprob_hist, state_block)
         graphs = column(self.example_select,
-                        ts,
+                        tabs,
                         hists,
                         stats_text,
                         Div(text='Notifications: ', width=100, height=15),

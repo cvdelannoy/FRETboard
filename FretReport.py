@@ -1,3 +1,4 @@
+import os
 import numpy as np
 from cached_property import cached_property
 import itertools
@@ -6,9 +7,12 @@ from bokeh.plotting import figure
 from bokeh.models import ColumnDataSource, PreText
 from bokeh.models.widgets import DataTable, TableColumn, Div
 from bokeh.layouts import column, row
-from bokeh.embed import file_html
+from bokeh.embed import file_html, components
 from bokeh.resources import CDN
+from jinja2 import Template
 
+
+__location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 
 class FretReport(object):
     def __init__(self, gui_obj):
@@ -71,10 +75,20 @@ class FretReport(object):
     def construct_html_report(self):
         ed_scatter = self.draw_Efret_duration_plot()
         tdp_hex = self.draw_transition_density_plot()
-        hmm_table = self.make_hmm_param_table()
+        tm_table, em_table = self.make_hmm_param_table()
         # page = column(row(ed_scatter, tdp_hex), hmm_table)
-        page = column(hmm_table, row(ed_scatter, tdp_hex))
-        return file_html(page, CDN, 'FRET report')
+        # page = column(hmm_table, row(column(ed_scatter), column(tdp_hex)))
+        with open(f'{__location__}/templates/report_template.html', 'r') as fh:
+            template = Template(fh.read())
+        # # return file_html(page, CDN, template=f'{__location__}/templates/report_template.html')
+        esh, esd = components(ed_scatter)
+        thh, thd, = components(tdp_hex)
+        # tabh, tabd = components(hmm_table)
+        return template.render(ed_scatter_script=esh, ed_scatter_div=esd,
+                               tdp_hex_script=thh, tdp_hex_div=thd,
+                               # hmm_table_script=tabh, hmm_table_div=tabd,
+                               tm_table=tm_table, em_table=em_table)
+        # return file_html(page, CDN, 'FRET report')
 
     # plotting functions
     def draw_Efret_duration_plot(self):
@@ -101,25 +115,37 @@ class FretReport(object):
     def make_hmm_param_table(self):
 
         # Transition matrix
+        nb_states = self.hmm_obj.nb_states
         state_list = [str(nb+1) for nb in range(self.hmm_obj.nb_states)]
-        tm_vecs = np.split(self.hmm_obj.trained_hmm.transmat_, indices_or_sections=self.hmm_obj.nb_states, axis=0)
-        tm_dict = {str(i + 1): np.round(tmi, 3).squeeze().tolist() for i, tmi, in enumerate(tm_vecs)}
-        tm = pd.DataFrame(tm_dict, index=state_list)
-        tm_obj = Div(text=tm.to_html(border=0), width=50, height=500)
+        ci_vecs = self.hmm_obj.confidence_intervals
+        tm1 = np.char.array(self.hmm_obj.trained_hmm.transmat_.round(3).astype(str))
+        tm_newline = np.tile(np.char.array('\n'), (nb_states, nb_states))
+        tm2 = np.char.array(ci_vecs[:, :, 0].round(3).astype(str))
+        tm_sep = np.tile(np.char.array(' - '), (nb_states, nb_states))
+        tm3 = np.char.array(ci_vecs[:, :, 1].round(3).astype(str))
+        tm_str = tm1 + tm_newline + tm2 + tm_sep + tm3
+        tm = pd.DataFrame(index=state_list, columns=state_list,data=tm_str)
+        # tm_vecs = np.split(self.hmm_obj.trained_hmm.transmat_, indices_or_sections=self.hmm_obj.nb_states, axis=0)
+        # tm_dict = {str(i + 1): np.round(tmi, 3).squeeze().tolist() for i, tmi, in enumerate(tm_vecs)}
+        # tm = pd.DataFrame(tm_dict, index=state_list)
+        tm_obj = tm.to_html(border=0)
+        # tm_obj = Div(text=tm.to_html(border=0), width=50, height=500)
 
-        # Emisisons table
+        # Emissions table
         nb_features = len(self.hmm_obj.feature_list)
         mu_vecs = np.split(self.hmm_obj.trained_hmm.means_.round(3), nb_features, axis=1)
         mu_vecs = [m.squeeze() for m in mu_vecs]
         cv_vecs = np.split(self.hmm_obj.trained_hmm.covars_.round(3), nb_features, axis=1)
         cv_vecs = [cv.squeeze()[:,i] for i, cv in enumerate(cv_vecs)]
+
         em_cols = [f'mu {fn}' for fn in self.hmm_obj.feature_list] + [f'sd {fn}' for fn in self.hmm_obj.feature_list]
         em_dict = {cn: mc.tolist() for cn, mc in zip(em_cols, np.concatenate((mu_vecs, cv_vecs)))}
 
         em_df = pd.DataFrame(em_dict, index=state_list)
-        em_obj = Div(text=em_df.to_html(border=0), width=50, height=500)
-
-        return row(em_obj, tm_obj)
+        em_obj = em_df.to_html(border=0)
+        # em_obj = Div(text=em_df.to_html(border=0), width=50, height=500)
+        return tm_obj, em_obj
+        # return row(column(em_obj), column(tm_obj))
         # todo: accuracy/posterior probability estimates: hist + text
         # todo: gauss curves per model
         # todo: all hmm params: per-state mean/stdev table + transition matrix + P_start

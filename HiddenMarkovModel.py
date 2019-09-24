@@ -1,10 +1,12 @@
 import pandas as pd
 import numpy as np
 from hmmlearn import hmm
+from random import choices
 import itertools
 from sklearn.utils import check_array
 from hmmlearn.utils import iter_from_X_lengths
 import warnings
+from helper_functions import rolling_var, rolling_cross_correlation, rolling_corr_coef
 
 class HiddenMarkovModel(object):
     """ A class for the HMM used to detect FRET signals
@@ -13,7 +15,8 @@ class HiddenMarkovModel(object):
 
     def __init__(self, **kwargs):
         self.trained_hmm = None
-        self.feature_list = ['E_FRET', 'i_sum']
+        self.feature_list = ['E_FRET', 'i_sum', 'sd_roll']
+        # self.feature_list = ['E_FRET', 'sd_roll']
         self.nb_states = kwargs['nb_states']
         self.data = kwargs['data']
 
@@ -26,22 +29,38 @@ class HiddenMarkovModel(object):
         nb_points = labeled_data.apply(lambda x: x.labels.size, axis=1)
         return nb_correct / nb_points * 100
 
+
+    @property
+    def confidence_intervals(self):
+        tm_array = []
+        for _ in range(10):
+            hmm = self.get_trained_hmm(influence=1.0, bootstrap=True)
+            tm_array.append(hmm.transmat_)
+        tm_mat = np.stack(tm_array, axis=-1)
+        sd_mat = np.std(tm_mat, axis=-1)
+        mu_mat = np.mean(tm_mat, axis=-1)
+        ci_mat = np.tile(np.expand_dims(mu_mat, -1), (1, 1, 2))
+        ci_mat[:, :, 0] -= sd_mat * 2
+        ci_mat[:, :, 1] += sd_mat * 2
+        return ci_mat
+
+    @property
+    def conf95(self):
+        """
+        return bootstrapped 95 percent confidence intervals +/1
+        :return:
+        """
+        tm_array = []
+        for _ in range(10):
+            hmm = self.get_trained_hmm(influence=1.0, bootstrap=True)
+            tm_array.append(hmm.transmat_)
+        tm_mat = np.stack(tm_array, axis=-1)
+        sd_mat = np.std(tm_mat, axis=-1)
+        return sd_mat * 2
+
     @property
     def data(self):
         return self._data
-
-    def get_untrained_hmm(self, influence):
-        if any(self.data.is_labeled):
-            print('generating supervised hmm')
-            hmm_out = hmm.GaussianHMM(n_components=self.nb_states, covariance_type='full', init_params='')
-            (hmm_out.startprob_,
-             hmm_out.transmat_,
-             hmm_out.means_,
-             hmm_out.covars_) = self.get_supervised_params(influence=influence)
-        else:
-            print('generating unsupervised hmm')
-            hmm_out = hmm.GaussianHMM(n_components=self.nb_states, covariance_type='diag', init_params='stmc')
-        return hmm_out
 
     def decode(self, X, lengths=None, algorithm=None):
         """Basically a copy of build-in decode method of hmmlearn, but with posterior per sequence
@@ -67,18 +86,71 @@ class HiddenMarkovModel(object):
 
         return logprob, state_sequence
 
-    def train(self, influence=1.0):
-        hmm_obj = self.get_untrained_hmm(influence=influence)
-        if all(self.data.is_labeled):
-           self.trained_hmm = hmm_obj
+    def get_untrained_hmm(self, influence, training_seqs=None):
+        if any(self.data.is_labeled):
+            print('generating supervised hmm')
+            hmm_out = hmm.GaussianHMM(n_components=self.nb_states, covariance_type='diag', init_params='')
+            (hmm_out.startprob_,
+             hmm_out.transmat_,
+             hmm_out.means_,
+             hmm_out.covars_) = self.get_supervised_params(influence=influence, training_seqs=training_seqs)
         else:
-            train_mat, train_seq_lengths = self.construct_matrix(np.invert(self.data.is_labeled))
+            print('generating unsupervised hmm')
+            hmm_out = hmm.GaussianHMM(n_components=self.nb_states, covariance_type='diag', init_params='stmc')
+        return hmm_out
+
+    def get_trained_hmm(self, influence=1.0, bootstrap=False):
+        nb_labeled = self.data.is_labeled.sum()
+        nb_unlabeled = len(self.data) - nb_labeled
+        labeled_seqs = choices(self.data.index[self.data.is_labeled], k=nb_labeled) if bootstrap else None
+        hmm_obj = self.get_untrained_hmm(influence=influence, training_seqs=labeled_seqs)
+        if not nb_unlabeled:
+            return hmm_obj
+        else:
+            labeled_seqs = choices(self.data.index[np.invert(self.data.is_labeled)], k=nb_unlabeled) if bootstrap \
+                else np.invert(self.data.is_labeled)
+            train_mat, train_seq_lengths = self.construct_matrix(labeled_seqs)
             with warnings.catch_warnings():  # catches deprecation warning sklearn: log_multivariate_normal_density
                 warnings.filterwarnings("ignore", category=DeprecationWarning)
-                hmm_obj.fit(train_mat, train_seq_lengths)
-            self.trained_hmm = hmm_obj
+                try:
+                    hmm_obj.fit(train_mat, train_seq_lengths)
+                except:
+                    cp=1
+            return hmm_obj
+
+    def train(self, influence=1.0):
+        self.trained_hmm = self.get_trained_hmm(influence=influence)
         # update predictions
         self.predict()
+
+    # def train(self, influence=1.0):
+    #     """
+    #     Implementation with semi-supervised EM
+    #     """
+    #     d_convergence = 10e-10
+    #     threshold=2400
+    #     cur_logprob = 0
+    #     max_iter = 1000
+    #
+    #     self.trained_hmm = self.get_untrained_hmm(influence=influence)
+    #     if all(self.data.is_labeled): return
+    #     if not any(self.data.is_labeled):
+    #         train_mat, train_seq_lengths = self.construct_matrix(np.invert(self.data.is_labeled))
+    #         with warnings.catch_warnings():  # catches deprecation warning sklearn: log_multivariate_normal_density
+    #             warnings.filterwarnings("ignore", category=DeprecationWarning)
+    #             self.trained_hmm.fit(train_mat, train_seq_lengths)
+    #         self.predict()
+    #         return
+    #
+    #     for it in range(max_iter):
+    #         self.predict()
+    #         logprob_sum = self.data.logprob.sum()
+    #         if logprob_sum - cur_logprob < d_convergence: return
+    #         cur_logprob = logprob_sum
+    #         logprob_bool = self.data.logprob > threshold
+    #         self.trained_hmm = self.get_untrained_hmm(influence=influence, training_seqs=logprob_bool)
+
+
 
     def predict(self):
         logprob, pred = self.decode(self.data_mat, self.seq_lengths)
@@ -90,69 +162,86 @@ class HiddenMarkovModel(object):
     def data(self, dat_files):
         nb_files = len(dat_files)
         df_out = pd.DataFrame({
+            'time': [np.array([], dtype=np.int64)] * nb_files,
             'i_don': [np.array([], dtype=np.int64)] * nb_files,
             'i_acc': [np.array([], dtype=np.int64)] * nb_files,
             'i_sum': [np.array([], dtype=np.float64)] * nb_files,
             'E_FRET': [np.array([], dtype=np.float64)] * nb_files,
+            'sd_roll': [np.array([], dtype=np.float64)] * nb_files,
             'labels': [np.array([], dtype=np.int64)] * nb_files,
             'prediction': [np.array([], dtype=np.int64)] * nb_files,
             'logprob': [np.array([], dtype=np.float64)] * nb_files},
             index=dat_files)
         df_out['is_labeled'] = pd.Series([False] * nb_files, dtype=np.bool)
-
         for dat_file in dat_files:
             try:
                 fc = np.loadtxt(dat_file)
                 fc_out = self.read_line(fc.T)
-                df_out.at[dat_file, 'i_don'] = fc_out[0]
-                df_out.at[dat_file, 'i_acc'] = fc_out[1]
-                df_out.at[dat_file, 'i_sum'] = fc_out[2]
-                df_out.at[dat_file, 'E_FRET'] = fc_out[3]
+                df_out.at[dat_file, 'time'] = fc_out[0]
+                df_out.at[dat_file, 'i_don'] = fc_out[1]
+                df_out.at[dat_file, 'i_acc'] = fc_out[2]
+                df_out.at[dat_file, 'i_sum'] = fc_out[3]
+                df_out.at[dat_file, 'E_FRET'] = fc_out[4]
+                df_out.at[dat_file, 'sd_roll'] = fc_out[5]
             except:
                 print('File {} could not be read, skipping'.format(dat_file))
                 df_out.drop([dat_file], inplace=True)
         self._data = df_out
-        self.data_mat, self.seq_lengths = self.construct_matrix()
+        self.set_matrix()
 
     def read_line(self, fc, full_set=False):
-        i_don = fc[0, :]
-        i_acc = fc[1, :]
+        # window = 9
+        window = 15
+        ss = (window - 1) // 2  # sequence shortening
+        fc[fc <= 0] = np.finfo(np.float64).eps  # hacky, required to get rid of overzealous background subtraction
+        time = fc[0, :]
+        i_don = fc[1, :]
+        i_acc = fc[2, :]
         i_sum = np.sum((i_don, i_acc), axis=0)
-        i_sum = i_sum / i_sum.max()
+        # i_sum = i_sum / i_sum.max()F
         E_FRET = np.divide(i_acc, np.sum((i_don, i_acc), axis=0))
+        # sd_roll = rolling_var(E_FRET, window)
+        sd_roll = rolling_corr_coef(i_don, i_acc, window)
         if full_set:
-            return i_don, i_acc, i_sum, E_FRET, np.array([], dtype=np.int64), np.array([], dtype=np.int64), np.array([], dtype=np.float64), False
-        return i_don, i_acc, i_sum, E_FRET
+            return time[ss:-ss], i_don[ss:-ss], i_acc[ss:-ss], i_sum[ss:-ss], E_FRET[ss:-ss], sd_roll, np.array([], dtype=np.int64), np.array([], dtype=np.int64), np.array([], dtype=np.float64), False
+        return time[ss:-ss], i_don[ss:-ss], i_acc[ss:-ss], i_sum[ss:-ss], E_FRET[ss:-ss], sd_roll
+        # return i_don, i_acc, i_sum, E_FRET, sd_roll
 
     def add_data_tuple(self, fn, data, last=True):
         self._data.loc[fn] = self.read_line(data, full_set=True)
         if last:
-            self.data_mat, self.seq_lengths = self.construct_matrix()
+            self.set_matrix()
 
     def del_data_tuple(self, idx):
         self._data.drop(idx)
-        self.data_mat, self.seq_lengths = self.construct_matrix()
+        self.set_matrix()
 
-    def get_supervised_params(self, influence):
+    def get_supervised_params(self, influence, training_seqs=None):
         """
         Extract stat probs, means, covars and transitions from lists of numpy vectors
         containing feature values and labels
+
+        training_seqs: sequences to use in finding parameters. May be bool vector or index names
         """
         ws = influence
         wus = 1 - ws
+        if training_seqs is None:
+            training_seqs = self.data.is_labeled
 
         feature_list = list()
         for feature_name in self.feature_list:
-            feature_vec = self.data.loc[self.data.is_labeled, feature_name]
-            feature_vec = np.concatenate(feature_vec).reshape(-1,1)
+            feature_vec = self.data.loc[training_seqs, feature_name]
+            feature_vec = np.concatenate(list(feature_vec)).reshape(-1,1)
             feature_list.append(feature_vec)
         nb_features = len(feature_list)
         # feature_list = self.data.loc[self.data.is_labeled, 'E_FRET']
-        label_list = self.data.loc[self.data.is_labeled, 'labels']
-        label_vec = np.concatenate(label_list).reshape(-1, 1)
+        label_list = self.data.loc[training_seqs, 'labels']
+        empty_seqs = label_list.index[label_list.apply(lambda x: len(x) == 0)]
+        if len(empty_seqs):
+            label_list.loc[empty_seqs] = self.data.loc[empty_seqs, 'prediction']  # TODO: for testing purposes!!
+        label_vec = np.concatenate(list(label_list)).reshape(-1, 1)
 
         classes = np.arange(self.nb_states)
-
 
         # set start probs
         first_class_list = [ll[0] for ll in label_list]
@@ -167,13 +256,17 @@ class HiddenMarkovModel(object):
 
         # means & covars
         means_s = np.zeros([self.nb_states, nb_features])
-        covars_s = np.zeros([self.nb_states, nb_features, nb_features])
+        # covars_s = np.zeros([self.nb_states, nb_features, nb_features])
+        covars_s = np.zeros([self.nb_states, nb_features])
         for cl in classes:
             feature_cl = np.row_stack([fl[label_vec == cl] for fl in feature_list])
             if feature_cl.shape[1] != 0:
-                covars_s[cl, :, :] = np.cov(feature_cl)
+                # covars_s[cl, :, :] = np.cov(feature_cl)
+                covars_s[cl, :] = np.cov(feature_cl)[np.eye(nb_features,dtype=bool)]
                 means_s[cl, :] = feature_cl.mean(axis=1)
-        covars = covars_s * ws + self.trained_hmm.covars_ * wus
+        covars_prev = self.trained_hmm.covars_[np.tile(np.eye(nb_features, dtype=bool), (self.nb_states, 1, 1))].reshape(self.nb_states, nb_features)
+        covars = covars_s * ws + covars_prev * wus
+        # covars = covars_s * ws + self.trained_hmm.covars_ * wus
         means = means_s * ws + self.trained_hmm.means_ * wus
 
         # transition matrix
@@ -209,6 +302,9 @@ class HiddenMarkovModel(object):
         vec_list = list()
         seq_lengths = data_subset.apply(lambda x: x.E_FRET.size, axis=1)
         for feature in self.feature_list:
-            vec = np.concatenate(data_subset.loc[:,feature].values).reshape(-1,1)
+            vec = np.concatenate(data_subset.loc[:, feature].values).reshape(-1,1)
             vec_list.append(vec)
         return np.concatenate(vec_list, axis=1), seq_lengths
+
+    def set_matrix(self):
+        self.data_mat, self.seq_lengths = self.construct_matrix()
