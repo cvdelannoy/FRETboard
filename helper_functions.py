@@ -5,6 +5,7 @@ from datetime import datetime
 import numpy as np
 
 
+# --- I/O ---
 def parse_input_path(location, pattern=None):
     """
     Take path, list of files or single file, Return list of files with path name concatenated.
@@ -31,6 +32,27 @@ def parse_input_path(location, pattern=None):
     if not len(all_files):
         ValueError('Input file location(s) did not exist or did not contain any files.')
     return all_files
+
+# def read_line(fc, full_set=False):
+#     # window = 9
+#     window = 15
+#     ss = (window - 1) // 2  # sequence shortening
+#     fc[fc <= 0] = np.finfo(np.float64).eps  # hacky, required to get rid of overzealous background subtraction
+#     time = fc[0, :]
+#     i_don = fc[1, :]
+#     i_acc = fc[2, :]
+#     i_sum = np.sum((i_don, i_acc), axis=0)
+#     # i_sum = i_sum / i_sum.max()F
+#     E_FRET = np.divide(i_acc, np.sum((i_don, i_acc), axis=0))
+#     # sd_roll = rolling_var(E_FRET, window)
+#     sd_roll = rolling_corr_coef(i_don, i_acc, window)
+#     if full_set:
+#         return (time[ss:-ss], i_don[ss:-ss], i_acc[ss:-ss],
+#                 i_sum[ss:-ss], E_FRET[ss:-ss], sd_roll,
+#                 np.array([], dtype=np.int64), np.array([], dtype=np.int64),  # labels, edge labels
+#                 np.array([], dtype=np.int64),  # prediction
+#                 np.array([], dtype=np.float64), False)  # logprob, is_labeled
+#     return time[ss:-ss], i_don[ss:-ss], i_acc[ss:-ss], i_sum[ss:-ss], E_FRET[ss:-ss], sd_roll
 
 
 def print_timestamp():

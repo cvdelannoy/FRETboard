@@ -1,5 +1,5 @@
 import argparse
-from HiddenMarkovModel import HiddenMarkovModel
+from HMM_pomegranate import HiddenMarkovModel
 from Gui import Gui
 import helper_functions as hp
 
@@ -12,10 +12,8 @@ args = parser.parse_args()
 
 if args.data_path:
     data_files = hp.parse_input_path(args.data_path)
-    hmm = HiddenMarkovModel(nb_states=args.nb_states, data=data_files)
-    hmm.train()
 else:
-    hmm = HiddenMarkovModel(nb_states=args.nb_states, data=[])
+    data_files = []
 
-gui_obj = Gui(hmm)
+gui_obj = Gui(HiddenMarkovModel, args.nb_states, [])
 gui_obj.start_gui()

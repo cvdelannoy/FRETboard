@@ -1,13 +1,13 @@
-import numpy as np
 import os
 import tempfile
 import shutil
+import base64
+import numpy as np
+import pandas as pd
 from cached_property import cached_property
 from bokeh.server.server import Server
 from bokeh.application import Application
 from bokeh.application.handlers.function import FunctionHandler
-import base64
-
 from bokeh.layouts import row, column, widgetbox
 from bokeh.plotting import figure, curdoc
 from bokeh.models import ColumnDataSource, LinearColorMapper#, CustomJS
@@ -15,12 +15,10 @@ from bokeh.models.callbacks import CustomJS
 from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Div, CheckboxButtonGroup
 from bokeh.models.widgets.panels import Panel, Tabs
 from tornado.ioloop import IOLoop
-from hmmlearn import hmm
+
 from helper_functions import print_timestamp
-import pandas as pd
-
 from FretReport import FretReport
-
+from MainTable import MainTable
 
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 line_opts = dict(line_width=1)
@@ -41,20 +39,27 @@ param_state_dict = {18: 2, 30: 3, 44: 4, 60: 5, 78: 6, 98: 7}
 
 
 class Gui(object):
-    def __init__(self, hmm_obj):
+    def __init__(self, classifier, nb_states=3, data=[]):
         self.version = '0.0.1'
         self.cur_example_idx = None
 
+        self.data = MainTable(data)
+
+        # Classifier object
+        buffer_value = 5
+        self.classifier = classifier(nb_states=nb_states, gui=self)
+
         # widgets
         self.example_select = Select(title='current_example', value='None', options=['None'])
-        self.num_states_slider = Slider(title='Number of states', value=hmm_obj.nb_states, start=2, end=6, step=1)
+        self.num_states_slider = Slider(title='Number of states', value=nb_states, start=2, end=6, step=1)
         self.sel_state_slider = Slider(title='change selection to state', value=1, start=1,
                                        end=self.num_states_slider.value, step=1)
         self.influence_slider = Slider(title='Influence supervision', value=1.0, start=0.0, end=1.0, step=0.01)
+        self.buffer_slider = Slider(title='Buffer', value=buffer_value, start=0, end=20, step=1)
         self.notification = PreText(text='', width=1000, height=15)
         self.acc_text = PreText(text='N/A')
         self.mc_text = PreText(text='0%')
-        self.state_radio = RadioGroup(labels=hmm_obj.feature_list, active=0)
+        self.state_radio = RadioGroup(labels=self.classifier.feature_list, active=0)
         self.report_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
         self.datzip_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
 
@@ -72,37 +77,32 @@ class Gui(object):
             data=dict(xs=[np.arange(0, 1, 0.01)] * self.num_states_slider.value,
                       ys=[np.zeros(100, dtype=float)] * self.num_states_slider.value,
                       color=self.curve_colors))
-        self.hmm_loaded_source = ColumnDataSource(data=dict(params=[]))
-        self.hmm_source = ColumnDataSource(data=dict(params=[]))
+        self.loaded_model_source = ColumnDataSource(data=dict(params=[]))
+        self.classifier_source = ColumnDataSource(data=dict(params=[]))
         self.html_source = ColumnDataSource(data=dict(html_text=[]))
         self.datzip_source = ColumnDataSource(data=dict(datzip=[]))
         self.scroll_state_source = ColumnDataSource(data=dict(new_state=[False]))
         self.model_loaded = False
-
-        # HMM object
-        self.hmm_obj = hmm_obj
-
         self.new_tot = ColumnDataSource(data=dict(value=[0]))
         self.new_cur = 0
 
     @property
-    def hmm_obj(self):
-        return self._hmm_obj
+    def classifier(self):
+        return self._classifier
 
-    @hmm_obj.setter
-    def hmm_obj(self, hmm_obj):
-        self._hmm_obj = hmm_obj
-        if hmm_obj.data.shape[0] == 0:
+    @classifier.setter
+    def classifier(self, classifier):
+        self._classifier = classifier
+        if classifier.data.shape[0] == 0:
             return
-        self.example_select.options = self.hmm_obj.data.index.tolist()
+        self.example_select.options = self.data.data.index.tolist()
         if self.cur_example_idx is None:
             self.cur_example_idx = self.example_select.options[0]
         self._redraw_all()
 
-
     @property
     def nb_examples(self):
-        return self.hmm_obj.data.shape[0]
+        return self.data.data.shape[0]
 
     @property
     def curve_colors(self):
@@ -116,37 +116,36 @@ class Gui(object):
 
     @cached_property
     def E_FRET(self):
-        return self.hmm_obj.data.loc[self.cur_example_idx].E_FRET
+        return self.data.data.loc[self.cur_example_idx].E_FRET
 
     @cached_property
     def sd_roll(self):
-        return self.hmm_obj.data.loc[self.cur_example_idx].sd_roll
+        return self.data.data.loc[self.cur_example_idx].sd_roll
 
     @cached_property
     def i_don(self):
-        return self.hmm_obj.data.loc[self.cur_example_idx].i_don
+        return self.data.data.loc[self.cur_example_idx].i_don
 
     @cached_property
     def i_acc(self):
-        return self.hmm_obj.data.loc[self.cur_example_idx].i_acc
+        return self.data.data.loc[self.cur_example_idx].i_acc
 
     @cached_property
     def i_acc(self):
-        return self.hmm_obj.data.loc[self.cur_example_idx].i_acc
+        return self.data.data.loc[self.cur_example_idx].i_acc
 
     @cached_property
     def i_sum(self):
-        return self.hmm_obj.data.loc[self.cur_example_idx].i_sum
+        return self.data.data.loc[self.cur_example_idx].i_sum
 
-    def set_value(self, column, value, idx=None):
-        """
-        Set a value for a column in the current example in the original dataframe. Workaround to avoid 'chain indexing'.
-        If cell contains a list/array, may provide index to define which values should be changed.
-        """
-        if idx is None:
-            self.hmm_obj.data.at[self.cur_example_idx, column] = value
-        else:
-            self.hmm_obj.data.at[self.cur_example_idx, column][idx] = value
+    def get_buffer_state_matrix(self):
+        ns = self.num_states_slider.value
+        bsm = np.zeros((ns, ns), dtype=int)
+        ns_buffered = ns + ns * (ns - 1) // 2
+        state_array = np.arange(ns, ns_buffered)
+        bsm[np.triu_indices(3, 1)] = state_array
+        bsm[np.tril_indices(3, -1)] = state_array
+        return bsm
 
     def invalidate_cached_properties(self):
         for k in ['E_FRET', 'sd_roll', 'i_sum', 'tp', 'ts', 'ts_don', 'ts_acc', 'i_don', 'i_acc',
@@ -155,42 +154,21 @@ class Gui(object):
                 del self.__dict__[k]
 
     def train_and_update(self):
-        self.hmm_obj.train(influence=self.influence_slider.value)
-        tm_array = self.hmm_obj.trained_hmm.transmat_.reshape(-1, 1).squeeze()
-        means = self.hmm_obj.trained_hmm.means_.reshape(-1, 1).squeeze()
-        covar_list = [blk.reshape(1, -1).squeeze() for blk in
-                      np.split(self.hmm_obj.trained_hmm.covars_, axis=0, indices_or_sections=self.num_states_slider.value)]
-        covars = np.concatenate(covar_list)
-        # covars = self.hmm_obj.trained_hmm.covars_.reshape(-1, 1).squeeze()
-        startprob = self.hmm_obj.trained_hmm.startprob_.reshape(-1, 1).squeeze()
-        nb_states = np.expand_dims(self.num_states_slider.value, 0)
-        params = np.concatenate((nb_states, tm_array, means, covars, startprob))
-        self.hmm_source.data = dict(params=params.tolist())
+        self.classifier.train(influence=self.influence_slider.value)
+        self.classifier_source.data = dict(params=self.classifier.get_params())
 
-    def load_hmm_params(self, attr, old, new):
-        raw_contents = self.hmm_loaded_source.data['file_contents'][0]
+    def load_params(self, attr, old, new):
+        raw_contents = self.loaded_model_source.data['file_contents'][0]
         # remove the prefix that JS adds
         _, b64_contents = raw_contents.split(",", 1)
         file_contents = base64.b64decode(b64_contents).decode('utf-8').split('\n')[1:-1]
-        params = [float(i) for i in file_contents]
-        nb_states = int(params[0])
-        params = params[1:]
-        self.num_states_slider.value = nb_states
-        self.hmm_obj.nb_states = nb_states
-        new_hmm = hmm.GaussianHMM(n_components=nb_states, covariance_type='full', init_params='')
-        param_idx = np.cumsum([nb_states ** 2, nb_states * 2, nb_states * 2 * 2])
-        print(f'param_idx: {param_idx}')
-        tm, means, covars, start_prob = np.split(params, param_idx)
-        new_hmm.transmat_ = tm.reshape(nb_states, nb_states)
-        new_hmm.means_ = means.reshape(nb_states, 2)
-        new_hmm.covars_ = covars.reshape(nb_states, 2, 2)
-        new_hmm.startprob_ = start_prob
-        self.hmm_obj.trained_hmm = new_hmm
+        self.classifier.load_params(file_contents)
+        self.num_states_slider.value = self.classifier.nb_states
         self.model_loaded = True
         self.notification.text += f'{print_timestamp()}Model loaded'
-        if self.hmm_obj.data.shape[0] != 0:
-            self.hmm_obj.data.is_labeled = False
-            self.hmm_obj.predict()
+        if self.data.data.shape[0] != 0:
+            self.data.data.is_labeled = False
+            self.classifier.predict()
             self._redraw_all()
 
     def update_data(self, attr, old, new):
@@ -209,41 +187,83 @@ class Gui(object):
                 traces_vec = traces_vec[:nb_colors * (nb_traces // nb_colors) * nb_frames]
                 file_contents = traces_vec[3:].reshape((nb_colors, nb_traces // nb_colors, nb_frames), order='F')
             except:
-                print(traces_vec[:20])
+                print(traces_vec[:20])  # todo: log failure to load file to console
                 return
             fn_clean = os.path.splitext(fn)[0]
             for fi, f in enumerate(np.hsplit(file_contents, file_contents.shape[1])):
-                last_trace_bool = fi+1 == file_contents.shape[1]
-                self.hmm_obj.add_data_tuple(f'{fn_clean}_tr{fi+1}', f.squeeze(), last=False)
+                self.data.add_tuple(f.squeeze(), f'{fn_clean}_tr{fi+1}')
 
         # Process .dat files
         elif '.dat' in fn:
             file_contents = base64.b64decode(b64_contents).decode('utf-8')
             file_contents = np.column_stack([np.fromstring(n, sep=' ') for n in file_contents.split('\n') if len(n)])
             if len(file_contents):
-                self.hmm_obj.add_data_tuple(self.new_source.data['file_name'][0], file_contents, last=False)
-
+                self.data.add_tuple(file_contents, self.new_source.data['file_name'][0])
         self.new_cur += 1
 
-        # Reload/retrain hmm
+        # Reload/retrain model
         if self.new_tot.data['value'][0] == self.new_cur:
             self.new_cur = 0
-            self.hmm_obj.set_matrix()
-            if len(file_contents): self.example_select.options = self.hmm_obj.data.index.tolist()
+            # self.classifier.set_matrix()  # todo: is this necessary?
+            if len(file_contents): self.example_select.options = self.data.data.index.tolist()
             if self.cur_example_idx is None: self.cur_example_idx = self.example_select.options[0]
             if self.model_loaded:
-                self.hmm_obj.predict()
+                self.classifier.predict()
             else:
                 self.train_and_update()
                 self.model_loaded = True
             self._redraw_all()
 
+    # def get_edge_labels(self, labels):
+    #     bsm = self.get_buffer_state_matrix()
+    #     edge_labels = labels.copy()
+    #     overhang_left = (self.buffer_slider.value - 1) // 2
+    #     overhang_right = (self.buffer_slider.value - 1) - overhang_left
+    #     oh_counter = 0
+    #     buffer_state = np.nan
+    #     cur_label = labels[0]
+    #     for li, l in enumerate(labels):
+    #         if l == cur_label:
+    #             if oh_counter != 0:
+    #                 edge_labels[li] = buffer_state
+    #                 oh_counter -= 1
+    #         else:
+    #             buffer_state = bsm[cur_label, l]
+    #             edge_labels[li-overhang_left:li+1] = buffer_state
+    #             cur_label = l
+    #             oh_counter = overhang_right
+    #     return edge_labels
+
+    def get_edge_labels(self, labels):
+        """
+        Encode transitions between differing states as 1 and other data points as 0
+        :param labels:
+        :return:
+        """
+        edge_labels = np.zeros(labels.size, dtype='<U3')
+        overhang_left = (self.buffer_slider.value - 1) // 2
+        overhang_right = (self.buffer_slider.value - 1) - overhang_left
+        oh_counter = 0
+        cur_edge = ''
+        cur_label = labels[0]
+        for li, l in enumerate(labels):
+            if l == cur_label:
+                if oh_counter != 0:
+                    edge_labels[li] = cur_edge
+                    oh_counter -= 1
+            else:
+                cur_edge = f'e{cur_label}{l}'
+                edge_labels[li-overhang_left:li+1] = cur_edge
+                cur_label = l
+                oh_counter = overhang_right
+        return edge_labels
+
     def update_example(self, attr, old, new):
         if old == new:
             return
         if old is not None:
-            self.set_value('labels', self.source.data['labels'])
-        # self.train_and_update()
+            self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
+            self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
         self.cur_example_idx = new
         self._redraw_all()
 
@@ -252,21 +272,23 @@ class Gui(object):
         Assume current example is labeled correctly, retrain and display new random example
         Note: this should be the only way to set an example to 'labeled training example' mode (is_labeled == True)
         """
-        if all(self.hmm_obj.data.is_labeled):
+        if all(self.data.data.is_labeled):
             self.notification.text += f'{print_timestamp()}All examples have already been manually classified'
         else:
-            # self.set_value('labels', self.hmm_obj.data.loc[self.cur_example_idx].prediction.copy())
-            self.set_value('is_labeled', True)
+            self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
+            self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
+            self.data.set_value(self.cur_example_idx, 'is_labeled', True)
             self.train_and_update()
-            new_example_idx = np.random.choice(self.hmm_obj.data.loc[np.invert(self.hmm_obj.data.is_labeled), 'logprob'].index)
+            new_example_idx = np.random.choice(self.data.data.loc[np.invert(self.data.data.is_labeled), 'logprob'].index)
             self.example_select.value = self.cur_example_idx
             self.update_example(None, None, new_example_idx)
 
     def _redraw_all(self):
         self.invalidate_cached_properties()
         nb_samples = self.i_don.size
-        if not len(self.hmm_obj.data.loc[self.cur_example_idx].labels):
-            self.set_value('labels', self.hmm_obj.data.loc[self.cur_example_idx].prediction.copy())
+        if not len(self.data.data.loc[self.cur_example_idx].labels):
+            self.data.set_value(self.cur_example_idx, 'labels', 
+                                self.data.data.loc[self.cur_example_idx].prediction.copy())
         all_ts = np.concatenate((self.i_don, self.i_acc))
         rect_mid = (all_ts.min() + all_ts.max()) / 2
         rect_height = np.abs(all_ts.min()) + np.abs(all_ts.max())
@@ -276,8 +298,8 @@ class Gui(object):
                                 rect_mid=np.repeat(rect_mid, nb_samples),
                                 i_sum_height=np.repeat(self.i_sum.max(), nb_samples),
                                 i_sum_mid=np.repeat(self.i_sum.mean(), nb_samples),
-                                labels=self.hmm_obj.data.loc[self.cur_example_idx, 'labels'],
-                                labels_pct=self.hmm_obj.data.loc[self.cur_example_idx, 'labels'] * 1.0 / self.num_states_slider.value)
+                                labels=self.data.data.loc[self.cur_example_idx, 'labels'],
+                                labels_pct=self.data.data.loc[self.cur_example_idx, 'labels'] * 1.0 / self.num_states_slider.value)
         self.update_accuracy_hist()
         self.update_logprob_hist()
         self.update_state_curves()
@@ -298,28 +320,28 @@ class Gui(object):
             self.update_stats_text()
 
     def update_accuracy_hist(self):
-        acc_counts = np.histogram(self.hmm_obj.accuracy, bins=np.linspace(5, 100, num=20))[0]
+        acc_counts = np.histogram(self.data.accuracy, bins=np.linspace(5, 100, num=20))[0]
         self.accuracy_source.data['accuracy_counts'] = acc_counts
 
     def update_logprob_hist(self):
-        counts, edges = np.histogram(self.hmm_obj.data.logprob, bins='auto')
+        counts, edges = np.histogram(self.data.data.logprob, bins='auto')
         self.logprob_source.data = {'logprob_counts': counts, 'lb': edges[:-1], 'rb': edges[1:]}
 
     def update_stats_text(self):
-        pct_labeled = round(self.hmm_obj.data.is_labeled.sum() / self.hmm_obj.data.is_labeled.size * 100.0, 1)
+        pct_labeled = round(self.data.data.is_labeled.sum() / self.data.data.is_labeled.size * 100.0, 1)
         if pct_labeled == 0:
             acc = 'N/A'
         else:
-            acc = round(self.hmm_obj.accuracy.mean(), 1)
+            acc = round(self.data.accuracy.mean(), 1)
         self.acc_text.text = f'{acc}'
         self.mc_text.text = f'{pct_labeled}'
 
     def update_state_curves(self):
         fidx = self.state_radio.active
-        # feature_idx = [i for i, n in enumerate(self.hmm_obj.feature_list) if n == feature_name]
-        if self.hmm_obj.trained_hmm is None: return
-        mus = self.hmm_obj.trained_hmm.means_[:, fidx]
-        sds = self.hmm_obj.trained_hmm.covars_[:, fidx, fidx]
+        # feature_idx = [i for i, n in enumerate(self.classifier.feature_list) if n == feature_name]
+        if self.classifier.trained is None: return
+        mus = self.classifier.get_states_mu(fidx)
+        sds = self.classifier.get_states_sd(fidx)
 
         x_high = max([mu + sd * 3 for mu, sd in zip(mus, sds)])
         x_low = min([mu - sd * 3 for mu, sd in zip(mus, sds)])
@@ -329,10 +351,9 @@ class Gui(object):
         self.state_source.data = {'ys': ys, 'xs': xs, 'color': self.curve_colors}
 
     def update_num_states(self, attr, old, new):
-        if new != self.hmm_obj.nb_states:
-
-            self.hmm_obj.data.is_labeled = False
-            self.hmm_obj.nb_states = new
+        if new != self.classifier.nb_states:
+            self.data.data.is_labeled = False
+            self.classifier.nb_states = new
 
             # Update widget: show-me checkboxes
             showme_idx = list(range(new))
@@ -346,10 +367,10 @@ class Gui(object):
             self.sel_state_slider.end = new
             if self.sel_state_slider.value > new: self.sel_state_slider.value = new
 
-            # retraining hmm
-            if self.hmm_obj.data.shape[0] != 0:
+            # retraining classifier
+            if self.data.data.shape[0] != 0:
                 self.invalidate_cached_properties()
-                self.hmm_obj.train(influence=self.influence_slider.value)
+                self.classifier.train(influence=self.influence_slider.value)
                 self.update_state_curves()
                 self.update_example(None, '', self.cur_example_idx)
 
@@ -367,7 +388,7 @@ class Gui(object):
 
     def generate_dats(self):
         tfh = tempfile.TemporaryDirectory()
-        for fn, tup in self.hmm_obj.data.iterrows():
+        for fn, tup in self.data.data.iterrows():
             labels = tup.labels + 1 if len(tup.labels) != 0 else [None] * len(tup.time)
             sm_bool = [True for sm in self.saveme_checkboxes.active if sm + 1 in labels]
             if not all(sm_bool): continue
@@ -383,17 +404,17 @@ class Gui(object):
         self.datzip_holder.text += ' '
 
     def del_trace(self):
-        self.hmm_obj.del_data_tuple(self.cur_example_idx)
+        self.data.del_tuple(self.cur_example_idx)
         self.example_select.options.remove(self.cur_example_idx)
         self.update_example_retrain()
 
     def update_showme(self, attr, old, new):
         if old == new: return
-        if self.hmm_obj.data.shape[0] == 0: return
-        valid_bool = self.hmm_obj.data.apply(lambda x: np.invert(x.is_labeled)
-                                                       and any(i in new for i in x.prediction), axis=1)
+        if self.data.data.shape[0] == 0: return
+        valid_bool = self.data.data.apply(lambda x: np.invert(x.is_labeled)
+                                                    and any(i in new for i in x.prediction), axis=1)
         if any(valid_bool):
-            self.example_select.options = list(self.hmm_obj.data.index[valid_bool])
+            self.example_select.options = list(self.data.data.index[valid_bool])
             if self.cur_example_idx not in self.example_select.options:
                 new_example_idx = np.random.choice(self.example_select.options)
                 self.update_example(None, '', new_example_idx)
@@ -411,7 +432,7 @@ class Gui(object):
         load_button.callback = CustomJS(args=dict(file_source=self.new_source, new_counter=self.new_tot), code=upload_js)
 
         load_model_button = Button(label='Model')
-        load_model_button.callback = CustomJS(args=dict(file_source=self.hmm_loaded_source),
+        load_model_button.callback = CustomJS(args=dict(file_source=self.loaded_model_source),
                                               code=upload_model_js)
 
 
@@ -432,7 +453,7 @@ class Gui(object):
 
         # --- 3. Save ---
         save_model_button = Button(label='Model')
-        save_model_button.callback = CustomJS(args=dict(file_source=self.hmm_source),
+        save_model_button.callback = CustomJS(args=dict(file_source=self.classifier_source),
                                               code=download_csv_js)
         save_data_button = Button(label='Data')
         save_data_button.on_click(self.generate_dats)
@@ -513,7 +534,7 @@ class Gui(object):
         # --- Define update behavior ---
         self.source.selected.on_change('indices', self.update_classification)  # for manual selection on trace
         self.new_source.on_change('data', self.update_data)
-        self.hmm_loaded_source.on_change('data', self.load_hmm_params)
+        self.loaded_model_source.on_change('data', self.load_params)
         self.example_select.on_change('value', self.update_example)
         example_button.on_click(self.update_example_retrain)
         self.num_states_slider.on_change('value', self.update_num_states)
@@ -537,6 +558,7 @@ class Gui(object):
                          self.num_states_slider,
                          self.sel_state_slider,
                          self.influence_slider,
+                         self.buffer_slider,
                          showme_col,
                          row(widgetbox(del_trace_button, width=150), widgetbox(example_button, width=150)),
                          Div(text="<font size=4>3. Save</font>", width=280, height=15),
