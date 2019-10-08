@@ -13,8 +13,8 @@ from helper_functions import rolling_var, rolling_cross_correlation, rolling_cor
 
 # to show hmm graph: plt.figure(dpi=600); hmm.plot(); plt.show()
 
-class HiddenMarkovModel(object):
-    """ A class for the HMM used to detect FRET signals
+class Classifier(object):
+    """ HMM classifier that automatically adds 'edge states' to better recognize valid transitions between states.
 
     """
 

@@ -4,6 +4,9 @@ import shutil
 import base64
 import numpy as np
 import pandas as pd
+import yaml
+import importlib
+
 from cached_property import cached_property
 from bokeh.server.server import Server
 from bokeh.application import Application
@@ -23,6 +26,7 @@ from MainTable import MainTable
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 line_opts = dict(line_width=1)
 rect_opts = dict(width=1.01, alpha=1, line_alpha=0)
+with open(f'{__location__}/algorithms.yml', 'r') as fh: algo_dict = yaml.safe_load(fh)
 white_blue_colors = ['#f7fbff', '#deebf7', '#c6dbef', '#9ecae1', '#6baed6', '#4292c6', '#2171b5', '#084594']
 pastel_colors = ["#75968f", "#a5bab7", "#c9d9d3", "#e2e2e2", "#dfccce", "#ddb7b1", "#cc7878", "#933b41", "#550b1d"]
 # col_mapper = LinearColorMapper(palette=white_blue_colors, low=0, high=1)
@@ -39,15 +43,16 @@ param_state_dict = {18: 2, 30: 3, 44: 4, 60: 5, 78: 6, 98: 7}
 
 
 class Gui(object):
-    def __init__(self, classifier_class, nb_states=3, data=[]):
+    def __init__(self, nb_states=3, data=[]):
         self.version = '0.0.1'
         self.cur_example_idx = None
+        self.algo_select = Select(title='Algorithm', value=list(algo_dict)[0], options=list(algo_dict))
 
         self.data = MainTable(data)
 
         # Classifier object
         buffer_value = 5
-        self.classifier_class = classifier_class
+        self.classifier_class = importlib.import_module(algo_dict[self.algo_select.value]).Classifier
         self.classifier = self.classifier_class(nb_states=nb_states, gui=self)
 
         # widgets
@@ -350,6 +355,13 @@ class Gui(object):
               for mu, sd in zip(mus, sds)]
         self.state_source.data = {'ys': ys, 'xs': xs, 'color': self.curve_colors}
 
+    def update_algo(self, attr, old, new):
+        if old == new:
+            return
+        self.classifier_class = importlib.import_module(algo_dict[new]).Classifier
+        self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, gui=self)
+        self.train_and_update()
+
     def update_num_states(self, attr, old, new):
         if new != self.classifier.nb_states:
             self.data.data.loc[self.data.data.index, 'labels'] = [ [[]] * len(self.data.data)]
@@ -534,6 +546,7 @@ class Gui(object):
         # todo: Average accuracy and posterior
 
         # --- Define update behavior ---
+        self.algo_select.on_change('value', self.update_algo)
         self.source.selected.on_change('indices', self.update_classification)  # for manual selection on trace
         self.new_source.on_change('data', self.update_data)
         self.loaded_model_source.on_change('data', self.load_params)
@@ -554,6 +567,7 @@ class Gui(object):
         state_block = row(state_curves, self.state_radio)
         widgets = column(ff_title,
                          Div(text="<font size=4>1. Load</font>", width=280, height=15),
+                         self.algo_select,
                          row(widgetbox(load_button, width=150), widgetbox(load_model_button, width=150),
                              width=300),
                          Div(text="<font size=4>2. Teach</font>", width=280, height=15),

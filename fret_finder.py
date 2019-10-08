@@ -1,5 +1,4 @@
 import argparse
-from HMM_pomegranate import HiddenMarkovModel
 from Gui import Gui
 import helper_functions as hp
 
@@ -15,5 +14,5 @@ if args.data_path:
 else:
     data_files = []
 
-gui_obj = Gui(HiddenMarkovModel, args.nb_states, [])
+gui_obj = Gui(args.nb_states, [])
 gui_obj.start_gui()
