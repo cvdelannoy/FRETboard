@@ -39,7 +39,7 @@ param_state_dict = {18: 2, 30: 3, 44: 4, 60: 5, 78: 6, 98: 7}
 
 
 class Gui(object):
-    def __init__(self, classifier, nb_states=3, data=[]):
+    def __init__(self, classifier_class, nb_states=3, data=[]):
         self.version = '0.0.1'
         self.cur_example_idx = None
 
@@ -47,14 +47,15 @@ class Gui(object):
 
         # Classifier object
         buffer_value = 5
-        self.classifier = classifier(nb_states=nb_states, gui=self)
+        self.classifier_class = classifier_class
+        self.classifier = self.classifier_class(nb_states=nb_states, gui=self)
 
         # widgets
-        self.example_select = Select(title='current_example', value='None', options=['None'])
+        self.example_select = Select(title='Current example', value='None', options=['None'])
         self.num_states_slider = Slider(title='Number of states', value=nb_states, start=2, end=6, step=1)
-        self.sel_state_slider = Slider(title='change selection to state', value=1, start=1,
+        self.sel_state_slider = Slider(title='Change selection to state', value=1, start=1,
                                        end=self.num_states_slider.value, step=1)
-        self.influence_slider = Slider(title='Influence supervision', value=1.0, start=0.0, end=1.0, step=0.01)
+        self.supervision_slider = Slider(title='Influence supervision', value=1.0, start=0.0, end=1.0, step=0.01)
         self.buffer_slider = Slider(title='Buffer', value=buffer_value, start=0, end=20, step=1)
         self.notification = PreText(text='', width=1000, height=15)
         self.acc_text = PreText(text='N/A')
@@ -154,7 +155,7 @@ class Gui(object):
                 del self.__dict__[k]
 
     def train_and_update(self):
-        self.classifier.train(influence=self.influence_slider.value)
+        self.classifier.train(supervision_influence=self.supervision_slider.value)
         self.classifier_source.data = dict(params=self.classifier.get_params())
 
     def load_params(self, attr, old, new):
@@ -204,7 +205,6 @@ class Gui(object):
         # Reload/retrain model
         if self.new_tot.data['value'][0] == self.new_cur:
             self.new_cur = 0
-            # self.classifier.set_matrix()  # todo: is this necessary?
             if len(file_contents): self.example_select.options = self.data.data.index.tolist()
             if self.cur_example_idx is None: self.cur_example_idx = self.example_select.options[0]
             if self.model_loaded:
@@ -241,8 +241,8 @@ class Gui(object):
         :return:
         """
         edge_labels = np.zeros(labels.size, dtype='<U3')
-        overhang_left = (self.buffer_slider.value - 1) // 2
-        overhang_right = (self.buffer_slider.value - 1) - overhang_left
+        overhang_right = (self.buffer_slider.value - 1) // 2
+        overhang_left = (self.buffer_slider.value - 1) - overhang_right
         oh_counter = 0
         cur_edge = ''
         cur_label = labels[0]
@@ -352,8 +352,10 @@ class Gui(object):
 
     def update_num_states(self, attr, old, new):
         if new != self.classifier.nb_states:
+            self.data.data.loc[self.data.data.index, 'labels'] = [ [[]] * len(self.data.data)]
+            self.data.data.loc[self.data.data.index, 'edge_labels'] = [[[]] * len(self.data.data)]
             self.data.data.is_labeled = False
-            self.classifier.nb_states = new
+            self.classifier = self.classifier_class(nb_states=new, gui=self)
 
             # Update widget: show-me checkboxes
             showme_idx = list(range(new))
@@ -370,7 +372,7 @@ class Gui(object):
             # retraining classifier
             if self.data.data.shape[0] != 0:
                 self.invalidate_cached_properties()
-                self.classifier.train(influence=self.influence_slider.value)
+                self.train_and_update()
                 self.update_state_curves()
                 self.update_example(None, '', self.cur_example_idx)
 
@@ -557,7 +559,7 @@ class Gui(object):
                          Div(text="<font size=4>2. Teach</font>", width=280, height=15),
                          self.num_states_slider,
                          self.sel_state_slider,
-                         self.influence_slider,
+                         self.supervision_slider,
                          self.buffer_slider,
                          showme_col,
                          row(widgetbox(del_trace_button, width=150), widgetbox(example_button, width=150)),

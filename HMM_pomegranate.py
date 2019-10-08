@@ -11,6 +11,8 @@ from hmmlearn.utils import iter_from_X_lengths
 import warnings
 from helper_functions import rolling_var, rolling_cross_correlation, rolling_corr_coef
 
+# to show hmm graph: plt.figure(dpi=600); hmm.plot(); plt.show()
+
 class HiddenMarkovModel(object):
     """ A class for the HMM used to detect FRET signals
 
@@ -28,16 +30,15 @@ class HiddenMarkovModel(object):
         self.gui_state_dict = dict()
 
     # --- training ---
-    def train(self, influence=1.0):
+    def train(self, supervision_influence=1.0):
         """
         Generate trained hmm and predict examples
-        :param influence:
         """
         # todo: ignore influence for now
-        self.trained = self.get_trained_hmm(influence=influence)
+        self.trained = self.get_trained_hmm(supervision_influence=supervision_influence)
         self.predict()
 
-    def get_trained_hmm(self, influence=1.0, bootstrap=False):
+    def get_trained_hmm(self, supervision_influence=1.0, bootstrap=False):
 
         # Make selection of tuples, if bootstrapping (otherwise use all data)
         if bootstrap:
@@ -53,8 +54,17 @@ class HiddenMarkovModel(object):
         hmm = self.get_untrained_hmm(seq_idx)
 
         # Fit model on data
-        hmm.fit(self.get_matrix(self.data.loc[seq_idx, self.feature_list]), verbose=True)
-
+        # Case 1: supervised --> perform no training
+        if supervision_influence < 1.0:
+            if any(self.data.is_labeled):
+                # Case 2: semi-supervised --> perform training with inertia on pre-determined labeled sequences
+                labels = list(self.data.labels.to_numpy(copy=True))
+                labels = [list(lab) if len(lab) else [None] for lab in labels]
+                hmm.fit(self.get_matrix(self.data.loc[seq_idx, self.feature_list]),
+                        inertia=supervision_influence, labels=labels)
+            else:
+                # Case 3: unsupervised --> just train
+                hmm.fit(self.get_matrix(self.data.loc[seq_idx, self.feature_list]), inertia=0.0)
         return hmm
 
     def get_untrained_hmm(self, seq_idx):
@@ -66,10 +76,12 @@ class HiddenMarkovModel(object):
         :return:
         """
         hmm = pg.HiddenMarkovModel()
+        buffer = self.gui.buffer_slider.value
 
         # Get emission distributions & transition probs
         states, edge_states, pg_gui_state_dict = self.get_states(seq_idx)
         tm_dict, pstart_dict, pend_dict = self.get_transitions(seq_idx)
+
 
         # Add states, self-transitions, transitions to start/end state
         for sidx, s_name in enumerate(states):
@@ -81,27 +93,32 @@ class HiddenMarkovModel(object):
 
         # Make connections between states using edge states
         for es_name in edge_states:
-            es = edge_states[es_name][0]
+            es_list = edge_states[es_name][0]
             s1, s2 = [states[s] for s in edge_states[es_name][1]]
-            hmm.add_state(es)
-            hmm.add_transition(s1, es, tm_dict[edge_states[es_name][1]])
-            hmm.add_transition(es, s2, 1.0)
+            for es in es_list: hmm.add_state(es)
+            hmm.add_transition(s1, es_list[0], tm_dict[edge_states[es_name][1]])
+            for i in range(1, buffer):
+                hmm.add_transition(es_list[i-1], es_list[i], 1)
+            hmm.add_transition(es_list[-1], s2, 1.0)
         hmm.bake()
 
-        self.state_names = np.array([state.name for state in hmm.states])
+        state_names = np.array([state.name for state in hmm.states])
         self.pg_gui_state_dict = pg_gui_state_dict
-        self.gui_state_dict = {si: pg_gui_state_dict.get(s, None) for si, s in enumerate(self.state_names)}
+        self.gui_state_dict = {si: pg_gui_state_dict.get(s, None) for si, s in enumerate(state_names)}
         return hmm
 
     def get_states(self, seq_idx):
         """
         Return dicts of pomgranate states with initialized normal multivariate distributions
         """
+        buffer = self.gui.buffer_slider.value
+        left_buffer = buffer // 2
+        right_buffer = buffer - left_buffer
         data = self.data.loc[seq_idx, :]
         if not any(data.is_labeled):
             # Estimate emission distributions (same as pomegranate does usually)
             data_vec = np.concatenate([np.stack(list(tup), axis=-1) for tup in data.loc[:, self.feature_list].to_numpy()], 0)
-            km = Kmeans(k=self.nb_states, n_init=5).fit(X=data_vec)
+            km = Kmeans(k=self.nb_states, n_init=1).fit(X=data_vec)
             y = km.predict(data_vec)
             def distfun(s1, s2):
                 return pg.MultivariateGaussianDistribution.from_samples(data_vec[np.logical_or(y == s1, y == s2), :])
@@ -112,6 +129,7 @@ class HiddenMarkovModel(object):
             y_edge = np.concatenate([np.stack(list(tup), axis=-1) for tup in data.loc[:, 'edge_labels'].to_numpy()], 0)
             data_vec = np.concatenate([np.stack(list(tup), axis=-1) for tup in data.loc[:, self.feature_list].to_numpy()], 0)
             def distfun(s1, s2):
+                # return pg.MultivariateGaussianDistribution.from_samples(data_vec[np.logical_or(y == s1, y == s2), :])
                 return pg.MultivariateGaussianDistribution.from_samples(data_vec[y_edge == f'e{s1}{s2}', :])
 
         # Create states
@@ -127,8 +145,11 @@ class HiddenMarkovModel(object):
         edge_states = dict()
         for edge in edges:
             sn = f'e{edge[0]}{edge[1]}'
-            edge_states[sn] = [pg.State(distfun(*edge), name=f'e{edge[0]}{edge[1]}'), (f's{edge[0]}', f's{edge[1]}')]
-            pg_gui_state_dict[sn] = edge[1]
+            estates_list = list()
+            for i in range(buffer):
+                estates_list.append(pg.State(distfun(*edge), name=f'e{edge[0]}{edge[1]}_{i}'))
+                pg_gui_state_dict[f'{sn}_{i}'] = edge[0] if i < left_buffer else edge[1]
+            edge_states[sn] = [estates_list, (f's{edge[0]}', f's{edge[1]}')]
         return states, edge_states, pg_gui_state_dict
 
     def get_transitions(self, seq_idx):
@@ -191,7 +212,7 @@ class HiddenMarkovModel(object):
         """
         convert pandas dataframe to numpy array of shape [nb_sequences, nb_samples_per_sequence, nb_features]
         """
-        return np.stack([np.stack(list(tup), axis=-1) for tup in df.loc[:, self.feature_list].to_numpy()], 0)
+        return np.stack([np.stack(list(tup), axis=-1) for tup in df.to_numpy()], 0)
 
     # --- parameters and performance measures ---
 
@@ -203,8 +224,8 @@ class HiddenMarkovModel(object):
         """
         tm_array = []
         for _ in range(10):
-            hmm = self.get_trained_hmm(influence=1.0, bootstrap=True)
-            tm_array.append(hmm.transmat_)  # todo: point where pomegranate stores its tm
+            hmm = self.get_trained_hmm(supervision_influence=self.gui.supervision_slider.value, bootstrap=True)
+            tm_array.append(self.get_tm(hmm).to_numpy())
         tm_mat = np.stack(tm_array, axis=-1)
         sd_mat = np.std(tm_mat, axis=-1)
         mu_mat = np.mean(tm_mat, axis=-1)
@@ -220,11 +241,25 @@ class HiddenMarkovModel(object):
         return mu_list
 
     def get_states_sd(self, fidx):
-        dg = np.eye(self.nb_states, dtype=bool)
+        dg = np.eye(len(self.feature_list), dtype=bool)
         sd_dict = {self.pg_gui_state_dict[state.name]: state.distribution.cov[dg]
                    for state in self.trained.states if not state.is_silent()}
         sd_list = [sd_dict[mk][fidx] for mk in sorted(list(sd_dict))]
         return sd_list
+
+    def get_tm(self, hmm):
+        df = pd.DataFrame({st: [0] * self.nb_states for st in range(self.nb_states)})
+        df.set_index(df.columns, inplace=True)
+        state_idx_dict = {st.name: idx for idx, st in enumerate(hmm.states)}
+        dense_tm = hmm.dense_transition_matrix()
+        for s0, s1 in [(i1, i2) for i1 in range(self.nb_states) for i2 in range(self.nb_states)]:
+            if s0 == s1:
+                si0 = state_idx_dict[f's{s0}']; si1 = state_idx_dict[f's{s1}']
+            else:
+                si0 = state_idx_dict[f's{s0}']; si1 = state_idx_dict[f'e{s0}{s1}_0']
+            df.loc[s0, s1] = dense_tm[si0, si1]
+        return df
+
 
     # --- saving/loading models ---
     def get_params(self):
