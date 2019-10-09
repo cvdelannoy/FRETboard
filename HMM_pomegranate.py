@@ -7,7 +7,6 @@ import itertools
 from itertools import permutations
 import matplotlib.pyplot as plt
 from sklearn.utils import check_array
-from hmmlearn.utils import iter_from_X_lengths
 import warnings
 from helper_functions import rolling_var, rolling_cross_correlation, rolling_corr_coef
 
