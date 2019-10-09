@@ -1,11 +1,11 @@
 {% extends base %}
 {% block css_resources %}
-<link href="https://cdn.pydata.org/bokeh/release/bokeh-0.13.0.min.css" rel="stylesheet" type="text/css">
-<link href="https://cdn.pydata.org/bokeh/release/bokeh-widgets-0.13.0.min.css" rel="stylesheet" type="text/css">
-<link href="https://cdn.pydata.org/bokeh/release/bokeh-tables-0.13.0.min.css" rel="stylesheet" type="text/css">
+	{{ bokeh_css }}
 {% endblock %}
 
 {%block js_resources %}
-<script src="https://cdn.pydata.org/bokeh/release/bokeh-gl-0.13.0.min.js"></script>
-<script type="text/javascript">Bokeh.set_log_level("info");</script>
+	<script src="https://cdn.pydata.org/bokeh/release/bokeh-1.3.4.min.js"></script>
+	<script src="https://cdn.pydata.org/bokeh/release/bokeh-widgets-1.3.4.min.js"></script>
+	<script src="https://cdn.pydata.org/bokeh/release/bokeh-tables-1.3.4.min.js"></script>
+	<script src="https://cdn.pydata.org/bokeh/release/bokeh-gl-1.3.4.min.js"></script>
 {% endblock %}
