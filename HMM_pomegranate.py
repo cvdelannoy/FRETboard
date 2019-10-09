@@ -5,11 +5,6 @@ from pomegranate.kmeans import Kmeans
 from random import choices
 import itertools
 from itertools import permutations
-import matplotlib.pyplot as plt
-from sklearn.utils import check_array
-import warnings
-from helper_functions import rolling_var, rolling_cross_correlation, rolling_corr_coef
-
 # to show hmm graph: plt.figure(dpi=600); hmm.plot(); plt.show()
 
 class Classifier(object):
