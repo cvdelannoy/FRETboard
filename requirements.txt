@@ -1,0 +1,5 @@
+numpy
+pandas
+pomegranate
+bokeh
+cached-property
