@@ -266,4 +266,4 @@ class Classifier(object):
         return [self.trained.to_yaml()]
 
     def load_params(self, file_contents):
-        self.trained = HiddenMarkovModel().from_yaml(file_contents[0])
+        self.trained = pg.HiddenMarkovModel().from_yaml(file_contents[0])
