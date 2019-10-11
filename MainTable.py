@@ -21,7 +21,7 @@ class MainTable(object):
             'i_acc': [np.array([], dtype=np.int64)] * nb_files,
             'i_sum': [np.array([], dtype=np.float64)] * nb_files,
             'E_FRET': [np.array([], dtype=np.float64)] * nb_files,
-            'sd_roll': [np.array([], dtype=np.float64)] * nb_files,
+            'correlation_coefficient': [np.array([], dtype=np.float64)] * nb_files,
             'labels': [np.array([], dtype=np.int64)] * nb_files,
             'edge_labels': [np.array([], dtype=np.int64)] * nb_files,
             'prediction': [np.array([], dtype=np.int64)] * nb_files,
@@ -53,9 +53,9 @@ class MainTable(object):
         i_acc = fc[2, :]
         i_sum = np.sum((i_don, i_acc), axis=0)
         E_FRET = np.divide(i_acc, np.sum((i_don, i_acc), axis=0))
-        sd_roll = rolling_corr_coef(i_don, i_acc, window)
+        correlation_coefficient = rolling_corr_coef(i_don, i_acc, window)
         self._data.loc[fn] = (time[ss:-ss], i_don[ss:-ss], i_acc[ss:-ss],
-                              i_sum[ss:-ss], E_FRET[ss:-ss], sd_roll, [], [], [], [], False)
+                              i_sum[ss:-ss], E_FRET[ss:-ss], correlation_coefficient, [], [], [], [], False)
 
     def del_tuple(self, idx):
         self._data.drop(idx, inplace=True)
@@ -73,9 +73,13 @@ class MainTable(object):
     # --- derived features ---
     @property
     def accuracy(self):
+        """
+        Return array of per-trace accuracy values and mean accuracy over entire dataset
+        :return:
+        """
         if not any(self.data.is_labeled):
-            return np.array([np.nan], dtype=float)
+            return np.array([np.nan], dtype=float), np.nan
         labeled_data = self.data.loc[self.data.is_labeled, ('prediction', 'labels')]
         nb_correct = labeled_data.apply(lambda x: np.sum(np.equal(x.prediction, x.labels)), axis=1)
         nb_points = labeled_data.apply(lambda x: x.labels.size, axis=1)
-        return nb_correct / nb_points * 100
+        return nb_correct / nb_points * 100, nb_correct.sum() / nb_points.sum() * 100

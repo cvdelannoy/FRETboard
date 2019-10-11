@@ -70,7 +70,7 @@ class Gui(object):
         self.datzip_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
 
         # ColumnDataSources
-        self.source = ColumnDataSource(data=dict(i_don=[], i_acc=[], E_FRET=[], sd_roll=[], i_sum=[], time=[],
+        self.source = ColumnDataSource(data=dict(i_don=[], i_acc=[], E_FRET=[], correlation_coefficient=[], i_sum=[], time=[],
                                                  rect_height=[], rect_mid=[],
                                                  i_sum_height=[], i_sum_mid=[],
                                                  labels=[], labels_pct=[]))
@@ -99,12 +99,11 @@ class Gui(object):
     @classifier.setter
     def classifier(self, classifier):
         self._classifier = classifier
-        if classifier.data.shape[0] == 0:
-            return
-        self.example_select.options = self.data.data.index.tolist()
-        if self.cur_example_idx is None:
-            self.cur_example_idx = self.example_select.options[0]
-        self._redraw_all()
+        # if classifier.data.shape[0] == 0:
+        #     return
+        # self.example_select.options = self.data.data.index.tolist()
+        # if self.cur_example_idx is None:
+        #     self.update_example(None, None, self.example_select.options[0])
 
     @property
     def nb_examples(self):
@@ -125,8 +124,8 @@ class Gui(object):
         return self.data.data.loc[self.cur_example_idx].E_FRET
 
     @cached_property
-    def sd_roll(self):
-        return self.data.data.loc[self.cur_example_idx].sd_roll
+    def correlation_coefficient(self):
+        return self.data.data.loc[self.cur_example_idx].correlation_coefficient
 
     @cached_property
     def i_don(self):
@@ -154,7 +153,7 @@ class Gui(object):
         return bsm
 
     def invalidate_cached_properties(self):
-        for k in ['E_FRET', 'sd_roll', 'i_sum', 'tp', 'ts', 'ts_don', 'ts_acc', 'i_don', 'i_acc',
+        for k in ['E_FRET', 'correlation_coefficient', 'i_sum', 'tp', 'ts', 'ts_don', 'ts_acc', 'i_don', 'i_acc',
                   'accuracy_hist']:
             if k in self.__dict__:
                 del self.__dict__[k]
@@ -210,40 +209,21 @@ class Gui(object):
         # Reload/retrain model
         if self.new_tot.data['value'][0] == self.new_cur:
             self.new_cur = 0
-            if len(file_contents): self.example_select.options = self.data.data.index.tolist()
-            if self.cur_example_idx is None: self.cur_example_idx = self.example_select.options[0]
+            if len(file_contents):
+                self.example_select.options = self.data.data.index.tolist()
             if self.model_loaded:
                 self.classifier.predict()
             else:
                 self.train_and_update()
                 self.model_loaded = True
-            self._redraw_all()
-
-    # def get_edge_labels(self, labels):
-    #     bsm = self.get_buffer_state_matrix()
-    #     edge_labels = labels.copy()
-    #     overhang_left = (self.buffer_slider.value - 1) // 2
-    #     overhang_right = (self.buffer_slider.value - 1) - overhang_left
-    #     oh_counter = 0
-    #     buffer_state = np.nan
-    #     cur_label = labels[0]
-    #     for li, l in enumerate(labels):
-    #         if l == cur_label:
-    #             if oh_counter != 0:
-    #                 edge_labels[li] = buffer_state
-    #                 oh_counter -= 1
-    #         else:
-    #             buffer_state = bsm[cur_label, l]
-    #             edge_labels[li-overhang_left:li+1] = buffer_state
-    #             cur_label = l
-    #             oh_counter = overhang_right
-    #     return edge_labels
+            if self.cur_example_idx is None:
+                self.update_example(None, None, self.example_select.options[0])
+            else:
+                self._redraw_all()
 
     def get_edge_labels(self, labels):
         """
         Encode transitions between differing states as 1 and other data points as 0
-        :param labels:
-        :return:
         """
         edge_labels = np.zeros(labels.size, dtype='<U3')
         overhang_right = (self.buffer_slider.value - 1) // 2
@@ -264,41 +244,41 @@ class Gui(object):
         return edge_labels
 
     def update_example(self, attr, old, new):
+        """
+        Update the example currently on the screen.
+        """
         if old == new:
             return
-        if old is not None:
-            self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
-            self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
+        if not self.data.data.loc[new, 'is_labeled']:
+            self.data.set_value(new, 'labels', self.data.data.loc[new, 'prediction'].copy())
+            self.data.set_value(new, 'edge_labels', self.get_edge_labels(self.data.data.loc[new, 'labels']))
+            self.data.set_value(new, 'is_labeled', True)
+        self.example_select.value = new
         self.cur_example_idx = new
-        self._redraw_all()
+        self._redraw_all()  # todo: gets called twice, when training, don't know why...
 
     def update_example_retrain(self):
         """
         Assume current example is labeled correctly, retrain and display new random example
-        Note: this should be the only way to set an example to 'labeled training example' mode (is_labeled == True)
         """
+        self.train_and_update()
         if all(self.data.data.is_labeled):
             self.notification.text += f'{print_timestamp()}All examples have already been manually classified'
+            self._redraw_all()
         else:
-            self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
-            self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
-            self.data.set_value(self.cur_example_idx, 'is_labeled', True)
-            self.train_and_update()
             new_example_idx = np.random.choice(self.data.data.loc[np.invert(self.data.data.is_labeled), 'logprob'].index)
-            self.example_select.value = self.cur_example_idx
-            self.update_example(None, None, new_example_idx)
+            self.update_example(None, self.example_select.value, new_example_idx)
 
     def _redraw_all(self):
         self.invalidate_cached_properties()
         nb_samples = self.i_don.size
-        if not len(self.data.data.loc[self.cur_example_idx].labels):
-            self.data.set_value(self.cur_example_idx, 'labels', 
-                                self.data.data.loc[self.cur_example_idx].prediction.copy())
+        # if not len(self.data.data.loc[self.cur_example_idx].labels):
+        #     self.data.set_value(self.cur_example_idx, 'labels', self.data.data.loc[self.cur_example_idx].prediction.copy())
         all_ts = np.concatenate((self.i_don, self.i_acc))
         rect_mid = (all_ts.min() + all_ts.max()) / 2
         rect_height = np.abs(all_ts.min()) + np.abs(all_ts.max())
         self.source.data = dict(i_don=self.i_don, i_acc=self.i_acc, time=np.arange(nb_samples),
-                                E_FRET=self.E_FRET, sd_roll=self.sd_roll, i_sum=self.i_sum,
+                                E_FRET=self.E_FRET, correlation_coefficient=self.correlation_coefficient, i_sum=self.i_sum,
                                 rect_height=np.repeat(rect_height, nb_samples),
                                 rect_mid=np.repeat(rect_mid, nb_samples),
                                 i_sum_height=np.repeat(self.i_sum.max(), nb_samples),
@@ -324,8 +304,12 @@ class Gui(object):
             self.update_accuracy_hist()
             self.update_stats_text()
 
+            # update data in main table
+            self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
+            self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
+
     def update_accuracy_hist(self):
-        acc_counts = np.histogram(self.data.accuracy, bins=np.linspace(5, 100, num=20))[0]
+        acc_counts = np.histogram(self.data.accuracy[0], bins=np.linspace(5, 100, num=20))[0]
         self.accuracy_source.data['accuracy_counts'] = acc_counts
 
     def update_logprob_hist(self):
@@ -337,7 +321,7 @@ class Gui(object):
         if pct_labeled == 0:
             acc = 'N/A'
         else:
-            acc = round(self.data.accuracy.mean(), 1)
+            acc = round(self.data.accuracy[1], 1)
         self.acc_text.text = f'{acc}'
         self.mc_text.text = f'{pct_labeled}'
 
@@ -499,7 +483,7 @@ class Gui(object):
                                                                             'transform': self.col_mapper},
                 source=self.source, **rect_opts)
         ts_efret.line('time', 'E_FRET', color='#1f78b4', source=self.source, **line_opts)
-        ts_efret.line('time', 'sd_roll', color='#b2df8a', source=self.source, **line_opts)
+        ts_efret.line('time', 'correlation_coefficient', color='#b2df8a', source=self.source, **line_opts)
         efret_panel = Panel(child=ts_efret, title='E_FRET')
 
         # i_sum series

@@ -5,6 +5,7 @@ from pomegranate.kmeans import Kmeans
 from random import choices
 import itertools
 from itertools import permutations
+import sys
 # to show hmm graph: plt.figure(dpi=600); hmm.plot(); plt.show()
 
 class Classifier(object):
@@ -14,7 +15,7 @@ class Classifier(object):
 
     def __init__(self, **kwargs):
         self.trained = None
-        self.feature_list = ['E_FRET', 'i_sum', 'sd_roll']
+        self.feature_list = ['E_FRET', 'i_sum', 'correlation_coefficient']
         self.nb_states = kwargs['nb_states']
         self.gui = kwargs['gui']
         self.data = self.gui.data._data
@@ -75,7 +76,7 @@ class Classifier(object):
         # Get emission distributions & transition probs
         states, edge_states, pg_gui_state_dict = self.get_states(seq_idx)
         tm_dict, pstart_dict, pend_dict = self.get_transitions(seq_idx)
-
+        for k in tm_dict: tm_dict[k] = max(tm_dict[k], 0.000001)  # reset 0-prob transitions to essentially 0, avoids nans on edges...
 
         # Add states, self-transitions, transitions to start/end state
         for sidx, s_name in enumerate(states):
