@@ -1,3 +1,5 @@
+import re
+from math import sqrt
 import pandas as pd
 import numpy as np
 import pomegranate as pg
@@ -5,6 +7,7 @@ from pomegranate.kmeans import Kmeans
 from random import choices
 import itertools
 from itertools import permutations
+import yaml
 # to show hmm graph: plt.figure(dpi=600); hmm.plot(); plt.show()
 
 class Classifier(object):
@@ -112,7 +115,11 @@ class Classifier(object):
         if not any(data.is_labeled):
             # Estimate emission distributions (same as pomegranate does usually)
             data_vec = np.concatenate([np.stack(list(tup), axis=-1) for tup in data.loc[:, self.feature_list].to_numpy()], 0)
-            km = Kmeans(k=self.nb_states, n_init=1).fit(X=data_vec)
+            if data_vec.shape[0] > 20000:  # avoid endless waiting for k-means guess in large dataset
+                km_idx = np.random.choice(data_vec.shape[0], 10000, replace=False)
+            else:
+                km_idx = np.arange(data_vec.shape[0])
+            km = Kmeans(k=self.nb_states, n_init=1).fit(X=data_vec[km_idx, :])
             y = km.predict(data_vec)
             def distfun(s1, s2):
                 return pg.MultivariateGaussianDistribution.from_samples(data_vec[np.logical_or(y == s1, y == s2), :])
@@ -193,7 +200,6 @@ class Classifier(object):
         return out_dict, pstart_dict, pend_dict
 
     def predict(self):
-        # dm = self.get_matrix(self.data.loc[:, self.feature_list])
         tuple_list = [np.stack(list(tup), axis=-1) for tup in self.data.loc[:, self.feature_list].to_numpy()]
         logprob_list = [self.trained.predict_log_proba(tup) for tup in tuple_list]
         logprob_path_list = [np.sum(np.max(logprob, axis=1)) for logprob in logprob_list]
@@ -257,7 +263,26 @@ class Classifier(object):
 
     # --- saving/loading models ---
     def get_params(self):
-        return [self.trained.to_yaml()]
+        mod_txt = self.trained.to_yaml()
+        gui_state_dict_txt = yaml.dump(self.gui_state_dict)
+        pg_gui_state_dict_txt = yaml.dump(self.pg_gui_state_dict)
+        div = '\nSTART_NEW_SECTION\n'
+        out_txt = ('BoundaryAwareParameters'
+                   + div + mod_txt
+                   + div + gui_state_dict_txt
+                   + div + pg_gui_state_dict_txt
+                   + div + str(self.nb_states))
+        return out_txt
 
     def load_params(self, file_contents):
-        self.trained = pg.HiddenMarkovModel().from_yaml(file_contents[0])
+        (mod_check,
+         model_txt,
+         gui_state_dict_txt,
+         pg_gui_state_dict_txt,
+         nb_states_txt) = file_contents.split('\nSTART_NEW_SECTION\n')
+        if mod_check != 'BoundaryAwareParameters':
+            self.gui.text += '\nERROR: loaded model parameters are not for a boundary-aware HMM!'
+        self.trained = pg.HiddenMarkovModel().from_yaml(model_txt)
+        self.gui_state_dict = yaml.load(gui_state_dict_txt, Loader=yaml.FullLoader)
+        self.pg_gui_state_dict = yaml.load(pg_gui_state_dict_txt, Loader=yaml.FullLoader)
+        self.nb_states = int(nb_states_txt)

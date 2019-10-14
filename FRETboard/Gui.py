@@ -37,7 +37,7 @@ with open(f'{__location__}/js_widgets/upload.js', 'r') as fh: upload_js = fh.rea
 with open(f'{__location__}/js_widgets/upload_model.js', 'r') as fh: upload_model_js = fh.read()
 with open(f'{__location__}/js_widgets/download_datzip.js', 'r') as fh: download_datzip_js = fh.read()
 with open(f'{__location__}/js_widgets/download_report.js', 'r') as fh: download_report_js = fh.read()
-with open(f'{__location__}/js_widgets/download_csv.js', 'r') as fh: download_csv_js = fh.read()
+with open(f'{__location__}/js_widgets/download_model.js', 'r') as fh: download_csv_js = fh.read()
 
 param_state_dict = {18: 2, 30: 3, 44: 4, 60: 5, 78: 6, 98: 7}
 
@@ -64,6 +64,7 @@ class Gui(object):
         self.buffer_slider = Slider(title='Buffer', value=buffer_value, start=0, end=20, step=1)
         self.notification = PreText(text='', width=1000, height=15)
         self.acc_text = PreText(text='N/A')
+        self.posterior_text = PreText(text='N/A')
         self.mc_text = PreText(text='0%')
         self.state_radio = RadioGroup(labels=self.classifier.feature_list, active=0)
         self.report_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
@@ -83,7 +84,7 @@ class Gui(object):
             data=dict(xs=[np.arange(0, 1, 0.01)] * self.num_states_slider.value,
                       ys=[np.zeros(100, dtype=float)] * self.num_states_slider.value,
                       color=self.curve_colors))
-        self.loaded_model_source = ColumnDataSource(data=dict(params=[]))
+        self.loaded_model_source = ColumnDataSource(data=dict(file_contents=[]))
         self.classifier_source = ColumnDataSource(data=dict(params=[]))
         self.html_source = ColumnDataSource(data=dict(html_text=[]))
         self.datzip_source = ColumnDataSource(data=dict(datzip=[]))
@@ -160,13 +161,14 @@ class Gui(object):
 
     def train_and_update(self):
         self.classifier.train(supervision_influence=self.supervision_slider.value)
-        self.classifier_source.data = dict(params=self.classifier.get_params())
+        self.classifier_source.data = dict(params=[self.classifier.get_params()])
 
     def load_params(self, attr, old, new):
         raw_contents = self.loaded_model_source.data['file_contents'][0]
         # remove the prefix that JS adds
         _, b64_contents = raw_contents.split(",", 1)
-        file_contents = base64.b64decode(b64_contents).decode('utf-8').split('\n')[1:-1]
+        file_contents = base64.b64decode(b64_contents).decode('utf-8')
+        # file_contents = base64.b64decode(b64_contents).decode('utf-8').split('\n')[1:-1]
         self.classifier.load_params(file_contents)
         self.num_states_slider.value = self.classifier.nb_states
         self.model_loaded = True
@@ -320,9 +322,12 @@ class Gui(object):
         pct_labeled = round(self.data.data.is_labeled.sum() / self.data.data.is_labeled.size * 100.0, 1)
         if pct_labeled == 0:
             acc = 'N/A'
+            post = 'N/A'
         else:
             acc = round(self.data.accuracy[1], 1)
+            post = round(self.data.data.logprob.mean(), 1)
         self.acc_text.text = f'{acc}'
+        self.posterior_text.text = f'{post}'
         self.mc_text.text = f'{pct_labeled}'
 
     def update_state_curves(self):
@@ -516,8 +521,9 @@ class Gui(object):
         state_curves.multi_line('xs', 'ys', line_color='color', source=self.state_source)
 
         # Stats in text
-        stats_text = column( row(Div(text='Accuracy: ', width=120, height=18), self.acc_text, height=18),
-                             row(Div(text='Manually classified: ', width=120, height=18), self.mc_text, height=18))
+        stats_text = column( row(Div(text='Accuracy (%): ', width=140, height=18), self.acc_text, height=18),
+                             row(Div(text='Mean log-posterior: ', width=140, height=18), self.posterior_text, height=18),
+                             row(Div(text='Manually classified (%): ', width=140, height=18), self.mc_text, height=18))
 
         # todo: Average accuracy and posterior
 

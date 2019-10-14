@@ -4,6 +4,7 @@ import pomegranate as pg
 from pomegranate.kmeans import Kmeans
 from random import choices
 import itertools
+import yaml
 
 # to show hmm graph: plt.figure(dpi=600); hmm.plot(); plt.show()
 
@@ -223,10 +224,28 @@ class Classifier(object):
             df.loc[s0, s1] = dense_tm[si0, si1]
         return df
 
-
-    # --- saving/loading models ---
+        # --- saving/loading models ---
     def get_params(self):
-        return [self.trained.to_yaml()]
+        mod_txt = self.trained.to_yaml()
+        gui_state_dict_txt = yaml.dump(self.gui_state_dict)
+        pg_gui_state_dict_txt = yaml.dump(self.pg_gui_state_dict)
+        div = '\nSTART_NEW_SECTION\n'
+        out_txt = ('VanillaParameters'
+                   + div + mod_txt
+                   + div + gui_state_dict_txt
+                   + div + pg_gui_state_dict_txt
+                   + div + str(self.nb_states))
+        return out_txt
 
     def load_params(self, file_contents):
-        self.trained = pg.HiddenMarkovModel().from_yaml(file_contents[0])
+        (mod_check,
+         model_txt,
+         gui_state_dict_txt,
+         pg_gui_state_dict_txt,
+         nb_states_txt) = file_contents.split('\nSTART_NEW_SECTION\n')
+        if mod_check != 'VanillaParameters':
+            self.gui.text += '\nERROR: loaded model parameters are not for a vanilla HMM!'
+        self.trained = pg.HiddenMarkovModel().from_yaml(model_txt)
+        self.gui_state_dict = yaml.load(gui_state_dict_txt, Loader=yaml.FullLoader)
+        self.pg_gui_state_dict = yaml.load(pg_gui_state_dict_txt, Loader=yaml.FullLoader)
+        self.nb_states = int(nb_states_txt)
