@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from helper_functions import rolling_corr_coef
+from FRETboard.helper_functions import rolling_corr_coef
 
 class MainTable(object):
 

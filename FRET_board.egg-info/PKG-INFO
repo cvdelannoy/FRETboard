@@ -1,0 +1,29 @@
+Metadata-Version: 1.0
+Name: FRET-board
+Version: 0.0.2
+Summary: Supervise FRET event detection algorithms
+Home-page: https://github.com/cvdelannoy/FRETboard
+Author: Carlos de Lannoy
+Author-email: carlos.delannoy@wur.nl
+License: GPL-3.0
+Description: # FRETboard: supervise your FRET detection algorithm
+        #### [Carlos de Lannoy](https://www.vcard.wur.nl/Views/Profile/View.aspx?id=77824), [Dick de Ridder](https://www.vcard.wur.nl/Views/Profile/View.aspx?id=56806&ln=eng)
+        
+        FRETboard helps you train algorithms for the detection of Förster resonance energy transfer events in a 
+        (semi-)supervised manner.
+        
+        ## Running
+        FRETboard is available directly for use on [Heroku](https://fret-board.herokuapp.com/), or can be installed on your own 
+        system using pip:
+        
+        ```
+        pip install git+https://github.com/cvdelannoy/poreTally.git
+        ```
+        
+        ## Usage
+        
+        
+        
+        
+Keywords: FRET Forster resonance energy transfer supervised machine learning
+Platform: UNKNOWN

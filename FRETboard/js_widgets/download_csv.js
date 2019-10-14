@@ -14,7 +14,7 @@ function table_to_csv(file_source) {
     return lines.join('\\n').concat('\\n')
 }
 
-const filename = 'FRETboard_model.csv';
+const filename = 'FRETboard_model.txt';
 filetext = table_to_csv(file_source);
 const blob = new Blob([filetext], { type: 'text/csv;charset=utf-8;' });
 

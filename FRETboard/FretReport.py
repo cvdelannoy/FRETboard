@@ -11,7 +11,7 @@ from bokeh.embed import file_html, components
 from bokeh.resources import CDN
 from jinja2 import Template
 from tabulate import tabulate
-from helper_functions import print_timestamp
+from FRETboard.helper_functions import print_timestamp
 
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 

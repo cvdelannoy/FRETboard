@@ -1,6 +1,6 @@
-matplotlib
 numpy
 pandas
 pomegranate
 bokeh
 cached-property
+tabulate

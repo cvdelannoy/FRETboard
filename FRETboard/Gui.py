@@ -19,9 +19,9 @@ from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Di
 from bokeh.models.widgets.panels import Panel, Tabs
 from tornado.ioloop import IOLoop
 
-from helper_functions import print_timestamp
-from FretReport import FretReport
-from MainTable import MainTable
+from FRETboard.helper_functions import print_timestamp
+from FRETboard.FretReport import FretReport
+from FRETboard.MainTable import MainTable
 
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 line_opts = dict(line_width=1)
@@ -52,7 +52,7 @@ class Gui(object):
 
         # Classifier object
         buffer_value = 5
-        self.classifier_class = importlib.import_module(algo_dict[self.algo_select.value]).Classifier
+        self.classifier_class = importlib.import_module('FRETboard.algorithms.'+algo_dict[self.algo_select.value]).Classifier
         self.classifier = self.classifier_class(nb_states=nb_states, gui=self)
 
         # widgets
@@ -373,15 +373,6 @@ class Gui(object):
                 self.update_state_curves()
                 self.update_example(None, '', self.cur_example_idx)
 
-    def update_scroll_state(self, attr, old, new):
-        if not self.scroll_state_source['new_state'][0]:
-            return
-        if self.sel_state_slider.value + 1 <= self.num_states_slider.value:
-            self.sel_state_slide.value += 1
-        else:
-            self.sel_state_slider = 1
-        self.scroll_state_source['new_state'][0] = False
-
     def export_data(self):
         self.fretReport = FretReport(self)
 
@@ -540,7 +531,6 @@ class Gui(object):
         self.num_states_slider.on_change('value', self.update_num_states)
         # self.source.on_change('selected', self.update_classification)
         self.state_radio.on_change('active', lambda attr, old, new: self.update_state_curves())
-        self.scroll_state_source.on_change('data', self.update_scroll_state)
 
         # hidden holders to generate saves
         self.report_holder.js_on_change('text', CustomJS(args=dict(file_source=self.html_source),
