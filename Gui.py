@@ -344,7 +344,8 @@ class Gui(object):
             return
         self.classifier_class = importlib.import_module(algo_dict[new]).Classifier
         self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, gui=self)
-        self.train_and_update()
+        if len(self.data.data):
+            self.train_and_update()
 
     def update_num_states(self, attr, old, new):
         if new != self.classifier.nb_states:
