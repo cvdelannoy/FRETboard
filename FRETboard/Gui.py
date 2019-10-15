@@ -375,12 +375,25 @@ class Gui(object):
             self.sel_state_slider.end = new
             if self.sel_state_slider.value > new: self.sel_state_slider.value = new
 
-            # retraining classifier
-            if self.data.data.shape[0] != 0:
-                self.invalidate_cached_properties()
-                self.train_and_update()
-                self.update_state_curves()
-                self.update_example(None, '', self.cur_example_idx)
+            # retraining is too heavy for longer traces, setting current example to lowest state instead
+            blank_labels = [(i, 0) for i in range(len(self.data.data.loc[self.cur_example_idx, 'i_don']))]
+            patch = {'labels': blank_labels,
+                     'labels_pct': blank_labels }
+            self.source.patch(patch)
+            self.source.selected.indices = []
+            self.update_accuracy_hist()
+            self.update_stats_text()
+
+            # update data in main table
+            self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
+            self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
+
+            # # retraining classifier
+            # if self.data.data.shape[0] != 0:
+            #     self.invalidate_cached_properties()
+            #     self.train_and_update()
+            #     self.update_state_curves()
+            #     self.update_example(None, '', self.cur_example_idx)
 
     def export_data(self):
         self.fretReport = FretReport(self)
