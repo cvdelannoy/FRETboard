@@ -15,7 +15,7 @@ class Classifier(object):
 
     def __init__(self, **kwargs):
         self.trained = None
-        self.feature_list = ['E_FRET', 'i_sum', 'correlation_coefficient']
+        self.feature_list = ['E_FRET', 'i_sum', 'correlation_coefficient', 'E_FRET_sd']
         self.nb_states = kwargs['nb_states']
         self.gui = kwargs['gui']
         self.data = self.gui.data._data
@@ -74,7 +74,6 @@ class Classifier(object):
         # Get emission distributions & transition probs
         dists, pg_gui_state_dict = self.get_states(seq_idx)
         trans_df, pstart_dict, pend_dict = self.get_transitions(seq_idx)
-        # for k in tm_dict: tm_dict[k] = max(tm_dict[k], 0.000001)  # reset 0-prob transitions to essentially 0, avoids nans on edges...
 
         state_names = list(dists)
         tm_mat = trans_df.loc[state_names, state_names].to_numpy()
@@ -163,7 +162,6 @@ class Classifier(object):
         return trans_df, pstart_dict, pend_dict
 
     def predict(self):
-        # dm = self.get_matrix(self.data.loc[:, self.feature_list])
         tuple_list = [np.stack(list(tup), axis=-1) for tup in self.data.loc[:, self.feature_list].to_numpy()]
         logprob_list = [self.trained.predict_log_proba(tup) for tup in tuple_list]
         logprob_path_list = [np.sum(np.max(logprob, axis=1)) for logprob in logprob_list]

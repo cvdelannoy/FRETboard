@@ -17,7 +17,7 @@ class Classifier(object):
 
     def __init__(self, **kwargs):
         self.trained = None
-        self.feature_list = ['E_FRET', 'i_sum', 'correlation_coefficient']
+        self.feature_list = ['E_FRET', 'i_sum', 'correlation_coefficient', 'E_FRET_sd']
         self.nb_states = kwargs['nb_states']
         self.gui = kwargs['gui']
         self.data = self.gui.data._data
@@ -31,7 +31,6 @@ class Classifier(object):
         """
         Generate trained hmm and predict examples
         """
-        # todo: ignore influence for now
         self.trained = self.get_trained_hmm(supervision_influence=supervision_influence)
         self.predict()
 
