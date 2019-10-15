@@ -170,7 +170,7 @@ class Gui(object):
         self.classifier.load_params(file_contents)
         self.num_states_slider.value = self.classifier.nb_states
         self.model_loaded = True
-        self.notification.text += f'{print_timestamp()}Model loaded'
+        self.notification.text = f'{print_timestamp()}Model loaded'
         if self.data.data.shape[0] != 0:
             self.data.data.is_labeled = False
             self.classifier.predict()
@@ -186,16 +186,17 @@ class Gui(object):
         if '.traces' in fn:
             nb_frames, _, nb_traces = np.frombuffer(file_contents, dtype=np.int16, count=3)
             traces_vec = np.frombuffer(file_contents, dtype=np.int16, count=nb_frames * nb_traces + 3)
-            try:
-                traces_vec = traces_vec[3:]
-                traces_vec = traces_vec[:nb_colors * (nb_traces // nb_colors) * nb_frames]
-                file_contents = traces_vec[3:].reshape((nb_colors, nb_traces // nb_colors, nb_frames), order='F')
-            except:
-                print(traces_vec[:20])  # todo: log failure to load file to console
-                return
+            traces_vec = traces_vec[3:]
+            traces_vec = traces_vec[:nb_colors * (nb_traces // nb_colors) * nb_frames]
+            file_contents = traces_vec.reshape((nb_colors, nb_traces // nb_colors, nb_frames), order='F')
             fn_clean = os.path.splitext(fn)[0]
+            notify_counter = 0
             for fi, f in enumerate(np.hsplit(file_contents, file_contents.shape[1])):
-                self.data.add_tuple(f.squeeze(), f'{fn_clean}_tr{fi+1}')
+                if fi + 1 >= notify_counter:
+                    self.notification.text = f'{print_timestamp()} Processed {fi+1} of {nb_traces} traces from file {fn}'
+                    notify_counter += 100
+                file_contents = np.row_stack((np.arange(f.shape[2]), f.squeeze()))
+                self.data.add_tuple(file_contents, f'{fn_clean}_tr{fi+1}')
 
         # Process .dat files
         elif '.dat' in fn:
@@ -211,14 +212,17 @@ class Gui(object):
             if len(file_contents):
                 self.example_select.options = self.data.data.index.tolist()
             if self.model_loaded:
+                self.notification.text = f'{print_timestamp()} Classifying loaded traces using current model...'
                 self.classifier.predict()
             else:
+                self.notification.text = f'{print_timestamp()} Training initial model, on loaded traces...'
                 self.train_and_update()
                 self.model_loaded = True
             if self.cur_example_idx is None:
                 self.update_example(None, None, self.example_select.options[0])
             else:
                 self._redraw_all()
+            self.notification.text = f'{print_timestamp()} Done'
 
     def get_edge_labels(self, labels):
         """
@@ -342,7 +346,7 @@ class Gui(object):
     def update_algo(self, attr, old, new):
         if old == new:
             return
-        self.classifier_class = importlib.import_module(algo_dict[new]).Classifier
+        self.classifier_class = importlib.import_module('FRETboard.algorithms.'+algo_dict[new]).Classifier
         self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, gui=self)
         if len(self.data.data):
             self.train_and_update()
@@ -479,10 +483,10 @@ class Gui(object):
         # correlation coeff series
         ts_corr = figure(tools='xbox_select,save,xwheel_zoom,xpan', plot_width=1000, plot_height=275,
                           active_drag='xbox_select', x_range=ts.x_range)  # todo: add tooltips=[('$index')]
-        ts_corr.line('time', 'correlation_coefficient', color='#b2df8a', source=self.source, **line_opts)
         ts_corr.rect('time', 0.0, height=2.0, fill_color={'field': 'labels_pct',
                                                            'transform': self.col_mapper},
                       source=self.source, **rect_opts)
+        ts_corr.line('time', 'correlation_coefficient', color='#b2df8a', source=self.source, **line_opts)
         corr_panel = Panel(child=ts_corr, title='Correlation coefficient')
 
         # i_sum series
