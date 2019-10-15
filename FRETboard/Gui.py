@@ -479,10 +479,10 @@ class Gui(object):
         # correlation coeff series
         ts_corr = figure(tools='xbox_select,save,xwheel_zoom,xpan', plot_width=1000, plot_height=275,
                           active_drag='xbox_select', x_range=ts.x_range)  # todo: add tooltips=[('$index')]
-        ts_corr.line('time', 'correlation_coefficient', color='#b2df8a', source=self.source, **line_opts)
         ts_corr.rect('time', 0.0, height=2.0, fill_color={'field': 'labels_pct',
                                                            'transform': self.col_mapper},
                       source=self.source, **rect_opts)
+        ts_corr.line('time', 'correlation_coefficient', color='#b2df8a', source=self.source, **line_opts)
         corr_panel = Panel(child=ts_corr, title='Correlation coefficient')
 
         # i_sum series
