@@ -583,9 +583,9 @@ class Gui(object):
         doc.add_root(layout)
         doc.title = f'FRETboard v. {self.version}'
 
-    def start_gui(self):
+    def start_gui(self, port=0):
         apps = {'/': Application(FunctionHandler(self.make_document))}
-        server = Server(apps, port=0, websocket_max_message_size=100000000)
+        server = Server(apps, port=port, websocket_max_message_size=100000000)
         server.show('/')
         loop = IOLoop.current()
         loop.start()
