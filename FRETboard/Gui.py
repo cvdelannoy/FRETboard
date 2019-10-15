@@ -209,8 +209,9 @@ class Gui(object):
         # Reload/retrain model
         if self.new_tot.data['value'][0] == self.new_cur:
             self.new_cur = 0
-            if len(file_contents):
+            if len(self.data.data):
                 self.example_select.options = self.data.data.index.tolist()
+                self.showme_checkboxes.active = list(range(self.classifier.nb_states))
             if self.model_loaded:
                 self.notification.text = f'{print_timestamp()} Classifying loaded traces using current model...'
                 self.classifier.predict()
@@ -267,9 +268,13 @@ class Gui(object):
         self.train_and_update()
         if all(self.data.data.is_labeled):
             self.notification.text += f'{print_timestamp()}All examples have already been manually classified'
-            self._redraw_all()
         else:
-            new_example_idx = np.random.choice(self.data.data.loc[np.invert(self.data.data.is_labeled), 'logprob'].index)
+            sm_check = self.data.data.prediction.apply(lambda x: True if any(np.in1d(self.showme_checkboxes.active, x)) else False)
+            valid_bool = np.logical_and(sm_check, np.invert(self.data.data.is_labeled))
+            if not any(valid_bool):
+                self.notification.text = f'{print_timestamp()} No new traces with states of interest left'
+                return
+            new_example_idx = np.random.choice(self.data.data.loc[valid_bool, 'logprob'].index)
             self.update_example(None, self.example_select.value, new_example_idx)
 
     def _redraw_all(self):
@@ -385,7 +390,7 @@ class Gui(object):
         for fn, tup in self.data.data.iterrows():
             labels = tup.labels + 1 if len(tup.labels) != 0 else [None] * len(tup.time)
             sm_bool = [True for sm in self.saveme_checkboxes.active if sm + 1 in labels]
-            if not all(sm_bool): continue
+            if not any(sm_bool): continue
             out_df = pd.DataFrame(dict(time=tup.time, i_don=tup.i_don, i_acc=tup.i_acc,
                                        label=labels, predicted=tup.prediction))
             out_df.to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
@@ -405,8 +410,7 @@ class Gui(object):
     def update_showme(self, attr, old, new):
         if old == new: return
         if self.data.data.shape[0] == 0: return
-        valid_bool = self.data.data.apply(lambda x: np.invert(x.is_labeled)
-                                                    and any(i in new for i in x.prediction), axis=1)
+        valid_bool = self.data.data.apply(lambda x: any(i in new for i in x.prediction), axis=1)
         if any(valid_bool):
             self.example_select.options = list(self.data.data.index[valid_bool])
             if self.cur_example_idx not in self.example_select.options:
