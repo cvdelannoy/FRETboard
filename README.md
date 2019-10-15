@@ -48,7 +48,7 @@ rule of thumb, check how many measurements it takes to transit from one state to
  
 #### 3. Save
 You may now download the classified traces on your machine using the 'Data' button. Produce a 
-[Report](FRETboard_example_report.html) to see the
+[Report](FRETboard_example_report.html) (download and view in browser) to see the
 model parameters generated, along with some handy summary statistics and graphs or download the model to 
 quickly classify your data next time using the same parameters. Deselecting certain states here omits traces containing
 that state from your save file.

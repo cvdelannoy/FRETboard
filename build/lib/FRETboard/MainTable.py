@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from FRETboard.helper_functions import rolling_corr_coef
+from FRETboard.helper_functions import rolling_corr_coef, rolling_var
 
 class MainTable(object):
 
@@ -22,6 +22,7 @@ class MainTable(object):
             'i_sum': [np.array([], dtype=np.float64)] * nb_files,
             'E_FRET': [np.array([], dtype=np.float64)] * nb_files,
             'correlation_coefficient': [np.array([], dtype=np.float64)] * nb_files,
+            'E_FRET_sd': [np.array([], dtype=np.float64)] * nb_files,
             'labels': [np.array([], dtype=np.int64)] * nb_files,
             'edge_labels': [np.array([], dtype=np.int64)] * nb_files,
             'prediction': [np.array([], dtype=np.int64)] * nb_files,
@@ -45,7 +46,7 @@ class MainTable(object):
         :return: None
         """
         # window = 9
-        window = 15
+        window = 9
         ss = (window - 1) // 2  # sequence shortening
         fc[fc <= 0] = np.finfo(np.float64).eps  # hacky, required to get rid of overzealous background subtraction
         time = fc[0, :]
@@ -54,8 +55,9 @@ class MainTable(object):
         i_sum = np.sum((i_don, i_acc), axis=0)
         E_FRET = np.divide(i_acc, np.sum((i_don, i_acc), axis=0))
         correlation_coefficient = rolling_corr_coef(i_don, i_acc, window)
+        E_FRET_sd = rolling_var(E_FRET, window)
         self._data.loc[fn] = (time[ss:-ss], i_don[ss:-ss], i_acc[ss:-ss],
-                              i_sum[ss:-ss], E_FRET[ss:-ss], correlation_coefficient, [], [], [], [], False)
+                              i_sum[ss:-ss], E_FRET[ss:-ss], correlation_coefficient, E_FRET_sd, [], [], [], [], False)
 
     def del_tuple(self, idx):
         self._data.drop(idx, inplace=True)

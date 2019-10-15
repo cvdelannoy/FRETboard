@@ -4,6 +4,7 @@ import pomegranate as pg
 from pomegranate.kmeans import Kmeans
 from random import choices
 import itertools
+import yaml
 
 # to show hmm graph: plt.figure(dpi=600); hmm.plot(); plt.show()
 
@@ -14,7 +15,7 @@ class Classifier(object):
 
     def __init__(self, **kwargs):
         self.trained = None
-        self.feature_list = ['E_FRET', 'i_sum', 'correlation_coefficient']
+        self.feature_list = ['E_FRET', 'i_sum', 'correlation_coefficient', 'E_FRET_sd']
         self.nb_states = kwargs['nb_states']
         self.gui = kwargs['gui']
         self.data = self.gui.data._data
@@ -73,7 +74,6 @@ class Classifier(object):
         # Get emission distributions & transition probs
         dists, pg_gui_state_dict = self.get_states(seq_idx)
         trans_df, pstart_dict, pend_dict = self.get_transitions(seq_idx)
-        # for k in tm_dict: tm_dict[k] = max(tm_dict[k], 0.000001)  # reset 0-prob transitions to essentially 0, avoids nans on edges...
 
         state_names = list(dists)
         tm_mat = trans_df.loc[state_names, state_names].to_numpy()
@@ -162,7 +162,6 @@ class Classifier(object):
         return trans_df, pstart_dict, pend_dict
 
     def predict(self):
-        # dm = self.get_matrix(self.data.loc[:, self.feature_list])
         tuple_list = [np.stack(list(tup), axis=-1) for tup in self.data.loc[:, self.feature_list].to_numpy()]
         logprob_list = [self.trained.predict_log_proba(tup) for tup in tuple_list]
         logprob_path_list = [np.sum(np.max(logprob, axis=1)) for logprob in logprob_list]
@@ -223,10 +222,28 @@ class Classifier(object):
             df.loc[s0, s1] = dense_tm[si0, si1]
         return df
 
-
-    # --- saving/loading models ---
+        # --- saving/loading models ---
     def get_params(self):
-        return [self.trained.to_yaml()]
+        mod_txt = self.trained.to_yaml()
+        gui_state_dict_txt = yaml.dump(self.gui_state_dict)
+        pg_gui_state_dict_txt = yaml.dump(self.pg_gui_state_dict)
+        div = '\nSTART_NEW_SECTION\n'
+        out_txt = ('VanillaParameters'
+                   + div + mod_txt
+                   + div + gui_state_dict_txt
+                   + div + pg_gui_state_dict_txt
+                   + div + str(self.nb_states))
+        return out_txt
 
     def load_params(self, file_contents):
-        self.trained = pg.HiddenMarkovModel().from_yaml(file_contents[0])
+        (mod_check,
+         model_txt,
+         gui_state_dict_txt,
+         pg_gui_state_dict_txt,
+         nb_states_txt) = file_contents.split('\nSTART_NEW_SECTION\n')
+        if mod_check != 'VanillaParameters':
+            self.gui.text += '\nERROR: loaded model parameters are not for a vanilla HMM!'
+        self.trained = pg.HiddenMarkovModel().from_yaml(model_txt)
+        self.gui_state_dict = yaml.load(gui_state_dict_txt, Loader=yaml.FullLoader)
+        self.pg_gui_state_dict = yaml.load(pg_gui_state_dict_txt, Loader=yaml.FullLoader)
+        self.nb_states = int(nb_states_txt)

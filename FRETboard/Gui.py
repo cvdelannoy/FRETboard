@@ -44,7 +44,7 @@ param_state_dict = {18: 2, 30: 3, 44: 4, 60: 5, 78: 6, 98: 7}
 
 class Gui(object):
     def __init__(self, nb_states=3, data=[]):
-        self.version = '0.0.1'
+        self.version = '0.0.3'
         self.cur_example_idx = None
         self.algo_select = Select(title='Algorithm', value=list(algo_dict)[0], options=list(algo_dict))
 

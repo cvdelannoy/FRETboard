@@ -10,7 +10,6 @@ FRET_board.egg-info/top_level.txt
 FRETboard/FretReport.py
 FRETboard/Gui.py
 FRETboard/MainTable.py
-FRETboard/ModelTemplate.py
 FRETboard/__init__.py
 FRETboard/__main__.py
 FRETboard/algorithms.yml
@@ -20,6 +19,7 @@ FRETboard/algorithms/EdgeAwareHmm.py
 FRETboard/algorithms/VanillaHmm.py
 FRETboard/js_widgets/download_csv.js
 FRETboard/js_widgets/download_datzip.js
+FRETboard/js_widgets/download_model.js
 FRETboard/js_widgets/download_report.js
 FRETboard/js_widgets/upload.js
 FRETboard/js_widgets/upload_model.js

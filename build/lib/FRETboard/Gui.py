@@ -37,40 +37,41 @@ with open(f'{__location__}/js_widgets/upload.js', 'r') as fh: upload_js = fh.rea
 with open(f'{__location__}/js_widgets/upload_model.js', 'r') as fh: upload_model_js = fh.read()
 with open(f'{__location__}/js_widgets/download_datzip.js', 'r') as fh: download_datzip_js = fh.read()
 with open(f'{__location__}/js_widgets/download_report.js', 'r') as fh: download_report_js = fh.read()
-with open(f'{__location__}/js_widgets/download_csv.js', 'r') as fh: download_csv_js = fh.read()
+with open(f'{__location__}/js_widgets/download_model.js', 'r') as fh: download_csv_js = fh.read()
 
 param_state_dict = {18: 2, 30: 3, 44: 4, 60: 5, 78: 6, 98: 7}
 
 
 class Gui(object):
     def __init__(self, nb_states=3, data=[]):
-        self.version = '0.0.1'
+        self.version = '0.0.3'
         self.cur_example_idx = None
         self.algo_select = Select(title='Algorithm', value=list(algo_dict)[0], options=list(algo_dict))
 
         self.data = MainTable(data)
 
         # Classifier object
-        buffer_value = 5
         self.classifier_class = importlib.import_module('FRETboard.algorithms.'+algo_dict[self.algo_select.value]).Classifier
         self.classifier = self.classifier_class(nb_states=nb_states, gui=self)
 
         # widgets
         self.example_select = Select(title='Current example', value='None', options=['None'])
-        self.num_states_slider = Slider(title='Number of states', value=nb_states, start=2, end=6, step=1)
+        self.num_states_slider = Slider(title='Number of states', value=nb_states, start=2, end=10, step=1)
         self.sel_state_slider = Slider(title='Change selection to state', value=1, start=1,
                                        end=self.num_states_slider.value, step=1)
         self.supervision_slider = Slider(title='Influence supervision', value=1.0, start=0.0, end=1.0, step=0.01)
-        self.buffer_slider = Slider(title='Buffer', value=buffer_value, start=0, end=20, step=1)
+        self.buffer_slider = Slider(title='Buffer', value=3, start=0, end=20, step=1)
         self.notification = PreText(text='', width=1000, height=15)
         self.acc_text = PreText(text='N/A')
+        self.posterior_text = PreText(text='N/A')
         self.mc_text = PreText(text='0%')
         self.state_radio = RadioGroup(labels=self.classifier.feature_list, active=0)
         self.report_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
         self.datzip_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
 
         # ColumnDataSources
-        self.source = ColumnDataSource(data=dict(i_don=[], i_acc=[], E_FRET=[], correlation_coefficient=[], i_sum=[], time=[],
+        self.source = ColumnDataSource(data=dict(i_don=[], i_acc=[], E_FRET=[],
+                                                 correlation_coefficient=[], E_FRET_sd=[], i_sum=[], time=[],
                                                  rect_height=[], rect_mid=[],
                                                  i_sum_height=[], i_sum_mid=[],
                                                  labels=[], labels_pct=[]))
@@ -83,7 +84,7 @@ class Gui(object):
             data=dict(xs=[np.arange(0, 1, 0.01)] * self.num_states_slider.value,
                       ys=[np.zeros(100, dtype=float)] * self.num_states_slider.value,
                       color=self.curve_colors))
-        self.loaded_model_source = ColumnDataSource(data=dict(params=[]))
+        self.loaded_model_source = ColumnDataSource(data=dict(file_contents=[]))
         self.classifier_source = ColumnDataSource(data=dict(params=[]))
         self.html_source = ColumnDataSource(data=dict(html_text=[]))
         self.datzip_source = ColumnDataSource(data=dict(datzip=[]))
@@ -111,17 +112,19 @@ class Gui(object):
 
     @property
     def curve_colors(self):
-        # ceil(len(colors) // self.num_states_slider.value)
         return [colors[n] for n in (np.linspace(0, len(colors)-1, self.num_states_slider.value)).astype(int)]
 
     @property
     def col_mapper(self):
-        # return LinearColorMapper(palette=self.curve_colors, low=0, high=self.num_states_slider.value - 1)
         return LinearColorMapper(palette=colors, low=0, high=0.99)
 
     @cached_property
     def E_FRET(self):
         return self.data.data.loc[self.cur_example_idx].E_FRET
+
+    @cached_property
+    def E_FRET_sd(self):
+        return self.data.data.loc[self.cur_example_idx].E_FRET_sd
 
     @cached_property
     def correlation_coefficient(self):
@@ -130,10 +133,6 @@ class Gui(object):
     @cached_property
     def i_don(self):
         return self.data.data.loc[self.cur_example_idx].i_don
-
-    @cached_property
-    def i_acc(self):
-        return self.data.data.loc[self.cur_example_idx].i_acc
 
     @cached_property
     def i_acc(self):
@@ -154,19 +153,20 @@ class Gui(object):
 
     def invalidate_cached_properties(self):
         for k in ['E_FRET', 'correlation_coefficient', 'i_sum', 'tp', 'ts', 'ts_don', 'ts_acc', 'i_don', 'i_acc',
-                  'accuracy_hist']:
+                  'accuracy_hist', 'E_FRET_sd']:
             if k in self.__dict__:
                 del self.__dict__[k]
 
     def train_and_update(self):
         self.classifier.train(supervision_influence=self.supervision_slider.value)
-        self.classifier_source.data = dict(params=self.classifier.get_params())
+        self.classifier_source.data = dict(params=[self.classifier.get_params()])
 
     def load_params(self, attr, old, new):
         raw_contents = self.loaded_model_source.data['file_contents'][0]
         # remove the prefix that JS adds
         _, b64_contents = raw_contents.split(",", 1)
-        file_contents = base64.b64decode(b64_contents).decode('utf-8').split('\n')[1:-1]
+        file_contents = base64.b64decode(b64_contents).decode('utf-8')
+        # file_contents = base64.b64decode(b64_contents).decode('utf-8').split('\n')[1:-1]
         self.classifier.load_params(file_contents)
         self.num_states_slider.value = self.classifier.nb_states
         self.model_loaded = True
@@ -181,7 +181,6 @@ class Gui(object):
         _, b64_contents = raw_contents.split(",", 1)  # remove the prefix that JS adds
         file_contents = base64.b64decode(b64_contents)
         fn = self.new_source.data['file_name'][0]
-        # last_bool = self.new_source.data['last_bool'][0]
         nb_colors = 2
         # Process .trace files
         if '.traces' in fn:
@@ -272,13 +271,12 @@ class Gui(object):
     def _redraw_all(self):
         self.invalidate_cached_properties()
         nb_samples = self.i_don.size
-        # if not len(self.data.data.loc[self.cur_example_idx].labels):
-        #     self.data.set_value(self.cur_example_idx, 'labels', self.data.data.loc[self.cur_example_idx].prediction.copy())
         all_ts = np.concatenate((self.i_don, self.i_acc))
         rect_mid = (all_ts.min() + all_ts.max()) / 2
         rect_height = np.abs(all_ts.min()) + np.abs(all_ts.max())
         self.source.data = dict(i_don=self.i_don, i_acc=self.i_acc, time=np.arange(nb_samples),
                                 E_FRET=self.E_FRET, correlation_coefficient=self.correlation_coefficient, i_sum=self.i_sum,
+                                E_FRET_sd=self.E_FRET_sd,
                                 rect_height=np.repeat(rect_height, nb_samples),
                                 rect_mid=np.repeat(rect_mid, nb_samples),
                                 i_sum_height=np.repeat(self.i_sum.max(), nb_samples),
@@ -313,21 +311,23 @@ class Gui(object):
         self.accuracy_source.data['accuracy_counts'] = acc_counts
 
     def update_logprob_hist(self):
-        counts, edges = np.histogram(self.data.data.logprob, bins='auto')
+        counts, edges = np.histogram(self.data.data.logprob, bins=20)
         self.logprob_source.data = {'logprob_counts': counts, 'lb': edges[:-1], 'rb': edges[1:]}
 
     def update_stats_text(self):
         pct_labeled = round(self.data.data.is_labeled.sum() / self.data.data.is_labeled.size * 100.0, 1)
         if pct_labeled == 0:
             acc = 'N/A'
+            post = 'N/A'
         else:
             acc = round(self.data.accuracy[1], 1)
+            post = round(self.data.data.logprob.mean(), 1)
         self.acc_text.text = f'{acc}'
+        self.posterior_text.text = f'{post}'
         self.mc_text.text = f'{pct_labeled}'
 
     def update_state_curves(self):
         fidx = self.state_radio.active
-        # feature_idx = [i for i, n in enumerate(self.classifier.feature_list) if n == feature_name]
         if self.classifier.trained is None: return
         mus = self.classifier.get_states_mu(fidx)
         sds = self.classifier.get_states_sd(fidx)
@@ -413,7 +413,6 @@ class Gui(object):
 
     def make_document(self, doc):
         # --- Define widgets ---
-
         ff_title = Div(text=f"""<font size=15><b>FRETboard</b></font><br>v.{self.version}<hr>""",
                        width=280, height=90)
 
@@ -460,7 +459,6 @@ class Gui(object):
 
         # Main timeseries
         ts = figure(tools='xbox_select,save,xwheel_zoom,xpan', plot_width=1000, plot_height=275, active_drag='xbox_select')
-        # ts.add_tools(ScrollStateTool(source=self.scroll_state_source))
         ts.rect('time', 'rect_mid', height='rect_height', fill_color={'field': 'labels_pct',
                                                                       'transform': self.col_mapper},
                 source=self.source, **rect_opts)
@@ -470,28 +468,37 @@ class Gui(object):
 
         # E_FRET series
         ts_efret = figure(tools='xbox_select,save,xwheel_zoom,xpan', plot_width=1000, plot_height=275,
-                    active_drag='xbox_select')  #  todo: add tooltips=[('$index')]
+                          active_drag='xbox_select', x_range=ts.x_range)  #  todo: add tooltips=[('$index')]
         ts_efret.rect('time', 0.5, height=1.0, fill_color={'field': 'labels_pct',
                                                                             'transform': self.col_mapper},
                 source=self.source, **rect_opts)
         ts_efret.line('time', 'E_FRET', color='#1f78b4', source=self.source, **line_opts)
-        ts_efret.line('time', 'correlation_coefficient', color='#b2df8a', source=self.source, **line_opts)
-        efret_panel = Panel(child=ts_efret, title='E_FRET')
+        ts_efret.line('time', 'E_FRET_sd', color='#a6cee3', source=self.source, **line_opts)
+        efret_panel = Panel(child=ts_efret, title='E_FRET & sd')
+
+        # correlation coeff series
+        ts_corr = figure(tools='xbox_select,save,xwheel_zoom,xpan', plot_width=1000, plot_height=275,
+                          active_drag='xbox_select', x_range=ts.x_range)  # todo: add tooltips=[('$index')]
+        ts_corr.line('time', 'correlation_coefficient', color='#b2df8a', source=self.source, **line_opts)
+        ts_corr.rect('time', 0.0, height=2.0, fill_color={'field': 'labels_pct',
+                                                           'transform': self.col_mapper},
+                      source=self.source, **rect_opts)
+        corr_panel = Panel(child=ts_corr, title='Correlation coefficient')
 
         # i_sum series
         ts_i_sum = figure(tools='xbox_select,save,xwheel_zoom,xpan', plot_width=1000, plot_height=275,
-                          active_drag='xbox_select')
+                          active_drag='xbox_select', x_range=ts.x_range)
         ts_i_sum.rect('time', 'i_sum_mid', height='i_sum_height', fill_color={'field': 'labels_pct',
                                                            'transform': self.col_mapper},
                       source=self.source, **rect_opts)
         ts_i_sum.line('time', 'i_sum', color='#1f78b4', source=self.source, **line_opts)
         i_sum_panel = Panel(child=ts_i_sum, title='I sum')
 
-        tabs = Tabs(tabs=[ts_panel, efret_panel, i_sum_panel])
+        tabs = Tabs(tabs=[ts_panel, efret_panel, corr_panel, i_sum_panel])
 
         # accuracy histogram
         acc_hist = figure(toolbar_location=None, plot_width=275, plot_height=275, x_range=[0, 100],
-                          title='Accuracy')
+                          title='Training accuracy')
         acc_hist.grid.visible = False
         acc_hist.xaxis.axis_label = '%'
         acc_hist.yaxis.axis_label = 'count'
@@ -516,8 +523,9 @@ class Gui(object):
         state_curves.multi_line('xs', 'ys', line_color='color', source=self.state_source)
 
         # Stats in text
-        stats_text = column( row(Div(text='Accuracy: ', width=120, height=18), self.acc_text, height=18),
-                             row(Div(text='Manually classified: ', width=120, height=18), self.mc_text, height=18))
+        stats_text = column( row(Div(text='Accuracy (%): ', width=140, height=18), self.acc_text, height=18),
+                             row(Div(text='Mean log-posterior: ', width=140, height=18), self.posterior_text, height=18),
+                             row(Div(text='Manually classified (%): ', width=140, height=18), self.mc_text, height=18))
 
         # todo: Average accuracy and posterior
 
@@ -529,7 +537,6 @@ class Gui(object):
         self.example_select.on_change('value', self.update_example)
         example_button.on_click(self.update_example_retrain)
         self.num_states_slider.on_change('value', self.update_num_states)
-        # self.source.on_change('selected', self.update_classification)
         self.state_radio.on_change('active', lambda attr, old, new: self.update_state_curves())
 
         # hidden holders to generate saves
