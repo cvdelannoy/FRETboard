@@ -32,7 +32,7 @@ class Classifier(object):
         Generate trained hmm and predict examples
         """
         self.trained = self.get_trained_hmm(supervision_influence=supervision_influence)
-        self.predict()
+        self.predict(idx=np.random.choice(self.data.index, 20, replace=True))
 
     def get_trained_hmm(self, supervision_influence=1.0, bootstrap=False):
 
@@ -198,8 +198,9 @@ class Classifier(object):
                 out_dict[(f's{tra[0]}', f's{tra[1]}')] = transition_dict[tra] / tt if tt != 0 else 0.0
         return out_dict, pstart_dict, pend_dict
 
-    def predict(self):
-        tuple_list = [np.stack(list(tup), axis=-1) for tup in self.data.loc[:, self.feature_list].to_numpy()]
+    def predict(self, idx=None):
+        if idx is None: idx = self.data.data.index
+        tuple_list = [np.stack(list(tup), axis=-1) for tup in self.data.loc[idx, self.feature_list].to_numpy()]
         logprob_list = [self.trained.predict_log_proba(tup) for tup in tuple_list]
         logprob_path_list = [np.sum(np.max(logprob, axis=1)) for logprob in logprob_list]
         self.data.logprob = logprob_path_list

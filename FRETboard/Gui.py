@@ -195,7 +195,9 @@ class Gui(object):
                 if fi + 1 >= notify_counter:
                     self.notification.text = f'{print_timestamp()} Processed {fi+1} of {nb_traces} traces from file {fn}'
                     notify_counter += 100
-                file_contents = np.row_stack((np.arange(f.shape[2]), f.squeeze()))
+                f = f.squeeze()
+                f = f - np.expand_dims(np.median(f, axis=1).astype(np.int64), -1)  # todo: test normalization
+                file_contents = np.row_stack((np.arange(f.shape[1]), f))
                 self.data.add_tuple(file_contents, f'{fn_clean}_tr{fi+1}')
 
         # Process .dat files
@@ -387,6 +389,7 @@ class Gui(object):
             # update data in main table
             self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
             self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
+            self.data.set_value(self.cur_example_idx, 'is_labeled', True)
 
             # # retraining classifier
             # if self.data.data.shape[0] != 0:
@@ -400,12 +403,14 @@ class Gui(object):
 
     def generate_dats(self):
         tfh = tempfile.TemporaryDirectory()
+        self.classifier.predict()
         for fn, tup in self.data.data.iterrows():
-            labels = tup.labels + 1 if len(tup.labels) != 0 else [None] * len(tup.time)
-            sm_bool = [True for sm in self.saveme_checkboxes.active if sm + 1 in labels]
+            sm_test = tup.labels if len(tup.labels) else tup.prediction
+            sm_bool = [True for sm in self.saveme_checkboxes.active if sm in sm_test]
             if not any(sm_bool): continue
+            labels = tup.labels + 1 if len(tup.labels) != 0 else [None] * len(tup.time)
             out_df = pd.DataFrame(dict(time=tup.time, i_don=tup.i_don, i_acc=tup.i_acc,
-                                       label=labels, predicted=tup.prediction))
+                                       label=labels, predicted=tup.prediction + 1))
             out_df.to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
         zip_dir = tempfile.TemporaryDirectory()
         zip_fn = shutil.make_archive(f'{zip_dir.name}/dat_files', 'zip', tfh.name)
