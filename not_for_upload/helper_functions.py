@@ -86,8 +86,7 @@ def condense_sequence(values, labels):
 
 def get_ssfret_dist(efret):
     # DBSCAN filter
-    # clust = DBSCAN(eps=0.05).fit(efret.reshape(-1, 1))
-    clust = OPTICS(max_eps=0.05).fit(efret.reshape(-1, 1))
+    clust = DBSCAN(eps=0.05).fit(efret.reshape(-1, 1))
     clust_mode = mode(clust.labels_)[0]
     efret_target = efret[clust.labels_ == clust_mode]
 
