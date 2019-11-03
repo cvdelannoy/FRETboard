@@ -76,13 +76,13 @@ class FretReport(object):
         ed_scatter = self.draw_Efret_duration_plot()
         tdp_hex = self.draw_transition_density_plot()
         tm_table, em_table = self.get_param_tables()
+        # kinetic_table = self.get_stats_tables()
         with open(f'{__location__}/templates/report_template.html', 'r') as fh:
             template = Template(fh.read())
         esh, esd = components(ed_scatter)
         thh, thd = components(tdp_hex)
         return template.render(ed_scatter_script=esh, ed_scatter_div=esd,
                                tdp_hex_script=thh, tdp_hex_div=thd,
-                               # tm_table_script=tmh, tm_table_div=tmd,
                                tm_table_div=tm_table,
                                em_table_div=em_table,
                                date=print_timestamp(),
@@ -124,6 +124,15 @@ class FretReport(object):
         tdp_hex.hexbin(x=self.transition_df['E_FRET_before'], y=self.transition_df['E_FRET_after'], size=0.01)
         return tdp_hex
 
+    def get_stats_tables(self):
+        # time spent in each state
+        time_dict = {}
+        tst = []
+        mean_times = self.data.data_clean.time.apply( lambda x: (x[-1] - x[0]) / len(x))
+        for state in range(self.classifier.nb_states):
+            tst.append(mean_times * self.out_labels.apply(lambda x: np.sum(x == state)))
+            time_dict[state] = np.sum(mean_times * self.out_labels.apply(lambda x: np.sum(x == state)))
+
     def get_param_tables(self):
         # Transitions table
         nb_states = self.classifier.nb_states
@@ -131,6 +140,7 @@ class FretReport(object):
         state_list_bold = [f'<b>{s}</b>' for s in state_list]
         ci_vecs = self.classifier.confidence_intervals
         tm_trained = self.classifier.get_tm(self.classifier.trained).to_numpy()
+
 
         tm1 = np.char.array(tm_trained.round(3).astype(str))
         tm_newline = np.tile(np.char.array('<br/>'), (nb_states, nb_states))

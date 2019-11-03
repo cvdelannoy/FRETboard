@@ -10,7 +10,17 @@ class MainTable(object):
 
     @property
     def data(self):
+        """
+        traces including those predicted/marked junk
+        """
         return self._data
+
+    @property
+    def data_clean(self):
+        """
+        traces without those predicted/marked junk
+        """
+        return self._data.loc[np.invert(self._data.predicted_junk), :]
 
     @data.setter
     def data(self, dat_files):
@@ -25,10 +35,13 @@ class MainTable(object):
             'E_FRET_sd': [np.array([], dtype=np.float64)] * nb_files,
             'labels': [np.array([], dtype=np.int64)] * nb_files,
             'edge_labels': [np.array([], dtype=np.int64)] * nb_files,
-            'prediction': [np.array([], dtype=np.int64)] * nb_files,
-            'logprob': [np.array([], dtype=np.float64)] * nb_files},
+            'prediction': [np.array([], dtype=np.int64)] * nb_files},
             index=dat_files, dtype=object)
+        df_out['logprob'] = pd.Series([np.nan] * nb_files, dtype=float)
         df_out['is_labeled'] = pd.Series([False] * nb_files, dtype=bool)
+        df_out['is_junk'] = pd.Series([False] * nb_files, dtype=bool)
+        df_out['predicted_junk'] = pd.Series([False] * nb_files, dtype=bool)
+        self._data = df_out
         for dat_file in dat_files:
             try:
                 fc = np.loadtxt(dat_file)
@@ -36,7 +49,7 @@ class MainTable(object):
             except:
                 print('File {} could not be read, skipping'.format(dat_file))
                 df_out.drop([dat_file], inplace=True)
-        self._data = df_out
+
 
     def add_tuple(self, fc, fn):
         """
@@ -48,19 +61,30 @@ class MainTable(object):
         # window = 9
         window = 9
         ss = (window - 1) // 2  # sequence shortening
-        fc[fc <= 0] = np.finfo(np.float64).eps  # hacky, required to get rid of overzealous background subtraction
+        # fc[fc <= 0] = np.finfo(np.float64).eps  # hacky, required to get rid of overzealous background subtraction
         time = fc[0, :]
         i_don = fc[1, :]
         i_acc = fc[2, :]
         i_sum = np.sum((i_don, i_acc), axis=0)
-        E_FRET = np.divide(i_acc, np.sum((i_don, i_acc), axis=0))
+        E_FRET = np.clip(np.divide(i_acc, np.sum((i_don, i_acc), axis=0)), a_min=0.0, a_max=1.0)
         correlation_coefficient = rolling_corr_coef(i_don, i_acc, window)
         E_FRET_sd = rolling_var(E_FRET, window)
         self._data.loc[fn] = (time[ss:-ss], i_don[ss:-ss], i_acc[ss:-ss],
-                              i_sum[ss:-ss], E_FRET[ss:-ss], correlation_coefficient, E_FRET_sd, [], [], [], [], False)
+                              i_sum[ss:-ss], E_FRET[ss:-ss], correlation_coefficient, E_FRET_sd, [], [], [], np.nan,
+                              False, False, False)
+
+    def add_df_list(self, df_list):
+        """
+        Add a list of pd dfs to the current table at once
+        """
+        if type(df_list) != list:
+            df_list = [df_list]
+        self._data = pd.concat(df_list + [self.data])
+
 
     def del_tuple(self, idx):
-        self._data.drop(idx, inplace=True)
+        self._data.loc[idx, 'is_junk'] = True
+        # self._data.drop(idx, inplace=True)
 
     def set_value(self, example_idx, column, value, idx=None):
         """
@@ -81,7 +105,8 @@ class MainTable(object):
         """
         if not any(self.data.is_labeled):
             return np.array([np.nan], dtype=float), np.nan
-        labeled_data = self.data.loc[self.data.is_labeled, ('prediction', 'labels')]
+        is_predicted = self.data.prediction.apply(lambda x: len(x) != 0)
+        labeled_data = self.data.loc[ np.logical_and(self.data.is_labeled, is_predicted), ('prediction', 'labels')]
         nb_correct = labeled_data.apply(lambda x: np.sum(np.equal(x.prediction, x.labels)), axis=1)
         nb_points = labeled_data.apply(lambda x: x.labels.size, axis=1)
         return nb_correct / nb_points * 100, nb_correct.sum() / nb_points.sum() * 100

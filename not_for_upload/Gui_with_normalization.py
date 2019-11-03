@@ -8,7 +8,8 @@ import yaml
 import importlib
 from joblib import Parallel, delayed
 
-# from FRETboard.lsh_bin_selection import lsh_classify
+from FRETboard.lsh_bin_selection import lsh_classify
+from sklearn.cluster import KMeans
 from cached_property import cached_property
 from bokeh.server.server import Server
 from bokeh.application import Application
@@ -41,10 +42,29 @@ with open(f'{__location__}/js_widgets/download_datzip.js', 'r') as fh: download_
 with open(f'{__location__}/js_widgets/download_report.js', 'r') as fh: download_report_js = fh.read()
 with open(f'{__location__}/js_widgets/download_model.js', 'r') as fh: download_csv_js = fh.read()
 
-def parallel_fn(f_array, fn_list, dt):
+def parallel_fn(f_array, fn_list, dt, norm):
     out_list = list()
     for fi, f in enumerate(np.hsplit(f_array, f_array.shape[1])):
         f = f.squeeze()
+
+        # normalization
+        if norm == 'subtract median':
+            f = f - np.expand_dims(np.median(f, axis=1).astype(np.int64), -1)
+        elif norm == 'MAD':
+            mad = np.expand_dims(np.median(np.abs(f - np.expand_dims(np.median(f, axis=1).astype(np.int64), -1)), axis=1), -1)
+            f = (f - np.expand_dims(np.mean(f, axis=1), -1)) / mad
+        elif norm == 'subtract min':
+            f = f - np.expand_dims(np.min(f, axis=1).astype(np.int64), -1)
+        elif norm == 'k-means':
+            min_arr = f.min(axis=1)
+            max_arr = f.max(axis=1)
+            l0 = np.zeros((2,1),dtype=np.int16)
+            l0[0, 0] = KMeans(n_clusters=2, init=np.array([[min_arr[0]], [max_arr[0]]]), n_init=1).fit(
+                f[0, :].reshape(-1, 1)).cluster_centers_[0]
+            l0[1, 0] = KMeans(n_clusters=2, init=np.array([[min_arr[0]], [max_arr[0]]]), n_init=1).fit(
+                f[1, :].reshape(-1, 1)).cluster_centers_[0]
+            f = f - l0
+            # f[f <= 0] = 0
 
         out_list.append(np.row_stack((np.arange(f.shape[1]), f)))
         dt.add_tuple(np.row_stack((np.arange(f.shape[1]), f)), fn_list[fi])
@@ -56,8 +76,14 @@ class Gui(object):
         self.cur_example_idx = None
         self.nb_threads = 8
         self.algo_select = Select(title='Algorithm:', value=list(algo_dict)[0], options=list(algo_dict))
+        self.norm_select = Select(title='Normalization:', value='None', options=['None', 'MAD', 'subtract min',
+                                                                            'subtract median', 'k-means'])
 
         self.data = MainTable(data)
+
+        # Classifier object
+        self.classifier_class = importlib.import_module('FRETboard.algorithms.'+algo_dict[self.algo_select.value]).Classifier
+        self.classifier = self.classifier_class(nb_states=nb_states, gui=self)
 
         # widgets
         self.example_select = Select(title='Current example', value='None', options=['None'])
@@ -70,14 +96,9 @@ class Gui(object):
         self.acc_text = PreText(text='N/A')
         self.posterior_text = PreText(text='N/A')
         self.mc_text = PreText(text='0%')
+        self.state_radio = RadioGroup(labels=self.classifier.feature_list, active=0)
         self.report_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
         self.datzip_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
-
-        # Classifier object
-        self.classifier_class = importlib.import_module(
-            'FRETboard.algorithms.' + algo_dict[self.algo_select.value]).Classifier
-        self.classifier = self.classifier_class(nb_states=nb_states, data=self.data, gui=self)
-        self.state_radio = RadioGroup(labels=self.classifier.feature_list, active=0)
 
         # ColumnDataSources
         self.source = ColumnDataSource(data=dict(i_don=[], i_acc=[], E_FRET=[],
@@ -149,10 +170,6 @@ class Gui(object):
         return self.data.data.loc[self.cur_example_idx].i_acc
 
     @cached_property
-    def time(self):
-        return self.data.data.loc[self.cur_example_idx].time
-
-    @cached_property
     def i_sum(self):
         return self.data.data.loc[self.cur_example_idx].i_sum
 
@@ -166,20 +183,17 @@ class Gui(object):
         return bsm
 
     def invalidate_cached_properties(self):
-        for k in ['E_FRET', 'correlation_coefficient', 'i_sum', 'tp', 'ts', 'ts_don', 'ts_acc', 'i_don', 'i_acc', 'time',
+        for k in ['E_FRET', 'correlation_coefficient', 'i_sum', 'tp', 'ts', 'ts_don', 'ts_acc', 'i_don', 'i_acc',
                   'accuracy_hist', 'E_FRET_sd']:
             if k in self.__dict__:
                 del self.__dict__[k]
 
     def predict_safe(self):
         """
-        If more than nb_threads samples exist, predict nb_threads randomly chosen ones to cut down on running time.
+        If more than 20 samples exist, predict 20 randomly chosen ones to cut down on running time.
         """
-        if len(self.data.data) > self.nb_threads:  # predict [nb_threads] traces as indicator of logprob
-            idx = self.data.data.index[self.data.data.is_labeled].to_numpy()
-            if len(idx) < self.nb_threads:
-                idx = np.union1d(idx, np.random.choice(self.data.data.index[np.invert(self.data.data.is_labeled)],
-                                                       self.nb_threads - len(idx), replace=True))
+        if len(self.data.data) > self.nb_threads:  # predict 50 tuples as indicator of logprob
+            idx = np.random.choice(self.data.data.index, self.nb_threads, replace=True)
         else:
             idx = self.data.data.index
         print(f'{print_timestamp()}starting predictions')
@@ -191,11 +205,23 @@ class Gui(object):
         """
         if idx is None: idx = self.data.data.index
         pred_list, logprob_list = self.classifier.predict(idx)
-        pred_series = pd.Series([[]]*len(self.data.data), index=self.data.data.index, dtype=object)
+        pred_series = self.data.data.prediction.copy()
         pred_series.loc[idx] = pred_list
-        self.data.data.logprob = np.nan
-        self.data.data.prediction = pred_series
+        self.data.data.loc[idx, 'prediction'] = pred_series
         self.data.data.loc[idx, 'logprob'] = logprob_list
+
+        # # todo: test normalization method
+        # don_l0 = []
+        # acc_l0 = []
+        # for i in idx:
+        #     tup = self.data.data.loc[i]
+        #     don_l0.append(tup.i_don[tup.prediction == 0])
+        #     acc_l0.append(tup.i_acc[tup.prediction == 0])
+        # don_l0 = np.median(np.concatenate(don_l0))
+        # acc_l0 = np.median(np.concatenate(acc_l0))
+        # i_don_corr = self.data.data.i_don - don_l0
+        # i_acc_corr = self.data.data.i_acc - acc_l0
+        # self.data.data.E_FRET = i_acc_corr / (i_acc_corr + i_don_corr)
 
     def train_and_update(self):
         self.classifier.train(supervision_influence=self.supervision_slider.value)
@@ -238,7 +264,7 @@ class Gui(object):
             file_chunks = np.array_split(file_contents, self.nb_threads, axis=1)
             fn_list = [f'{fn_clean}_{it}.dat' for it in range(file_contents.shape[1])]
             fn_chunks = np.array_split(fn_list, self.nb_threads)
-            df_list = Parallel(n_jobs=self.nb_threads)(delayed(parallel_fn)(fc, fnc, MainTable([]))
+            df_list = Parallel(n_jobs=self.nb_threads)(delayed(parallel_fn)(fc, fnc, MainTable([]), self.norm_select.value)
                                                        for fc, fnc in zip(file_chunks, fn_chunks))
             print(f'{print_timestamp()}Adding to list')
             self.data.add_df_list(df_list)
@@ -308,6 +334,8 @@ class Gui(object):
             self.data.set_value(new, 'labels', self.data.data.loc[new, 'prediction'].copy())
             self.data.set_value(new, 'edge_labels', self.get_edge_labels(self.data.data.loc[new, 'labels']))
             self.data.set_value(new, 'is_labeled', True)
+        # if self.example_select.value == 'None':
+        #     self.example_select.value = new
         self.cur_example_idx = new
         if self.data.data.loc[new, 'is_junk']:
             self.notification.text = f'{print_timestamp()} Warning: {new} was marked junk!'
@@ -332,6 +360,7 @@ class Gui(object):
                 return
             new_example_idx = np.random.choice(self.data.data.loc[valid_bool, 'logprob'].index)
             self.example_select.value = new_example_idx
+            # self.update_example(None, self.example_select.value, new_example_idx)
 
     def _redraw_all(self):
         self.invalidate_cached_properties()
@@ -354,7 +383,6 @@ class Gui(object):
         self.update_stats_text()
 
     def generate_report(self):
-        self.predict_all()
         self.html_source.data['html_text'] = [FretReport(self).construct_html_report()]
         self.report_holder.text += ' '
 
@@ -408,7 +436,7 @@ class Gui(object):
         if old == new:
             return
         self.classifier_class = importlib.import_module('FRETboard.algorithms.'+algo_dict[new]).Classifier
-        self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, data=self.data, gui=self)
+        self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, gui=self)
         if len(self.data.data):
             self.train_and_update()
 
@@ -417,7 +445,7 @@ class Gui(object):
             self.data.data.loc[self.data.data.index, 'labels'] = [ [[]] * len(self.data.data)]
             self.data.data.loc[self.data.data.index, 'edge_labels'] = [[[]] * len(self.data.data)]
             self.data.data.is_labeled = False
-            self.classifier = self.classifier_class(nb_states=new, data=self.data, gui=self)
+            self.classifier = self.classifier_class(nb_states=new, gui=self)
 
             # Update widget: show-me checkboxes
             showme_idx = list(range(new))
@@ -637,6 +665,7 @@ class Gui(object):
         widgets = column(ff_title,
                          Div(text="<font size=4>1. Load</font>", width=280, height=15),
                          self.algo_select,
+                         self.norm_select,
                          row(widgetbox(load_button, width=150), widgetbox(load_model_button, width=150),
                              width=300),
                          Div(text="<font size=4>2. Teach</font>", width=280, height=15),

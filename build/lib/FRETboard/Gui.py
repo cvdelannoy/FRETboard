@@ -6,7 +6,9 @@ import numpy as np
 import pandas as pd
 import yaml
 import importlib
+from joblib import Parallel, delayed
 
+# from FRETboard.lsh_bin_selection import lsh_classify
 from cached_property import cached_property
 from bokeh.server.server import Server
 from bokeh.application import Application
@@ -28,9 +30,9 @@ line_opts = dict(line_width=1)
 rect_opts = dict(width=1.01, alpha=1, line_alpha=0)
 with open(f'{__location__}/algorithms.yml', 'r') as fh: algo_dict = yaml.safe_load(fh)
 white_blue_colors = ['#f7fbff', '#deebf7', '#c6dbef', '#9ecae1', '#6baed6', '#4292c6', '#2171b5', '#084594']
-pastel_colors = ["#75968f", "#a5bab7", "#c9d9d3", "#e2e2e2", "#dfccce", "#ddb7b1", "#cc7878", "#933b41", "#550b1d"]
+# pastel_colors = ["#75968f", "#a5bab7", "#c9d9d3", "#e2e2e2", "#dfccce", "#ddb7b1", "#cc7878", "#933b41", "#550b1d"]
 # col_mapper = LinearColorMapper(palette=white_blue_colors, low=0, high=1)
-diverging_colors = ['#d53e4f', '#f46d43', '#fdae61', '#fee08b', '#e6f598', '#abdda4', '#66c2a5', '#3288bd']
+# diverging_colors = ['#d53e4f', '#f46d43', '#fdae61', '#fee08b', '#e6f598', '#abdda4', '#66c2a5', '#3288bd']
 colors = white_blue_colors
 
 with open(f'{__location__}/js_widgets/upload.js', 'r') as fh: upload_js = fh.read()
@@ -39,20 +41,23 @@ with open(f'{__location__}/js_widgets/download_datzip.js', 'r') as fh: download_
 with open(f'{__location__}/js_widgets/download_report.js', 'r') as fh: download_report_js = fh.read()
 with open(f'{__location__}/js_widgets/download_model.js', 'r') as fh: download_csv_js = fh.read()
 
-param_state_dict = {18: 2, 30: 3, 44: 4, 60: 5, 78: 6, 98: 7}
+def parallel_fn(f_array, fn_list, dt):
+    out_list = list()
+    for fi, f in enumerate(np.hsplit(f_array, f_array.shape[1])):
+        f = f.squeeze()
 
+        out_list.append(np.row_stack((np.arange(f.shape[1]), f)))
+        dt.add_tuple(np.row_stack((np.arange(f.shape[1]), f)), fn_list[fi])
+    return dt.data
 
 class Gui(object):
     def __init__(self, nb_states=3, data=[]):
         self.version = '0.0.3'
         self.cur_example_idx = None
-        self.algo_select = Select(title='Algorithm', value=list(algo_dict)[0], options=list(algo_dict))
+        self.nb_threads = 8
+        self.algo_select = Select(title='Algorithm:', value=list(algo_dict)[0], options=list(algo_dict))
 
         self.data = MainTable(data)
-
-        # Classifier object
-        self.classifier_class = importlib.import_module('FRETboard.algorithms.'+algo_dict[self.algo_select.value]).Classifier
-        self.classifier = self.classifier_class(nb_states=nb_states, gui=self)
 
         # widgets
         self.example_select = Select(title='Current example', value='None', options=['None'])
@@ -65,9 +70,14 @@ class Gui(object):
         self.acc_text = PreText(text='N/A')
         self.posterior_text = PreText(text='N/A')
         self.mc_text = PreText(text='0%')
-        self.state_radio = RadioGroup(labels=self.classifier.feature_list, active=0)
         self.report_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
         self.datzip_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
+
+        # Classifier object
+        self.classifier_class = importlib.import_module(
+            'FRETboard.algorithms.' + algo_dict[self.algo_select.value]).Classifier
+        self.classifier = self.classifier_class(nb_states=nb_states, data=self.data, gui=self)
+        self.state_radio = RadioGroup(labels=self.classifier.feature_list, active=0)
 
         # ColumnDataSources
         self.source = ColumnDataSource(data=dict(i_don=[], i_acc=[], E_FRET=[],
@@ -139,6 +149,10 @@ class Gui(object):
         return self.data.data.loc[self.cur_example_idx].i_acc
 
     @cached_property
+    def time(self):
+        return self.data.data.loc[self.cur_example_idx].time
+
+    @cached_property
     def i_sum(self):
         return self.data.data.loc[self.cur_example_idx].i_sum
 
@@ -152,13 +166,40 @@ class Gui(object):
         return bsm
 
     def invalidate_cached_properties(self):
-        for k in ['E_FRET', 'correlation_coefficient', 'i_sum', 'tp', 'ts', 'ts_don', 'ts_acc', 'i_don', 'i_acc',
+        for k in ['E_FRET', 'correlation_coefficient', 'i_sum', 'tp', 'ts', 'ts_don', 'ts_acc', 'i_don', 'i_acc', 'time',
                   'accuracy_hist', 'E_FRET_sd']:
             if k in self.__dict__:
                 del self.__dict__[k]
 
+    def predict_safe(self):
+        """
+        If more than nb_threads samples exist, predict nb_threads randomly chosen ones to cut down on running time.
+        """
+        if len(self.data.data) > self.nb_threads:  # predict [nb_threads] traces as indicator of logprob
+            idx = self.data.data.index[self.data.data.is_labeled].to_numpy()
+            if len(idx) < self.nb_threads:
+                idx = np.union1d(idx, np.random.choice(self.data.data.index[np.invert(self.data.data.is_labeled)],
+                                                       self.nb_threads - len(idx), replace=True))
+        else:
+            idx = self.data.data.index
+        print(f'{print_timestamp()}starting predictions')
+        self.predict_all(idx=idx)
+
+    def predict_all(self, idx=None):
+        """
+        Rerun prediction for all of idx, remove other predictions.
+        """
+        if idx is None: idx = self.data.data.index
+        pred_list, logprob_list = self.classifier.predict(idx)
+        pred_series = pd.Series([[]]*len(self.data.data), index=self.data.data.index, dtype=object)
+        pred_series.loc[idx] = pred_list
+        self.data.data.logprob = np.nan
+        self.data.data.prediction = pred_series
+        self.data.data.loc[idx, 'logprob'] = logprob_list
+
     def train_and_update(self):
         self.classifier.train(supervision_influence=self.supervision_slider.value)
+        self.predict_safe()
         self.classifier_source.data = dict(params=[self.classifier.get_params()])
 
     def load_params(self, attr, old, new):
@@ -173,7 +214,7 @@ class Gui(object):
         self.notification.text = f'{print_timestamp()}Model loaded'
         if self.data.data.shape[0] != 0:
             self.data.data.is_labeled = False
-            self.classifier.predict()
+            self.predict_safe()
             self._redraw_all()
 
     def update_data(self, attr, old, new):
@@ -185,18 +226,23 @@ class Gui(object):
         # Process .trace files
         if '.traces' in fn:
             nb_frames, _, nb_traces = np.frombuffer(file_contents, dtype=np.int16, count=3)
-            traces_vec = np.frombuffer(file_contents, dtype=np.int16, count=nb_frames * nb_traces + 3)
+            traces_vec = np.frombuffer(file_contents, dtype=np.int16)
             traces_vec = traces_vec[3:]
-            traces_vec = traces_vec[:nb_colors * (nb_traces // nb_colors) * nb_frames]
+            nb_points_expected = nb_colors * (nb_traces // nb_colors) * nb_frames
+            traces_vec = traces_vec[:nb_points_expected]
             file_contents = traces_vec.reshape((nb_colors, nb_traces // nb_colors, nb_frames), order='F')
             fn_clean = os.path.splitext(fn)[0]
+            print(f'{print_timestamp()}Processing trace file {fn_clean}')
             notify_counter = 0
-            for fi, f in enumerate(np.hsplit(file_contents, file_contents.shape[1])):
-                if fi + 1 >= notify_counter:
-                    self.notification.text = f'{print_timestamp()} Processed {fi+1} of {nb_traces} traces from file {fn}'
-                    notify_counter += 100
-                file_contents = np.row_stack((np.arange(f.shape[2]), f.squeeze()))
-                self.data.add_tuple(file_contents, f'{fn_clean}_tr{fi+1}')
+
+            file_chunks = np.array_split(file_contents, self.nb_threads, axis=1)
+            fn_list = [f'{fn_clean}_{it}.dat' for it in range(file_contents.shape[1])]
+            fn_chunks = np.array_split(fn_list, self.nb_threads)
+            df_list = Parallel(n_jobs=self.nb_threads)(delayed(parallel_fn)(fc, fnc, MainTable([]))
+                                                       for fc, fnc in zip(file_chunks, fn_chunks))
+            print(f'{print_timestamp()}Adding to list')
+            self.data.add_df_list(df_list)
+            print(f'{print_timestamp()}Done')
 
         # Process .dat files
         elif '.dat' in fn:
@@ -214,13 +260,14 @@ class Gui(object):
                 self.showme_checkboxes.active = list(range(self.classifier.nb_states))
             if self.model_loaded:
                 self.notification.text = f'{print_timestamp()} Classifying loaded traces using current model...'
-                self.classifier.predict()
+                self.predict_safe()
             else:
                 self.notification.text = f'{print_timestamp()} Training initial model, on loaded traces...'
                 self.train_and_update()
                 self.model_loaded = True
             if self.cur_example_idx is None:
-                self.update_example(None, None, self.example_select.options[0])
+                self.example_select.value = self.example_select.options[0]
+                # self.update_example(None, None, self.example_select.options[0])
             else:
                 self._redraw_all()
             self.notification.text = f'{print_timestamp()} Done'
@@ -254,12 +301,19 @@ class Gui(object):
         if old == new:
             return
         if not self.data.data.loc[new, 'is_labeled']:
+            if not len(self.data.data.loc[new, 'prediction']):
+                pred, logprob = self.classifier.predict([new])
+                self.data.data.at[new, 'prediction'] = pred[0]
+                self.data.data.loc[new, 'logprob'] = logprob
             self.data.set_value(new, 'labels', self.data.data.loc[new, 'prediction'].copy())
             self.data.set_value(new, 'edge_labels', self.get_edge_labels(self.data.data.loc[new, 'labels']))
             self.data.set_value(new, 'is_labeled', True)
-        self.example_select.value = new
         self.cur_example_idx = new
-        self._redraw_all()  # todo: gets called twice, when training, don't know why...
+        if self.data.data.loc[new, 'is_junk']:
+            self.notification.text = f'{print_timestamp()} Warning: {new} was marked junk!'
+        elif self.data.data.loc[new, 'predicted_junk']:
+            self.notification.text = f'{print_timestamp()} Warning: {new} is predicted junk!'
+        self._redraw_all()
 
     def update_example_retrain(self):
         """
@@ -267,15 +321,17 @@ class Gui(object):
         """
         self.train_and_update()
         if all(self.data.data.is_labeled):
-            self.notification.text += f'{print_timestamp()}All examples have already been manually classified'
+            self.notification.text = f'{print_timestamp()}All examples have already been manually classified'
         else:
-            sm_check = self.data.data.prediction.apply(lambda x: True if any(np.in1d(self.showme_checkboxes.active, x)) else False)
+            sm_check = self.data.data.prediction.apply(lambda x:
+                                                       True if any(np.in1d(self.showme_checkboxes.active, x))
+                                                       else False)
             valid_bool = np.logical_and(sm_check, np.invert(self.data.data.is_labeled))
             if not any(valid_bool):
                 self.notification.text = f'{print_timestamp()} No new traces with states of interest left'
                 return
             new_example_idx = np.random.choice(self.data.data.loc[valid_bool, 'logprob'].index)
-            self.update_example(None, self.example_select.value, new_example_idx)
+            self.example_select.value = new_example_idx
 
     def _redraw_all(self):
         self.invalidate_cached_properties()
@@ -298,29 +354,29 @@ class Gui(object):
         self.update_stats_text()
 
     def generate_report(self):
+        self.predict_all()
         self.html_source.data['html_text'] = [FretReport(self).construct_html_report()]
         self.report_holder.text += ' '
 
     def update_classification(self, attr, old, new):
-        index = self.source.selected.indices
-        if index:
-            patch = {'labels': [(i, self.sel_state_slider.value - 1) for i in index],
-                     'labels_pct': [(i, (self.sel_state_slider.value - 1) * 1.0 / self.num_states_slider.value) for i in index]}
+        if len(new):
+            patch = {'labels': [(i, self.sel_state_slider.value - 1) for i in new],
+                     'labels_pct': [(i, (self.sel_state_slider.value - 1) * 1.0 / self.num_states_slider.value) for i in new]}
             self.source.patch(patch)
-            self.source.selected.indices = []
             self.update_accuracy_hist()
             self.update_stats_text()
 
             # update data in main table
             self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
             self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
+            self.source.selected.indices = []
 
     def update_accuracy_hist(self):
         acc_counts = np.histogram(self.data.accuracy[0], bins=np.linspace(5, 100, num=20))[0]
         self.accuracy_source.data['accuracy_counts'] = acc_counts
 
     def update_logprob_hist(self):
-        counts, edges = np.histogram(self.data.data.logprob, bins=20)
+        counts, edges = np.histogram(self.data.data.logprob.loc[self.data.data.logprob.notna()], bins=20)
         self.logprob_source.data = {'logprob_counts': counts, 'lb': edges[:-1], 'rb': edges[1:]}
 
     def update_stats_text(self):
@@ -352,7 +408,7 @@ class Gui(object):
         if old == new:
             return
         self.classifier_class = importlib.import_module('FRETboard.algorithms.'+algo_dict[new]).Classifier
-        self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, gui=self)
+        self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, data=self.data, gui=self)
         if len(self.data.data):
             self.train_and_update()
 
@@ -361,7 +417,7 @@ class Gui(object):
             self.data.data.loc[self.data.data.index, 'labels'] = [ [[]] * len(self.data.data)]
             self.data.data.loc[self.data.data.index, 'edge_labels'] = [[[]] * len(self.data.data)]
             self.data.data.is_labeled = False
-            self.classifier = self.classifier_class(nb_states=new, gui=self)
+            self.classifier = self.classifier_class(nb_states=new, data=self.data, gui=self)
 
             # Update widget: show-me checkboxes
             showme_idx = list(range(new))
@@ -378,7 +434,7 @@ class Gui(object):
             # retraining is too heavy for longer traces, setting current example to lowest state instead
             blank_labels = [(i, 0) for i in range(len(self.data.data.loc[self.cur_example_idx, 'i_don']))]
             patch = {'labels': blank_labels,
-                     'labels_pct': blank_labels }
+                     'labels_pct': blank_labels}
             self.source.patch(patch)
             self.source.selected.indices = []
             self.update_accuracy_hist()
@@ -387,10 +443,11 @@ class Gui(object):
             # update data in main table
             self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
             self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
+            self.data.set_value(self.cur_example_idx, 'is_labeled', True)
 
             # # retraining classifier
             # if self.data.data.shape[0] != 0:
-            #     self.invalidate_cached_properties()
+            #     self.invalidate_cachedhttps://github.com/akdel/locality-sensitive-hashing/blob/master/LSH/period_based.py_properties()
             #     self.train_and_update()
             #     self.update_state_curves()
             #     self.update_example(None, '', self.cur_example_idx)
@@ -400,12 +457,14 @@ class Gui(object):
 
     def generate_dats(self):
         tfh = tempfile.TemporaryDirectory()
+        self.predict_all()
         for fn, tup in self.data.data.iterrows():
-            labels = tup.labels + 1 if len(tup.labels) != 0 else [None] * len(tup.time)
-            sm_bool = [True for sm in self.saveme_checkboxes.active if sm + 1 in labels]
+            sm_test = tup.labels if len(tup.labels) else tup.prediction
+            sm_bool = [True for sm in self.saveme_checkboxes.active if sm in sm_test]
             if not any(sm_bool): continue
+            labels = tup.labels + 1 if len(tup.labels) != 0 else [None] * len(tup.time)
             out_df = pd.DataFrame(dict(time=tup.time, i_don=tup.i_don, i_acc=tup.i_acc,
-                                       label=labels, predicted=tup.prediction))
+                                       label=labels, predicted=tup.prediction + 1))
             out_df.to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
         zip_dir = tempfile.TemporaryDirectory()
         zip_fn = shutil.make_archive(f'{zip_dir.name}/dat_files', 'zip', tfh.name)
@@ -417,7 +476,13 @@ class Gui(object):
 
     def del_trace(self):
         self.data.del_tuple(self.cur_example_idx)
-        self.example_select.options.remove(self.cur_example_idx)
+        nonjunk_bool = np.logical_and(self.data.data.is_labeled, np.invert(self.data.data.is_junk))
+        if any(nonjunk_bool):  # Cant predict without positive examples
+            df = self.data.data.loc[self.data.data.is_labeled]
+            x = np.stack(df.E_FRET.to_numpy())
+            predicted_junk = lsh_classify(x, self.data.data.is_junk, x, bits=32)
+            self.data.data.predicted_junk = np.logical_or(self.data.data.junk, predicted_junk)
+            # self.example_select.options.remove(self.cur_example_idx)
         self.update_example_retrain()
 
     def update_showme(self, attr, old, new):
@@ -428,9 +493,10 @@ class Gui(object):
             self.example_select.options = list(self.data.data.index[valid_bool])
             if self.cur_example_idx not in self.example_select.options:
                 new_example_idx = np.random.choice(self.example_select.options)
-                self.update_example(None, '', new_example_idx)
+                self.update_example = new_example_idx
+                # self.update_example(None, '', new_example_idx)
         else:
-            self.notification.text += f'''\n{print_timestamp()}No valid (unclassified) traces to display for classes {', '.join([str(ts+1) for ts in new]) }'''
+            self.notification.text = f'''\n{print_timestamp()}No valid (unclassified) traces to display for classes {', '.join([str(ts+1) for ts in new]) }'''
 
     def make_document(self, doc):
         # --- Define widgets ---
@@ -479,7 +545,7 @@ class Gui(object):
         # --- Define plots ---
 
         # Main timeseries
-        ts = figure(tools='xbox_select,save,xwheel_zoom,xpan', plot_width=1000, plot_height=275, active_drag='xbox_select')
+        ts = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan', plot_width=1000, plot_height=275, active_drag='xbox_select')
         ts.rect('time', 'rect_mid', height='rect_height', fill_color={'field': 'labels_pct',
                                                                       'transform': self.col_mapper},
                 source=self.source, **rect_opts)
@@ -488,7 +554,7 @@ class Gui(object):
         ts_panel = Panel(child=ts, title='Traces')
 
         # E_FRET series
-        ts_efret = figure(tools='xbox_select,save,xwheel_zoom,xpan', plot_width=1000, plot_height=275,
+        ts_efret = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan', plot_width=1000, plot_height=275,
                           active_drag='xbox_select', x_range=ts.x_range)  #  todo: add tooltips=[('$index')]
         ts_efret.rect('time', 0.5, height=1.0, fill_color={'field': 'labels_pct',
                                                                             'transform': self.col_mapper},
@@ -498,7 +564,7 @@ class Gui(object):
         efret_panel = Panel(child=ts_efret, title='E_FRET & sd')
 
         # correlation coeff series
-        ts_corr = figure(tools='xbox_select,save,xwheel_zoom,xpan', plot_width=1000, plot_height=275,
+        ts_corr = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan', plot_width=1000, plot_height=275,
                           active_drag='xbox_select', x_range=ts.x_range)  # todo: add tooltips=[('$index')]
         ts_corr.rect('time', 0.0, height=2.0, fill_color={'field': 'labels_pct',
                                                            'transform': self.col_mapper},
@@ -507,7 +573,7 @@ class Gui(object):
         corr_panel = Panel(child=ts_corr, title='Correlation coefficient')
 
         # i_sum series
-        ts_i_sum = figure(tools='xbox_select,save,xwheel_zoom,xpan', plot_width=1000, plot_height=275,
+        ts_i_sum = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan', plot_width=1000, plot_height=275,
                           active_drag='xbox_select', x_range=ts.x_range)
         ts_i_sum.rect('time', 'i_sum_mid', height='i_sum_height', fill_color={'field': 'labels_pct',
                                                            'transform': self.col_mapper},
