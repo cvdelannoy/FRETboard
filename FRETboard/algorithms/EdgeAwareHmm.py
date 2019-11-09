@@ -7,34 +7,34 @@ import itertools
 from itertools import permutations
 import yaml
 from joblib import Parallel, delayed
-from FRETboard.helper_functions import print_timestamp
 # to show hmm graph: plt.figure(dpi=600); hmm.plot(); plt.show()
 
 
 def parallel_predict(tup_list, mod):
+    # try:
     vit_list = [mod.viterbi(tup) for tup in tup_list]
     logprob_list, trace_state_list = list(map(list, zip(*vit_list)))
     state_list = []
     for tsl in trace_state_list:
         state_list.append([ts[0] for ts in tsl])
+    # except:
+    #     cp=1
     return logprob_list, state_list
+
 
 class Classifier(object):
     """ HMM classifier that automatically adds 'edge states' to better recognize valid transitions between states.
     """
     def __init__(self, nb_states, data, **kwargs):
         """
-
         :param nb_states: number of states to detect
         :param data: object of class MainTable
         :param gui: Gui object [optional]
         :param buffer: int, size of buffer area around regular classes [required if gui not given]
         """
         self.trained = None
-        self.nb_threads = 8
-        self.feature_list = ['E_FRET', 'i_sum', 'correlation_coefficient', 'E_FRET_sd']
-        self.edge_state_features = ['correlation_coefficient', 'E_FRET_sd']
-        self.esf_idx = [self.feature_list.index(esf) for esf in self.edge_state_features]
+        self.nb_threads = kwargs.get('nb_threads', 8)
+        self.feature_list = kwargs['features']
 
         self.nb_states = nb_states
         self.gui = kwargs.get('gui', None)
@@ -79,7 +79,7 @@ class Classifier(object):
                 labels = [list(lab) if len(lab) else [None] for lab in labels]
                 hmm.fit(self.get_matrix(self.data.data_clean.loc[seq_idx, self.feature_list]),
                         inertia=supervision_influence, labels=labels, n_jobs=self.nb_threads,
-                        use_pseudocounts=True)
+                        use_pseudocounts=True)  # todo: doesnt understand pseudocounts
             else:
                 # Case 3: unsupervised --> just train
                 hmm.fit(self.get_matrix(self.data.data_clean.loc[seq_idx, self.feature_list]),
@@ -142,7 +142,9 @@ class Classifier(object):
             km = Kmeans(k=self.nb_states, n_init=1).fit(X=data_vec[km_idx, :], n_jobs=self.nb_threads)
             y = km.predict(data_vec)
             def distfun(s1, s2):
-                return pg.MultivariateGaussianDistribution.from_samples(data_vec[np.logical_or(y == s1, y == s2), :])
+                dist_list = [pg.NormalDistribution.from_samples(vec) for vec in data_vec[np.logical_or(y == s1, y == s2), :].T]
+                return pg.IndependentComponentsDistribution(dist_list)
+                # return pg.MultivariateGaussianDistribution.from_samples(data_vec[np.logical_or(y == s1, y == s2), :])
         else:
             # Estimate emission distributions from given class labels
             data = data.loc[data.is_labeled, :]
@@ -150,14 +152,24 @@ class Classifier(object):
             y_edge = np.concatenate([np.stack(list(tup), axis=-1) for tup in data.loc[:, 'edge_labels'].to_numpy()], 0)
             data_vec = np.concatenate([np.stack(list(tup), axis=-1) for tup in data.loc[:, self.feature_list].to_numpy()], 0)
             def distfun(s1, s2):
-                return pg.MultivariateGaussianDistribution.from_samples(data_vec[y_edge == f'e{s1}{s2}', :])
+                dist_list = [pg.NormalDistribution.from_samples(vec) for vec in data_vec[y_edge == f'e{s1}{s2}', :].T]
+                return pg.IndependentComponentsDistribution(dist_list)
+                # try:
+                #     dist = pg.MultivariateGaussianDistribution.from_samples(data_vec[y_edge == f'e{s1}{s2}', :])
+                # except:
+                #     vec = data_vec[y_edge == f'e{s1}{s2}', :]
+                #     vec[:,:2] = vec[:,:2] + np.full_like(vec[:,:2], 0.001)
+                #     dist = pg.MultivariateGaussianDistribution.from_samples(vec)
+                # return dist
 
         # Create states
         pg_gui_state_dict = dict()
         states = dict()
         for i in range(self.nb_states):
             sn = f's{i}'
-            states[sn] = pg.State(pg.MultivariateGaussianDistribution.from_samples(data_vec[y == i, :]), name=f's{i}')
+            dist_list = [pg.NormalDistribution.from_samples(vec) for vec in data_vec[y == i, :].T]
+            states[sn] = pg.State(pg.IndependentComponentsDistribution(dist_list), name=f's{i}')
+            # states[sn] = pg.State(pg.MultivariateGaussianDistribution.from_samples(data_vec[y == i, :]), name=f's{i}')
             pg_gui_state_dict[sn] = i
 
         # Create edge states
@@ -242,7 +254,6 @@ class Classifier(object):
 
         return pred_list, logprob_list
 
-
     def get_matrix(self, df):
         """
         convert pandas dataframe to numpy array of shape [nb_sequences, nb_samples_per_sequence, nb_features]
@@ -250,7 +261,6 @@ class Classifier(object):
         return np.stack([np.stack(list(tup), axis=-1) for tup in df.to_numpy()], 0)
 
     # --- parameters and performance measures ---
-
     @property
     def confidence_intervals(self):
         """
@@ -269,18 +279,18 @@ class Classifier(object):
         ci_mat[:, :, 1] += sd_mat * 2
         return ci_mat
 
-    def get_states_mu(self, fidx):
-        mu_dict = {self.pg_gui_state_dict[state.name]: state.distribution.mu
-                   for state in self.trained.states
-                   if not state.is_silent() and state.distribution.name != 'IndependentComponentsDistribution'}
-        mu_list = [mu_dict[mk][fidx] for mk in sorted(list(mu_dict))]
+    def get_states_mu(self, feature):
+        fidx = np.argwhere(feature == np.array(self.feature_list))[0,0]
+        mu_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[0]
+                   for state in self.trained.states if not state.is_silent()}
+        mu_list = [mu_dict[mk] for mk in sorted(list(mu_dict))]
         return mu_list
 
-    def get_states_sd(self, fidx):
-        dg = np.eye(len(self.feature_list), dtype=bool)
-        sd_dict = {self.pg_gui_state_dict[state.name]: state.distribution.cov[dg] for state in self.trained.states
-                   if not state.is_silent() and state.distribution.name != 'IndependentComponentsDistribution'}
-        sd_list = [sd_dict[mk][fidx] for mk in sorted(list(sd_dict))]
+    def get_states_sd(self, feature):
+        fidx = np.argwhere(feature == np.array(self.feature_list))[0,0]
+        sd_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[1]
+                   for state in self.trained.states if not state.is_silent()}
+        sd_list = [sd_dict[mk] for mk in sorted(list(sd_dict))]
         return sd_list
 
     def get_tm(self, hmm):
@@ -307,9 +317,11 @@ class Classifier(object):
         mod_txt = self.trained.to_yaml()
         gui_state_dict_txt = yaml.dump(self.gui_state_dict)
         pg_gui_state_dict_txt = yaml.dump(self.pg_gui_state_dict)
+        feature_txt = '\n'.join(self.feature_list)
         div = '\nSTART_NEW_SECTION\n'
         out_txt = ('EdgeAwareHmm'
                    + div + mod_txt
+                   + div + feature_txt
                    + div + gui_state_dict_txt
                    + div + pg_gui_state_dict_txt
                    + div + f'nb_states: {str(self.nb_states)}\nbuffer: {self.buffer}')
@@ -318,6 +330,7 @@ class Classifier(object):
     def load_params(self, file_contents):
         (mod_check,
          model_txt,
+         feature_txt,
          gui_state_dict_txt,
          pg_gui_state_dict_txt,
          misc_txt) = file_contents.split('\nSTART_NEW_SECTION\n')
@@ -328,6 +341,7 @@ class Classifier(object):
             else:
                 raise ValueError(error_msg)
         self.trained = pg.HiddenMarkovModel().from_yaml(model_txt)
+        self.feature_list = feature_txt.split('\n')
         self.gui_state_dict = yaml.load(gui_state_dict_txt, Loader=yaml.FullLoader)
         self.pg_gui_state_dict = yaml.load(pg_gui_state_dict_txt, Loader=yaml.FullLoader)
         misc_dict = yaml.load(misc_txt, Loader=yaml.SafeLoader)

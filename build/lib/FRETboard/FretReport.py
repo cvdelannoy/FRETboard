@@ -156,8 +156,8 @@ class FretReport(object):
 
         # Emissions table
         nb_features = len(self.classifier.feature_list)
-        mu_vecs = [np.array(self.classifier.get_states_mu(fidx)).round(3) for fidx in range(nb_features)]
-        cv_vecs = [np.array(self.classifier.get_states_sd(fidx)).round(3) for fidx in range(nb_features)]
+        mu_vecs = [np.array(self.classifier.get_states_mu(feature)).round(3) for feature in self.classifier.feature_list]
+        cv_vecs = [np.array(self.classifier.get_states_sd(feature)).round(3) for feature in self.classifier.feature_list]
 
         em_cols = [f'mu {fn}' for fn in self.classifier.feature_list] + \
                   [f'sd {fn}' for fn in self.classifier.feature_list]

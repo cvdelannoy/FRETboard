@@ -94,6 +94,7 @@ class Viewer(object):
                                names=['time', 'i_don', 'i_acc', 'i_aa', 'E_FRET'])
         ks_df = pd.read_csv(self.state_dict[self.trace_dict[new][1]], sep='\t')
         ks_df.loc[:, 't_end (s)'] = ks_df.loc[:, 't_start (s)'] + ks_df.loc[:, 't_dwell (s)']
+
         new_df.loc[:, 'labels'] = [ks_df.loc[ks_df[ks_df.loc[:, 't_start (s)'] <= t].index.max(), '%state'] for t in
                                new_df.time]
         new_df.loc[:, 'labels'] -= new_df.loc[:, 'labels'].min()

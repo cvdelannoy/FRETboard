@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import yaml
 import importlib
-from joblib import Parallel, delayed
+from sklearn.cluster import DBSCAN
 
 # from FRETboard.lsh_bin_selection import lsh_classify
 from cached_property import cached_property
@@ -17,10 +17,11 @@ from bokeh.layouts import row, column, widgetbox
 from bokeh.plotting import figure, curdoc
 from bokeh.models import ColumnDataSource, LinearColorMapper#, CustomJS
 from bokeh.models.callbacks import CustomJS
-from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Div, CheckboxButtonGroup
+from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Div, CheckboxButtonGroup, CheckboxGroup
 from bokeh.models.widgets.panels import Panel, Tabs
 from tornado.ioloop import IOLoop
 
+from FRETboard.io_functions import parse_trace_file
 from FRETboard.helper_functions import print_timestamp
 from FRETboard.FretReport import FretReport
 from FRETboard.MainTable import MainTable
@@ -45,7 +46,11 @@ def parallel_fn(f_array, fn_list, dt):
     out_list = list()
     for fi, f in enumerate(np.hsplit(f_array, f_array.shape[1])):
         f = f.squeeze()
-
+        min_clust = int(f.shape[1] * 0.02)
+        for fvi, fv in enumerate(f):
+            clust = DBSCAN(eps=1.0, min_samples=min_clust).fit(fv.reshape(-1, 1))
+            offset = np.nanmin([np.mean(fv[clust.labels_ == lab]) for lab in np.unique(clust.labels_)]).astype(f.dtype)
+            f[fvi, :] -= offset
         out_list.append(np.row_stack((np.arange(f.shape[1]), f)))
         dt.add_tuple(np.row_stack((np.arange(f.shape[1]), f)), fn_list[fi])
     return dt.data
@@ -55,11 +60,12 @@ class Gui(object):
         self.version = '0.0.3'
         self.cur_example_idx = None
         self.nb_threads = 8
-        self.algo_select = Select(title='Algorithm:', value=list(algo_dict)[0], options=list(algo_dict))
+        self.feature_list = ['E_FRET', 'E_FRET_sd', 'i_sum', 'i_sum_sd', 'correlation_coefficient', 'i_don', 'i_acc']
 
         self.data = MainTable(data)
 
         # widgets
+        self.algo_select = Select(title='Algorithm:', value=list(algo_dict)[0], options=list(algo_dict))
         self.example_select = Select(title='Current example', value='None', options=['None'])
         self.num_states_slider = Slider(title='Number of states', value=nb_states, start=2, end=10, step=1)
         self.sel_state_slider = Slider(title='Change selection to state', value=1, start=1,
@@ -73,11 +79,15 @@ class Gui(object):
         self.report_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
         self.datzip_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
 
+        self.features_checkboxes = CheckboxGroup(labels=[''] * len(self.feature_list), active=[0, 1, 2, 3, 4])
+        self.state_radio = RadioGroup(labels=[''] * len(self.feature_list), active=0)
+
         # Classifier object
         self.classifier_class = importlib.import_module(
             'FRETboard.algorithms.' + algo_dict[self.algo_select.value]).Classifier
-        self.classifier = self.classifier_class(nb_states=nb_states, data=self.data, gui=self)
-        self.state_radio = RadioGroup(labels=self.classifier.feature_list, active=0)
+        self.classifier = self.classifier_class(nb_states=nb_states, data=self.data, gui=self,
+                                                features=[feat for fi, feat in enumerate(self.feature_list)
+                                                          if fi in self.features_checkboxes.active])
 
         # ColumnDataSources
         self.source = ColumnDataSource(data=dict(i_don=[], i_acc=[], E_FRET=[],
@@ -225,21 +235,7 @@ class Gui(object):
         nb_colors = 2
         # Process .trace files
         if '.traces' in fn:
-            nb_frames, _, nb_traces = np.frombuffer(file_contents, dtype=np.int16, count=3)
-            traces_vec = np.frombuffer(file_contents, dtype=np.int16)
-            traces_vec = traces_vec[3:]
-            nb_points_expected = nb_colors * (nb_traces // nb_colors) * nb_frames
-            traces_vec = traces_vec[:nb_points_expected]
-            file_contents = traces_vec.reshape((nb_colors, nb_traces // nb_colors, nb_frames), order='F')
-            fn_clean = os.path.splitext(fn)[0]
-            print(f'{print_timestamp()}Processing trace file {fn_clean}')
-            notify_counter = 0
-
-            file_chunks = np.array_split(file_contents, self.nb_threads, axis=1)
-            fn_list = [f'{fn_clean}_{it}.dat' for it in range(file_contents.shape[1])]
-            fn_chunks = np.array_split(fn_list, self.nb_threads)
-            df_list = Parallel(n_jobs=self.nb_threads)(delayed(parallel_fn)(fc, fnc, MainTable([]))
-                                                       for fc, fnc in zip(file_chunks, fn_chunks))
+            df_list = parse_trace_file(file_contents, fn, self.nb_threads)
             print(f'{print_timestamp()}Adding to list')
             self.data.add_df_list(df_list)
             print(f'{print_timestamp()}Done')
@@ -324,7 +320,8 @@ class Gui(object):
             self.notification.text = f'{print_timestamp()}All examples have already been manually classified'
         else:
             sm_check = self.data.data.prediction.apply(lambda x:
-                                                       True if any(np.in1d(self.showme_checkboxes.active, x))
+                                                       True if len(x) == 0
+                                                               or any(np.in1d(self.showme_checkboxes.active, x))
                                                        else False)
             valid_bool = np.logical_and(sm_check, np.invert(self.data.data.is_labeled))
             if not any(valid_bool):
@@ -369,7 +366,7 @@ class Gui(object):
             # update data in main table
             self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
             self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
-            self.source.selected.indices = []
+            # self.source.selected.indices = []
 
     def update_accuracy_hist(self):
         acc_counts = np.histogram(self.data.accuracy[0], bins=np.linspace(5, 100, num=20))[0]
@@ -391,12 +388,26 @@ class Gui(object):
         self.posterior_text.text = f'{post}'
         self.mc_text.text = f'{pct_labeled}'
 
-    def update_state_curves(self):
-        fidx = self.state_radio.active
-        if self.classifier.trained is None: return
-        mus = self.classifier.get_states_mu(fidx)
-        sds = self.classifier.get_states_sd(fidx)
+    def update_feature_list(self, attr, old, new):
+        if len(new) == 0: return
+        if old == new: return
+        self.classifier.feature_list = [feat for fi, feat in enumerate(self.feature_list) if fi in new]
+        self.train_and_update()
+        self.predict_safe()
+        self.data.data.loc[self.cur_example_idx, 'is_labeled'] = False
+        self.update_example(None, None, self.cur_example_idx)
 
+    def update_state_curves(self):
+        feature = self.feature_list[self.state_radio.active]
+        if self.classifier.trained is None: return
+        if not feature in self.classifier.feature_list:
+            self.state_source.data = {
+                'xs': [np.arange(0, 1, 0.01)] * self.num_states_slider.value,
+                'ys': [np.zeros(100, dtype=float)] * self.num_states_slider.value,
+                'color': self.curve_colors}
+            return
+        mus = self.classifier.get_states_mu(feature)
+        sds = self.classifier.get_states_sd(feature)
         x_high = max([mu + sd * 3 for mu, sd in zip(mus, sds)])
         x_low = min([mu - sd * 3 for mu, sd in zip(mus, sds)])
         xs = [np.arange(x_low, x_high, (x_high - x_low) / 100)] * self.num_states_slider.value
@@ -408,16 +419,20 @@ class Gui(object):
         if old == new:
             return
         self.classifier_class = importlib.import_module('FRETboard.algorithms.'+algo_dict[new]).Classifier
-        self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, data=self.data, gui=self)
+        self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, data=self.data, gui=self,
+                                                features=self.feature_list)
         if len(self.data.data):
             self.train_and_update()
+            self.predict_safe()
+            self.data.data.loc[self.cur_example_idx, 'is_labeled'] = False
+            self.update_example(None, None, self.cur_example_idx)
 
     def update_num_states(self, attr, old, new):
         if new != self.classifier.nb_states:
             self.data.data.loc[self.data.data.index, 'labels'] = [ [[]] * len(self.data.data)]
             self.data.data.loc[self.data.data.index, 'edge_labels'] = [[[]] * len(self.data.data)]
             self.data.data.is_labeled = False
-            self.classifier = self.classifier_class(nb_states=new, data=self.data, gui=self)
+            self.classifier = self.classifier_class(nb_states=new, data=self.data, gui=self, features=self.feature_list)
 
             # Update widget: show-me checkboxes
             showme_idx = list(range(new))
@@ -477,12 +492,12 @@ class Gui(object):
     def del_trace(self):
         self.data.del_tuple(self.cur_example_idx)
         nonjunk_bool = np.logical_and(self.data.data.is_labeled, np.invert(self.data.data.is_junk))
-        if any(nonjunk_bool):  # Cant predict without positive examples
-            df = self.data.data.loc[self.data.data.is_labeled]
-            x = np.stack(df.E_FRET.to_numpy())
-            predicted_junk = lsh_classify(x, self.data.data.is_junk, x, bits=32)
-            self.data.data.predicted_junk = np.logical_or(self.data.data.junk, predicted_junk)
-            # self.example_select.options.remove(self.cur_example_idx)
+        # if any(nonjunk_bool):  # Cant predict without positive examples
+        #     df = self.data.data.loc[self.data.data.is_labeled]
+        #     x = np.stack(df.E_FRET.to_numpy())
+        #     predicted_junk = lsh_classify(x, self.data.data.is_junk, x, bits=32)
+        #     self.data.data.predicted_junk = np.logical_or(self.data.data.junk, predicted_junk)
+        #     # self.example_select.options.remove(self.cur_example_idx)
         self.update_example_retrain()
 
     def update_showme(self, attr, old, new):
@@ -490,13 +505,20 @@ class Gui(object):
         if self.data.data.shape[0] == 0: return
         valid_bool = self.data.data.apply(lambda x: any(i in new for i in x.prediction), axis=1)
         if any(valid_bool):
-            self.example_select.options = list(self.data.data.index[valid_bool])
-            if self.cur_example_idx not in self.example_select.options:
-                new_example_idx = np.random.choice(self.example_select.options)
+            valid_idx = list(self.data.data.index[valid_bool])
+            if self.cur_example_idx not in valid_idx:
+                new_example_idx = np.random.choice(valid_idx)
                 self.update_example = new_example_idx
-                # self.update_example(None, '', new_example_idx)
         else:
-            self.notification.text = f'''\n{print_timestamp()}No valid (unclassified) traces to display for classes {', '.join([str(ts+1) for ts in new]) }'''
+            self.notification.text = f'''\n{print_timestamp()}No valid (unclassified) traces to display for classes {', '.join([str(ts + 1) for ts in new])}'''
+
+        # if any(valid_bool):
+        #     self.example_select.options = list(self.data.data.index[valid_bool])
+        #     if self.cur_example_idx not in self.example_select.options:
+        #         new_example_idx = np.random.choice(self.example_select.options)
+        #         self.update_example = new_example_idx
+        # else:
+        #     self.notification.text = f'''\n{print_timestamp()}No valid (unclassified) traces to display for classes {', '.join([str(ts+1) for ts in new]) }'''
 
     def make_document(self, doc):
         # --- Define widgets ---
@@ -545,7 +567,7 @@ class Gui(object):
         # --- Define plots ---
 
         # Main timeseries
-        ts = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan', plot_width=1000, plot_height=275, active_drag='xbox_select')
+        ts = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan', plot_width=1075, plot_height=275, active_drag='xbox_select')
         ts.rect('time', 'rect_mid', height='rect_height', fill_color={'field': 'labels_pct',
                                                                       'transform': self.col_mapper},
                 source=self.source, **rect_opts)
@@ -554,29 +576,29 @@ class Gui(object):
         ts_panel = Panel(child=ts, title='Traces')
 
         # E_FRET series
-        ts_efret = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan', plot_width=1000, plot_height=275,
+        ts_efret = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan', plot_width=1075, plot_height=275,
                           active_drag='xbox_select', x_range=ts.x_range)  #  todo: add tooltips=[('$index')]
         ts_efret.rect('time', 0.5, height=1.0, fill_color={'field': 'labels_pct',
-                                                                            'transform': self.col_mapper},
+                                                           'transform': self.col_mapper},
                 source=self.source, **rect_opts)
         ts_efret.line('time', 'E_FRET', color='#1f78b4', source=self.source, **line_opts)
         ts_efret.line('time', 'E_FRET_sd', color='#a6cee3', source=self.source, **line_opts)
         efret_panel = Panel(child=ts_efret, title='E_FRET & sd')
 
         # correlation coeff series
-        ts_corr = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan', plot_width=1000, plot_height=275,
+        ts_corr = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan', plot_width=1075, plot_height=275,
                           active_drag='xbox_select', x_range=ts.x_range)  # todo: add tooltips=[('$index')]
         ts_corr.rect('time', 0.0, height=2.0, fill_color={'field': 'labels_pct',
-                                                           'transform': self.col_mapper},
+                                                          'transform': self.col_mapper},
                       source=self.source, **rect_opts)
         ts_corr.line('time', 'correlation_coefficient', color='#b2df8a', source=self.source, **line_opts)
         corr_panel = Panel(child=ts_corr, title='Correlation coefficient')
 
         # i_sum series
-        ts_i_sum = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan', plot_width=1000, plot_height=275,
+        ts_i_sum = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan', plot_width=1075, plot_height=275,
                           active_drag='xbox_select', x_range=ts.x_range)
         ts_i_sum.rect('time', 'i_sum_mid', height='i_sum_height', fill_color={'field': 'labels_pct',
-                                                           'transform': self.col_mapper},
+                                                                              'transform': self.col_mapper},
                       source=self.source, **rect_opts)
         ts_i_sum.line('time', 'i_sum', color='#1f78b4', source=self.source, **line_opts)
         i_sum_panel = Panel(child=ts_i_sum, title='I sum')
@@ -625,6 +647,7 @@ class Gui(object):
         example_button.on_click(self.update_example_retrain)
         self.num_states_slider.on_change('value', self.update_num_states)
         self.state_radio.on_change('active', lambda attr, old, new: self.update_state_curves())
+        self.features_checkboxes.on_change('active', self.update_feature_list)
 
         # hidden holders to generate saves
         self.report_holder.js_on_change('text', CustomJS(args=dict(file_source=self.html_source),
@@ -633,7 +656,11 @@ class Gui(object):
                                                          code=download_datzip_js))
 
         # --- Build layout ---
-        state_block = row(state_curves, self.state_radio)
+        state_block = row(state_curves,
+                          Div(text='<br />'.join(self.feature_list), margin=[32, 5, 5, 5]),
+                          column(Div(text='View'), self.state_radio, width=40),
+                          column(Div(text='Active'), self.features_checkboxes, width=40),
+                          )
         widgets = column(ff_title,
                          Div(text="<font size=4>1. Load</font>", width=280, height=15),
                          self.algo_select,

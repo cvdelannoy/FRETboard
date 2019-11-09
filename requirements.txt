@@ -6,4 +6,4 @@ cached-property
 tabulate
 joblib
 jinja2
-yaml
+pyyaml

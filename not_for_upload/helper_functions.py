@@ -3,6 +3,8 @@ import warnings
 import fnmatch
 from datetime import datetime
 import numpy as np
+import shutil
+import pathlib
 
 from scipy.stats import norm, mode
 from sklearn.cluster import DBSCAN, OPTICS
@@ -30,12 +32,18 @@ def parse_input_path(location, pattern=None):
                     for f in files:
                         all_files.append(os.path.join(root, f))
         elif os.path.exists(loc):
-            all_files.extend(loc)
-        else:
-            warnings.warn('Given file/dir %s does not exist, skipping' % loc, RuntimeWarning)
+            if pattern and fnmatch.fnmatch(loc, pattern):
+                    all_files.append(loc)
     if not len(all_files):
         ValueError('Input file location(s) did not exist or did not contain any files.')
     return all_files
+
+def parse_output_dir(out_dir, clean=False):
+    out_dir = os.path.abspath(out_dir) + '/'
+    if clean:
+        shutil.rmtree(out_dir, ignore_errors=True)
+    pathlib.Path(out_dir).mkdir(parents=True, exist_ok=True)
+    return out_dir
 
 
 def print_timestamp():
@@ -78,19 +86,28 @@ def condense_sequence(values, labels):
             seq_condensed[-1][1] += 1
             seq_condensed[-1][2].append(i)
         else:
-            seq_condensed[-1][2] = np.median(seq_condensed[-1][2])
+            seq_condensed[-1][2] = np.nanmedian(seq_condensed[-1][2])
             seq_condensed.append([s, 1, [i]])
-    seq_condensed[-1][2] = np.median(seq_condensed[-1][2])
+    seq_condensed[-1][2] = np.nanmedian(seq_condensed[-1][2])
     return seq_condensed
 
 
-def get_ssfret_dist(efret):
+def get_ssfret_dist(efret, idx=None):
     # DBSCAN filter
-    clust = DBSCAN(eps=0.05).fit(efret.reshape(-1, 1))
+    print(f'{print_timestamp()}started a trace')
+    efret = efret[np.invert(np.isnan(efret))]
+    if len(efret > 30000):
+        efret = np.random.choice(efret, size=30000)
+    # clust = DBSCAN(eps=0.05).fit(efret.reshape(-1, 1))
+    n_points = len(efret)
+    clust = OPTICS(eps=0.05, cluster_method='dbscan').fit(efret.reshape(-1, 1))
     clust_mode = mode(clust.labels_)[0]
     efret_target = efret[clust.labels_ == clust_mode]
 
     # Curve fitting
     mu, sd = norm.fit(efret_target)
-    sd_ss = sd / sqrt(len(efret_target))
-    return mu, sd_ss
+    srsd = sd / sqrt(len(efret_target))
+    print(f'{print_timestamp()}finished a trace')
+    if idx is None:
+        return mu, sd, srsd, n_points
+    return mu, sd, srsd, n_points, idx
