@@ -1,7 +1,7 @@
 numpy
 pandas
 pomegranate
-bokeh
+bokeh==1.4.0
 cached-property
 tabulate
 joblib

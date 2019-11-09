@@ -366,7 +366,7 @@ class Gui(object):
             # update data in main table
             self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
             self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
-            self.source.selected.indices = []
+            # self.source.selected.indices = []
 
     def update_accuracy_hist(self):
         acc_counts = np.histogram(self.data.accuracy[0], bins=np.linspace(5, 100, num=20))[0]
@@ -567,7 +567,7 @@ class Gui(object):
         # --- Define plots ---
 
         # Main timeseries
-        ts = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan', plot_width=1075, plot_height=275, active_drag='xbox_select')
+        ts = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,xpan', plot_width=1075, plot_height=275, active_drag='xbox_select')
         ts.rect('time', 'rect_mid', height='rect_height', fill_color={'field': 'labels_pct',
                                                                       'transform': self.col_mapper},
                 source=self.source, **rect_opts)
@@ -576,29 +576,29 @@ class Gui(object):
         ts_panel = Panel(child=ts, title='Traces')
 
         # E_FRET series
-        ts_efret = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan', plot_width=1075, plot_height=275,
+        ts_efret = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,xpan', plot_width=1075, plot_height=275,
                           active_drag='xbox_select', x_range=ts.x_range)  #  todo: add tooltips=[('$index')]
         ts_efret.rect('time', 0.5, height=1.0, fill_color={'field': 'labels_pct',
-                                                                            'transform': self.col_mapper},
+                                                           'transform': self.col_mapper},
                 source=self.source, **rect_opts)
         ts_efret.line('time', 'E_FRET', color='#1f78b4', source=self.source, **line_opts)
         ts_efret.line('time', 'E_FRET_sd', color='#a6cee3', source=self.source, **line_opts)
         efret_panel = Panel(child=ts_efret, title='E_FRET & sd')
 
         # correlation coeff series
-        ts_corr = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan', plot_width=1075, plot_height=275,
+        ts_corr = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,xpan', plot_width=1075, plot_height=275,
                           active_drag='xbox_select', x_range=ts.x_range)  # todo: add tooltips=[('$index')]
         ts_corr.rect('time', 0.0, height=2.0, fill_color={'field': 'labels_pct',
-                                                           'transform': self.col_mapper},
+                                                          'transform': self.col_mapper},
                       source=self.source, **rect_opts)
         ts_corr.line('time', 'correlation_coefficient', color='#b2df8a', source=self.source, **line_opts)
         corr_panel = Panel(child=ts_corr, title='Correlation coefficient')
 
         # i_sum series
-        ts_i_sum = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan', plot_width=1075, plot_height=275,
+        ts_i_sum = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,xpan', plot_width=1075, plot_height=275,
                           active_drag='xbox_select', x_range=ts.x_range)
         ts_i_sum.rect('time', 'i_sum_mid', height='i_sum_height', fill_color={'field': 'labels_pct',
-                                                           'transform': self.col_mapper},
+                                                                              'transform': self.col_mapper},
                       source=self.source, **rect_opts)
         ts_i_sum.line('time', 'i_sum', color='#1f78b4', source=self.source, **line_opts)
         i_sum_panel = Panel(child=ts_i_sum, title='I sum')

@@ -8,12 +8,13 @@ setup(
     name='FRET-board',
     version='0.0.3',
     packages=['FRETboard'],
-    install_requires=['numpy==1.17.2',
-                      'pandas==0.25.1',
-                      'pomegranate==0.11.1',
-                      'bokeh==1.3.4',
+    install_requires=['numpy==1.17.3',
+                      'pandas==0.25.3',
+                      'pomegranate==0.11.2',
+                      'bokeh==1.4.0',
                       'cached-property==1.5.1',
-                      'tabulate==0.8.3'],
+                      'tabulate==0.8.3',
+                      'tornado==6.0.3'],
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License"
