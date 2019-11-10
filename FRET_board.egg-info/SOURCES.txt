@@ -17,6 +17,7 @@ FRETboard/helper_functions.py
 FRETboard/io_functions.py
 FRETboard/lsh_bin_selection.py
 FRETboard/main.py
+FRETboard/minimal_example.py
 FRETboard/algorithms/EdgeAwareHmm.py
 FRETboard/algorithms/EdgeAwareHmm_backup.py
 FRETboard/algorithms/VanillaHmm.py
