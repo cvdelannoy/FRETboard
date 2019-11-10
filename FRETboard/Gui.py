@@ -357,6 +357,7 @@ class Gui(object):
 
     def update_classification(self, attr, old, new):
         if len(new):
+            self.source.selected.indices = []
             patch = {'labels': [(i, self.sel_state_slider.value - 1) for i in new],
                      'labels_pct': [(i, (self.sel_state_slider.value - 1) * 1.0 / self.num_states_slider.value) for i in new]}
             self.source.patch(patch)
@@ -366,7 +367,7 @@ class Gui(object):
             # update data in main table
             self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
             self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
-            # self.source.selected.indices = []
+
 
     def update_accuracy_hist(self):
         acc_counts = np.histogram(self.data.accuracy[0], bins=np.linspace(5, 100, num=20))[0]
