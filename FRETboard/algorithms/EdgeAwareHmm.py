@@ -17,6 +17,7 @@ def parallel_predict(tup_list, mod):
         state_list.append([ts[0] for ts in tsl])
     return logprob_list, state_list
 
+
 def get_dist(data_vec):
     dist_list = []
     for vec in data_vec:
@@ -26,6 +27,7 @@ def get_dist(data_vec):
         else:
             dist_list.append(pg.NormalDistribution(0, 999999))
     return pg.IndependentComponentsDistribution(dist_list)
+
 
 class Classifier(object):
     """ HMM classifier that automatically adds 'edge states' to better recognize valid transitions between states.
@@ -96,8 +98,6 @@ class Classifier(object):
         return an untrained pomegranate hmm object with parameters filled in
         - If all data is unlabeled: finds emission parameters using k-means, transmission and start p are equal
         - If some data is labeled: initial estimate using given classifications
-        :param data:
-        :return:
         """
         hmm = pg.HiddenMarkovModel()
 
@@ -135,7 +135,6 @@ class Classifier(object):
         Return dicts of pomgranate states with initialized normal multivariate distributions
         """
         left_buffer = self.buffer // 2
-        right_buffer = self.buffer - left_buffer
         data = self.data.data_clean.loc[seq_idx, :]
         if not any(data.is_labeled):
             # Estimate emission distributions (same as pomegranate does usually)
@@ -280,7 +279,7 @@ class Classifier(object):
         return mu_list
 
     def get_states_sd(self, feature):
-        fidx = np.argwhere(feature == np.array(self.feature_list))[0,0]
+        fidx = np.argwhere(feature == np.array(self.feature_list))[0, 0]
         sd_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[1]
                    for state in self.trained.states if not state.is_silent()}
         sd_list = [sd_dict[mk] for mk in sorted(list(sd_dict))]
