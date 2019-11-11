@@ -567,18 +567,9 @@ class Gui(object):
 
         # --- Define plots ---
 
-        # Main timeseries
-        ts = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,xpan', plot_width=1075, plot_height=275, active_drag='xbox_select')
-        ts.rect('time', 'rect_mid', height='rect_height', fill_color={'field': 'labels_pct',
-                                                                      'transform': self.col_mapper},
-                source=self.source, **rect_opts)
-        ts.line('time', 'i_don', color='#4daf4a', source=self.source, **line_opts)
-        ts.line('time', 'i_acc', color='#e41a1c', source=self.source, **line_opts)
-        ts_panel = Panel(child=ts, title='Traces')
-
         # E_FRET series
         ts_efret = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,xpan', plot_width=1075, plot_height=275,
-                          active_drag='xbox_select', x_range=ts.x_range)  #  todo: add tooltips=[('$index')]
+                          active_drag='xbox_select')  #  todo: add tooltips=[('$index')]
         ts_efret.rect('time', 0.5, height=1.0, fill_color={'field': 'labels_pct',
                                                            'transform': self.col_mapper},
                 source=self.source, **rect_opts)
@@ -586,9 +577,21 @@ class Gui(object):
         ts_efret.line('time', 'E_FRET_sd', color='#a6cee3', source=self.source, **line_opts)
         efret_panel = Panel(child=ts_efret, title='E_FRET & sd')
 
+        # Main timeseries
+        ts = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,xpan', plot_width=1075, plot_height=275,
+                    active_drag='xbox_select', x_range=ts_efret.x_range)
+        ts.rect('time', 'rect_mid', height='rect_height', fill_color={'field': 'labels_pct',
+                                                                      'transform': self.col_mapper},
+                source=self.source, **rect_opts)
+        ts.line('time', 'i_don', color='#4daf4a', source=self.source, **line_opts)
+        ts.line('time', 'i_acc', color='#e41a1c', source=self.source, **line_opts)
+        ts_panel = Panel(child=ts, title='Traces')
+
+
+
         # correlation coeff series
         ts_corr = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,xpan', plot_width=1075, plot_height=275,
-                          active_drag='xbox_select', x_range=ts.x_range)  # todo: add tooltips=[('$index')]
+                          active_drag='xbox_select', x_range=ts_efret.x_range)  # todo: add tooltips=[('$index')]
         ts_corr.rect('time', 0.0, height=2.0, fill_color={'field': 'labels_pct',
                                                           'transform': self.col_mapper},
                       source=self.source, **rect_opts)
@@ -597,7 +600,7 @@ class Gui(object):
 
         # i_sum series
         ts_i_sum = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,xpan', plot_width=1075, plot_height=275,
-                          active_drag='xbox_select', x_range=ts.x_range)
+                          active_drag='xbox_select', x_range=ts_efret.x_range)
         ts_i_sum.rect('time', 'i_sum_mid', height='i_sum_height', fill_color={'field': 'labels_pct',
                                                                               'transform': self.col_mapper},
                       source=self.source, **rect_opts)
