@@ -6,7 +6,6 @@ from random import choices
 import itertools
 import yaml
 from joblib import Parallel, delayed
-# to show hmm graph: plt.figure(dpi=600); hmm.plot(); plt.show()
 
 
 def parallel_predict(tup_list, mod):
@@ -17,12 +16,23 @@ def parallel_predict(tup_list, mod):
         state_list.append([ts[0] for ts in tsl])
     return logprob_list, state_list
 
+
+def get_dist(data_vec):
+    dist_list = []
+    for vec in data_vec:
+        vec = vec[~np.isnan(vec)]
+        if len(vec):
+            dist_list.append(pg.NormalDistribution(np.nanmean(vec), max(np.std(vec), 1E-6)))
+        else:
+            dist_list.append(pg.NormalDistribution(0, 999999))
+    return pg.IndependentComponentsDistribution(dist_list)
+
+
 class Classifier(object):
     """ HMM classifier that automatically adds 'edge states' to better recognize valid transitions between states.
     """
     def __init__(self, nb_states, data, **kwargs):
         """
-
         :param nb_states: number of states to detect
         :param data: object of class MainTable
         :param gui: Gui object [optional]
@@ -125,7 +135,7 @@ class Classifier(object):
         dists = dict()
         for i in range(self.nb_states):
             sn = f's{i}'
-            dists[sn] = pg.MultivariateGaussianDistribution.from_samples(data_vec[y == i, :])
+            dists[sn] = get_dist(data_vec[y == i, :])
             pg_gui_state_dict[sn] = i
         return dists, pg_gui_state_dict
 
@@ -200,7 +210,6 @@ class Classifier(object):
 
         return pred_list, logprob_list
 
-
     def get_matrix(self, df):
         """
         convert pandas dataframe to numpy array of shape [nb_sequences, nb_samples_per_sequence, nb_features]
@@ -208,7 +217,6 @@ class Classifier(object):
         return np.stack([np.stack(list(tup), axis=-1) for tup in df.to_numpy()], 0)
 
     # --- parameters and performance measures ---
-
     @property
     def confidence_intervals(self):
         """
@@ -229,18 +237,16 @@ class Classifier(object):
 
     def get_states_mu(self, feature):
         fidx = np.argwhere(feature == np.array(self.feature_list))[0,0]
-        mu_dict = {self.pg_gui_state_dict[state.name]: state.distribution.mu
-                   for state in self.trained.states
-                   if not state.is_silent() and state.distribution.name != 'IndependentComponentsDistribution'}
-        mu_list = [mu_dict[mk][fidx] for mk in sorted(list(mu_dict))]
+        mu_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[0]
+                   for state in self.trained.states if not state.is_silent()}
+        mu_list = [mu_dict[mk] for mk in sorted(list(mu_dict))]
         return mu_list
 
     def get_states_sd(self, feature):
-        fidx = np.argwhere(feature == np.array(self.feature_list))
-        dg = np.eye(len(self.feature_list), dtype=bool)
-        sd_dict = {self.pg_gui_state_dict[state.name]: state.distribution.cov[dg] for state in self.trained.states
-                   if not state.is_silent() and state.distribution.name != 'IndependentComponentsDistribution'}
-        sd_list = [sd_dict[mk][fidx] for mk in sorted(list(sd_dict))]
+        fidx = np.argwhere(feature == np.array(self.feature_list))[0, 0]
+        sd_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[1]
+                   for state in self.trained.states if not state.is_silent()}
+        sd_list = [sd_dict[mk] for mk in sorted(list(sd_dict))]
         return sd_list
 
     def get_tm(self, hmm):
