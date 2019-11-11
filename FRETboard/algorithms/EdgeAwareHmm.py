@@ -7,20 +7,25 @@ import itertools
 from itertools import permutations
 import yaml
 from joblib import Parallel, delayed
-# to show hmm graph: plt.figure(dpi=600); hmm.plot(); plt.show()
 
 
 def parallel_predict(tup_list, mod):
-    # try:
     vit_list = [mod.viterbi(tup) for tup in tup_list]
     logprob_list, trace_state_list = list(map(list, zip(*vit_list)))
     state_list = []
     for tsl in trace_state_list:
         state_list.append([ts[0] for ts in tsl])
-    # except:
-    #     cp=1
     return logprob_list, state_list
 
+def get_dist(data_vec):
+    dist_list = []
+    for vec in data_vec:
+        vec = vec[~np.isnan(vec)]
+        if len(vec):
+            dist_list.append(pg.NormalDistribution(np.nanmean(vec), max(np.std(vec), 1E-6)))
+        else:
+            dist_list.append(pg.NormalDistribution(0, 999999))
+    return pg.IndependentComponentsDistribution(dist_list)
 
 class Classifier(object):
     """ HMM classifier that automatically adds 'edge states' to better recognize valid transitions between states.
@@ -79,7 +84,7 @@ class Classifier(object):
                 labels = [list(lab) if len(lab) else [None] for lab in labels]
                 hmm.fit(self.get_matrix(self.data.data_clean.loc[seq_idx, self.feature_list]),
                         inertia=supervision_influence, labels=labels, n_jobs=self.nb_threads,
-                        use_pseudocounts=True)  # todo: doesnt understand pseudocounts
+                        use_pseudocounts=True)
             else:
                 # Case 3: unsupervised --> just train
                 hmm.fit(self.get_matrix(self.data.data_clean.loc[seq_idx, self.feature_list]),
@@ -142,11 +147,7 @@ class Classifier(object):
             km = Kmeans(k=self.nb_states, n_init=1).fit(X=data_vec[km_idx, :], n_jobs=self.nb_threads)
             y = km.predict(data_vec)
             def distfun(s1, s2):
-                dist_list = [pg.NormalDistribution(np.nanmean(vec), max(np.std(vec), 1E-6))
-                             for vec in data_vec[np.logical_or(y == s1, y == s2), :].T]
-                # dist_list = [pg.NormalDistribution.from_samples(vec) for vec in data_vec[np.logical_or(y == s1, y == s2), :].T]
-                return pg.IndependentComponentsDistribution(dist_list)
-                # return pg.MultivariateGaussianDistribution.from_samples(data_vec[np.logical_or(y == s1, y == s2), :])
+                return get_dist(data_vec[np.logical_or(y == s1, y == s2), :].T)
         else:
             # Estimate emission distributions from given class labels
             data = data.loc[data.is_labeled, :]
@@ -154,28 +155,14 @@ class Classifier(object):
             y_edge = np.concatenate([np.stack(list(tup), axis=-1) for tup in data.loc[:, 'edge_labels'].to_numpy()], 0)
             data_vec = np.concatenate([np.stack(list(tup), axis=-1) for tup in data.loc[:, self.feature_list].to_numpy()], 0)
             def distfun(s1, s2):
-                dist_list = [pg.NormalDistribution(np.nanmean(vec), max(np.nanstd(vec), 1E-6))
-                             for vec in data_vec[y_edge == f'e{s1}{s2}', :].T]
-                # dist_list = [pg.NormalDistribution.from_samples(vec) for vec in data_vec[y_edge == f'e{s1}{s2}', :].T]
-                return pg.IndependentComponentsDistribution(dist_list)
-                # try:
-                #     dist = pg.MultivariateGaussianDistribution.from_samples(data_vec[y_edge == f'e{s1}{s2}', :])
-                # except:
-                #     vec = data_vec[y_edge == f'e{s1}{s2}', :]
-                #     vec[:,:2] = vec[:,:2] + np.full_like(vec[:,:2], 0.001)
-                #     dist = pg.MultivariateGaussianDistribution.from_samples(vec)
-                # return dist
+                return get_dist(data_vec[y_edge == f'e{s1}{s2}', :].T)
 
         # Create states
         pg_gui_state_dict = dict()
         states = dict()
         for i in range(self.nb_states):
             sn = f's{i}'
-            dist_list = [pg.NormalDistribution(np.nanmean(vec), max(np.nanstd(vec), 1E-6))
-                         for vec in data_vec[y == i, :].T]
-            # dist_list = [pg.NormalDistribution.from_samples(vec) for vec in data_vec[y == i, :].T]
-            states[sn] = pg.State(pg.IndependentComponentsDistribution(dist_list), name=f's{i}')
-            # states[sn] = pg.State(pg.MultivariateGaussianDistribution.from_samples(data_vec[y == i, :]), name=f's{i}')
+            states[sn] = pg.State(get_dist(data_vec[y == i, :].T), name=f's{i}')
             pg_gui_state_dict[sn] = i
 
         # Create edge states
@@ -234,13 +221,6 @@ class Classifier(object):
                 pend_dict[f's{tra[0]}'] = transition_dict[tra] / tt if tt != 0 else 0.0
             else:
                 out_dict[(f's{tra[0]}', f's{tra[1]}')] = transition_dict[tra] / tt if tt != 0 else 0.0
-
-        # # solve issues with divide by zero in prediction??
-        # for ps in pstart_dict:
-        #     if pstart_dict[ps] ==0: pstart_dict[ps] += 1E-6
-        # for pe in pend_dict:
-        #     if pend_dict[pe] ==0: pend_dict[pe] += 1E-6
-
         return out_dict, pstart_dict, pend_dict
 
     def predict(self, idx):
@@ -323,7 +303,6 @@ class Classifier(object):
         df[np.eye(self.nb_states, dtype=bool)] -= 1
         df /= duration_frame
         return df
-
 
     # --- saving/loading models ---
     def get_params(self):
