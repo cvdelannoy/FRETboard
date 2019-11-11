@@ -142,7 +142,9 @@ class Classifier(object):
             km = Kmeans(k=self.nb_states, n_init=1).fit(X=data_vec[km_idx, :], n_jobs=self.nb_threads)
             y = km.predict(data_vec)
             def distfun(s1, s2):
-                dist_list = [pg.NormalDistribution.from_samples(vec) for vec in data_vec[np.logical_or(y == s1, y == s2), :].T]
+                dist_list = [pg.NormalDistribution(np.nanmean(vec), max(np.std(vec), 1E-6))
+                             for vec in data_vec[np.logical_or(y == s1, y == s2), :].T]
+                # dist_list = [pg.NormalDistribution.from_samples(vec) for vec in data_vec[np.logical_or(y == s1, y == s2), :].T]
                 return pg.IndependentComponentsDistribution(dist_list)
                 # return pg.MultivariateGaussianDistribution.from_samples(data_vec[np.logical_or(y == s1, y == s2), :])
         else:
@@ -152,7 +154,9 @@ class Classifier(object):
             y_edge = np.concatenate([np.stack(list(tup), axis=-1) for tup in data.loc[:, 'edge_labels'].to_numpy()], 0)
             data_vec = np.concatenate([np.stack(list(tup), axis=-1) for tup in data.loc[:, self.feature_list].to_numpy()], 0)
             def distfun(s1, s2):
-                dist_list = [pg.NormalDistribution.from_samples(vec) for vec in data_vec[y_edge == f'e{s1}{s2}', :].T]
+                dist_list = [pg.NormalDistribution(np.nanmean(vec), max(np.nanstd(vec), 1E-6))
+                             for vec in data_vec[y_edge == f'e{s1}{s2}', :].T]
+                # dist_list = [pg.NormalDistribution.from_samples(vec) for vec in data_vec[y_edge == f'e{s1}{s2}', :].T]
                 return pg.IndependentComponentsDistribution(dist_list)
                 # try:
                 #     dist = pg.MultivariateGaussianDistribution.from_samples(data_vec[y_edge == f'e{s1}{s2}', :])
@@ -167,7 +171,9 @@ class Classifier(object):
         states = dict()
         for i in range(self.nb_states):
             sn = f's{i}'
-            dist_list = [pg.NormalDistribution.from_samples(vec) for vec in data_vec[y == i, :].T]
+            dist_list = [pg.NormalDistribution(np.nanmean(vec), max(np.nanstd(vec), 1E-6))
+                         for vec in data_vec[y == i, :].T]
+            # dist_list = [pg.NormalDistribution.from_samples(vec) for vec in data_vec[y == i, :].T]
             states[sn] = pg.State(pg.IndependentComponentsDistribution(dist_list), name=f's{i}')
             # states[sn] = pg.State(pg.MultivariateGaussianDistribution.from_samples(data_vec[y == i, :]), name=f's{i}')
             pg_gui_state_dict[sn] = i
@@ -228,6 +234,13 @@ class Classifier(object):
                 pend_dict[f's{tra[0]}'] = transition_dict[tra] / tt if tt != 0 else 0.0
             else:
                 out_dict[(f's{tra[0]}', f's{tra[1]}')] = transition_dict[tra] / tt if tt != 0 else 0.0
+
+        # # solve issues with divide by zero in prediction??
+        # for ps in pstart_dict:
+        #     if pstart_dict[ps] ==0: pstart_dict[ps] += 1E-6
+        # for pe in pend_dict:
+        #     if pend_dict[pe] ==0: pend_dict[pe] += 1E-6
+
         return out_dict, pstart_dict, pend_dict
 
     def predict(self, idx):
