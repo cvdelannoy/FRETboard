@@ -63,7 +63,7 @@ class MainTable(object):
         """
         window = 9
         ss = (window - 1) // 2  # sequence shortening
-        time = fc[0, :]
+        time = fc[0, :].astype(np.float64)
         i_don = fc[1, :].astype(np.float64)
         i_acc = fc[2, :].astype(np.float64)
 
