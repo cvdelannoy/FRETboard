@@ -69,6 +69,7 @@ class Classifier(object):
             nb_labeled = self.data.data_clean.is_labeled.sum()
             nb_unlabeled = len(self.data.data_clean) - nb_labeled
             labeled_seqs = choices(self.data.data_clean.index[self.data.data_clean.is_labeled], k=nb_labeled)
+            self.data._data.is_labeled = self.data._data.is_labeled.astype(bool)
             unlabeled_seqs = choices(self.data.data_clean.index[np.invert(self.data.data_clean.is_labeled)], k=nb_unlabeled)
             seq_idx = labeled_seqs + unlabeled_seqs
         else:

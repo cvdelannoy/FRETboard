@@ -2,7 +2,6 @@ import os
 import fnmatch
 import warnings
 import numpy as np
-from sklearn.cluster import DBSCAN
 from joblib import Parallel, delayed
 from FRETboard.MainTable import MainTable
 

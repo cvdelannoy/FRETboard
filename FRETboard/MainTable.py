@@ -1,9 +1,28 @@
 import numpy as np
 import pandas as pd
 import warnings
-from sklearn.cluster import DBSCAN
+from sklearn.cluster import DBSCAN, OPTICS
+from joblib import Parallel, delayed
 
 from FRETboard.helper_functions import rolling_corr_coef, rolling_var
+
+
+def get_derived_features(i_don, i_acc):
+    window = 9
+    ss = (window - 1) // 2  # sequence shortening
+    i_sum = np.sum((i_don, i_acc), axis=0)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        E_FRET = np.divide(i_acc, np.sum((i_don, i_acc), axis=0))
+    E_FRET[i_sum == 0] = np.nan  # set to nan where i_don and i_acc after background correction cancel out
+
+    correlation_coefficient = np.full_like(E_FRET, np.nan)
+    correlation_coefficient[ss:-ss] = rolling_corr_coef(i_don, i_acc, window)
+    E_FRET_sd = np.full_like(E_FRET, np.nan)
+    E_FRET_sd[ss:-ss] = rolling_var(E_FRET, window)
+    i_sum_sd = np.full_like(E_FRET, np.nan)
+    i_sum_sd[ss:-ss] = rolling_var(i_sum, window)
+    return E_FRET, E_FRET_sd, i_sum, i_sum_sd, correlation_coefficient
 
 class MainTable(object):
 
@@ -22,13 +41,15 @@ class MainTable(object):
         """
         traces without those predicted/marked junk
         """
-        return self._data.loc[np.invert(self._data.predicted_junk), :]
+        return self._data.loc[np.invert(self._data.predicted_junk).astype(bool), :]
 
     @data.setter
     def data(self, dat_files):
         nb_files = len(dat_files)
         df_out = pd.DataFrame({
             'time': [np.array([], dtype=np.int64)] * nb_files,
+            'i_don_raw': [np.array([], dtype=np.int64)] * nb_files,
+            'i_acc_raw': [np.array([], dtype=np.int64)] * nb_files,
             'i_don': [np.array([], dtype=np.int64)] * nb_files,
             'i_acc': [np.array([], dtype=np.int64)] * nb_files,
             'i_sum': [np.array([], dtype=np.float64)] * nb_files,
@@ -53,7 +74,6 @@ class MainTable(object):
                 print('File {} could not be read, skipping'.format(dat_file))
                 df_out.drop([dat_file], inplace=True)
 
-
     def add_tuple(self, fc, fn):
         """
         Add a new tuple to the data table
@@ -61,40 +81,14 @@ class MainTable(object):
         :param fn: file name, will be used as index
         :return: None
         """
-        window = 9
-        ss = (window - 1) // 2  # sequence shortening
         time = fc[0, :].astype(np.float64)
         i_don = fc[1, :].astype(np.float64)
         i_acc = fc[2, :].astype(np.float64)
 
-        # DBSCAN filter
-        min_clust = int(fc.shape[1] * 0.02)
-        for tr in (i_don, i_acc):
-            clust = DBSCAN(eps=1.0, min_samples=min_clust).fit(tr.reshape(-1, 1))
-            tr -= np.nanmin([np.mean(tr[clust.labels_ == lab]) for lab in np.unique(clust.labels_)]).astype(fc.dtype)
+        E_FRET, E_FRET_sd, i_sum, i_sum_sd, correlation_coefficient = self.get_derived_features(i_don, i_acc)
 
-        i_sum = np.sum((i_don, i_acc), axis=0)
-        # E_FRET = np.divide(i_acc, np.sum((i_don, i_acc), axis=0))
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            E_FRET = np.clip(np.divide(i_acc, np.sum((i_don, i_acc), axis=0)), a_min=0.0, a_max=1.0)
-        E_FRET[i_sum == 0] = np.nan  # set to nan where i_don and i_acc after background correction cancel out
-
-        correlation_coefficient = np.full_like(E_FRET, np.nan)
-        correlation_coefficient[ss:-ss] = rolling_corr_coef(i_don, i_acc, window)
-        # correlation_coefficient = rolling_corr_coef(i_don, i_acc, window)
-        E_FRET_sd = np.full_like(E_FRET, np.nan)
-        E_FRET_sd[ss:-ss] = rolling_var(E_FRET, window)
-        # E_FRET_sd = rolling_var(E_FRET, window)
-        i_sum_sd = np.full_like(E_FRET, np.nan)
-        i_sum_sd[ss:-ss] = rolling_var(i_sum, window)
-
-        self._data.loc[fn] = (time, i_don, i_acc, i_sum, i_sum_sd, E_FRET, correlation_coefficient, E_FRET_sd,
+        self._data.loc[fn] = (time, i_don, i_acc, i_don.copy(), i_acc.copy(), i_sum, i_sum_sd, E_FRET, correlation_coefficient, E_FRET_sd,
                               [], [], [], np.nan, False, False, False)
-
-        # self._data.loc[fn] = (time[ss:-ss], i_don[ss:-ss], i_acc[ss:-ss],
-        #                       i_sum[ss:-ss], E_FRET[ss:-ss], correlation_coefficient, E_FRET_sd, [], [], [], np.nan,
-        #                       False, False, False)
 
     def add_df_list(self, df_list):
         """
@@ -103,6 +97,7 @@ class MainTable(object):
         if type(df_list) != list:
             df_list = [df_list]
         self._data = pd.concat(df_list + [self.data])
+        self._data.is_labeled = self._data.is_labeled.astype(bool)  # todo not elegant, track down where is_labeled stops being bool
 
 
     def del_tuple(self, idx):
@@ -118,6 +113,65 @@ class MainTable(object):
             self.data.at[example_idx, column] = value
         else:
             self.data.at[example_idx, column][idx] = value
+
+    def subtract_background(self, eps, idx=None):
+        threads=8
+        if idx is None:
+            idx = self._data.index
+        if len(idx) == 1:
+            self._data.update(self.parallel_subtract(self._data.loc[idx[0]], eps))
+        df_list = Parallel(n_jobs=threads)(delayed(self.parallel_subtract)(data, eps)
+                                      for data in np.array_split(self.data.loc[idx], threads))
+        for df in df_list:
+            self._data.update(df)
+
+    @staticmethod
+    def parallel_subtract(data, eps):
+        if type(data) == pd.Series:
+            cols = data.index
+            data = data.to_frame().T
+            data.columns = cols
+        for tidx, tup in data.iterrows():
+            for nt in (('i_don_raw', 'i_don'), ('i_acc_raw', 'i_acc')):
+                min_clust = 10
+                pc10 = np.percentile(tup.loc[nt[0]], 20)
+                tr = tup.loc[nt[0]][tup.loc[nt[0]] < pc10]
+                clust = DBSCAN(eps=eps, min_samples=min_clust).fit(tr.reshape(-1, 1)).labels_
+                if len(np.unique(clust)) == 0:
+                    data.at[tidx, nt[1]] = tup.loc[nt[0]]
+                    continue
+                med_list = np.array([np.median(tr[clust == lab]) for lab in np.unique(clust)])
+                data.at[tidx, nt[1]] = tup.loc[nt[0]] - np.min(med_list)
+            for feat, vec in zip (['E_FRET', 'E_FRET_sd', 'i_sum', 'i_sum_sd', 'correlation_coefficient'],
+                                  get_derived_features(data.loc[tidx, 'i_don'], data.loc[tidx, 'i_acc'])):
+                data.at[tidx, feat] = vec
+        return data
+
+    def restore_background(self):
+        for tidx, tup in self.data.iterrows():
+            for nt in (('i_don_raw', 'i_don'), ('i_acc_raw', 'i_acc')):
+                self.data.at[tidx, nt[1]] = tup.loc[nt[0]]
+            for feat, vec in zip(['E_FRET', 'E_FRET_sd', 'i_sum', 'i_sum_sd', 'correlation_coefficient'],
+                                 self.get_derived_features(self.data.loc[tidx, 'i_don'], self.data.loc[tidx, 'i_acc'])):
+                self.data.at[tidx, feat] = vec
+
+    @staticmethod
+    def get_derived_features(i_don, i_acc):
+        window = 9
+        ss = (window - 1) // 2  # sequence shortening
+        i_sum = np.sum((i_don, i_acc), axis=0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            E_FRET = np.divide(i_acc, np.sum((i_don, i_acc), axis=0))
+        E_FRET[i_sum == 0] = np.nan  # set to nan where i_don and i_acc after background correction cancel out
+
+        correlation_coefficient = np.full_like(E_FRET, np.nan)
+        correlation_coefficient[ss:-ss] = rolling_corr_coef(i_don, i_acc, window)
+        E_FRET_sd = np.full_like(E_FRET, np.nan)
+        E_FRET_sd[ss:-ss] = rolling_var(E_FRET, window)
+        i_sum_sd = np.full_like(E_FRET, np.nan)
+        i_sum_sd[ss:-ss] = rolling_var(i_sum, window)
+        return E_FRET, E_FRET_sd, i_sum, i_sum_sd, correlation_coefficient
 
     # --- derived features ---
     @property

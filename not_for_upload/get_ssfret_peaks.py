@@ -52,6 +52,7 @@ parser.add_argument('--threads', default=1, type=int,
 args = parser.parse_args()
 
 outdir = parse_output_dir(args.outdir, clean=False)
+label_0based = args.label - 1
 
 # load data
 dat_list = parse_input_path(args.indir, pattern='*.dat')
@@ -89,7 +90,7 @@ if 'samples' in args.analysis_type:
         group_bool = main_table.data.index.str.contains(group)
         efret_mat = np.concatenate(main_table.data.loc[group_bool, 'E_FRET'].to_numpy())
         label_mat = np.concatenate([p for pi, p in enumerate(pred) if group_bool[pi]])
-        efret = efret_mat[label_mat == args.label]
+        efret = efret_mat[label_mat == label_0based]
         efret = efret[np.invert(np.isnan(efret))]
         out_df.loc[group] = get_ssfret_dist(efret)
         plot_efret_hist(efret, label=group)
@@ -110,7 +111,7 @@ if 'events' in args.analysis_type:
         pred_group = [p for pi, p in enumerate(pred) if group_bool[pi]]
         events = [condense_sequence(val, lab) for val, lab in zip(main_table.data.loc[group_bool, 'E_FRET'], pred_group)]
         events = list(chain.from_iterable(events))
-        efret = np.array([ev[2] for ev in events if ev[0] == args.label])
+        efret = np.array([ev[2] for ev in events if ev[0] == label_0based])
         out_df.loc[group] = get_ssfret_dist(efret)
         plot_efret_hist(efret, label=group)
     plt.savefig(outdir + 'events_hist.png', dpi=400)
@@ -125,8 +126,8 @@ if 'traces' in args.analysis_type:
     # Return one value per trace, based on sample histogram
     for ii, i in enumerate(main_table.data.index):
         main_table.data.at[i, "prediction"] = pred[ii]
-    filtered_df = main_table.data.loc[main_table.data.prediction.apply(lambda x: np.any(x == args.label)), :]
-    dist_list = Parallel(n_jobs=args.threads)(delayed(get_ssfret_dist)(x.E_FRET[x.prediction == args.label], xi)
+    filtered_df = main_table.data.loc[main_table.data.prediction.apply(lambda x: np.any(x == label_0based)), :]
+    dist_list = Parallel(n_jobs=args.threads)(delayed(get_ssfret_dist)(x.E_FRET[x.prediction == label_0based], xi)
                                   for xi, x in filtered_df.iterrows())
     dist_df = pd.DataFrame.from_dict({idx: [mu, sd, srsd, n_points] for mu, sd, srsd, n_points, idx in dist_list},
                                      orient='index', columns=['mu', 'sd', 'srsd', 'n_points'])

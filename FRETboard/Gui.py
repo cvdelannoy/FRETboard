@@ -6,9 +6,9 @@ import numpy as np
 import pandas as pd
 import yaml
 import importlib
-from sklearn.cluster import DBSCAN
+# from tornado import gen
+# from threading import Thread
 
-# from FRETboard.lsh_bin_selection import lsh_classify
 from cached_property import cached_property
 from bokeh.server.server import Server
 from bokeh.application import Application
@@ -17,7 +17,7 @@ from bokeh.layouts import row, column, widgetbox
 from bokeh.plotting import figure, curdoc
 from bokeh.models import ColumnDataSource, LinearColorMapper#, CustomJS
 from bokeh.models.callbacks import CustomJS
-from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Div, CheckboxButtonGroup, CheckboxGroup
+from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Div, CheckboxButtonGroup, CheckboxGroup, Spinner
 from bokeh.models.widgets.panels import Panel, Tabs
 from tornado.ioloop import IOLoop
 
@@ -42,18 +42,6 @@ with open(f'{__location__}/js_widgets/download_datzip.js', 'r') as fh: download_
 with open(f'{__location__}/js_widgets/download_report.js', 'r') as fh: download_report_js = fh.read()
 with open(f'{__location__}/js_widgets/download_model.js', 'r') as fh: download_csv_js = fh.read()
 
-def parallel_fn(f_array, fn_list, dt):
-    out_list = list()
-    for fi, f in enumerate(np.hsplit(f_array, f_array.shape[1])):
-        f = f.squeeze()
-        min_clust = int(f.shape[1] * 0.02)
-        for fvi, fv in enumerate(f):
-            clust = DBSCAN(eps=1.0, min_samples=min_clust).fit(fv.reshape(-1, 1))
-            offset = np.nanmin([np.mean(fv[clust.labels_ == lab]) for lab in np.unique(clust.labels_)]).astype(f.dtype)
-            f[fvi, :] -= offset
-        out_list.append(np.row_stack((np.arange(f.shape[1]), f)))
-        dt.add_tuple(np.row_stack((np.arange(f.shape[1]), f)), fn_list[fi])
-    return dt.data
 
 class Gui(object):
     def __init__(self, nb_states=3, data=[]):
@@ -70,6 +58,9 @@ class Gui(object):
         self.num_states_slider = Slider(title='Number of states', value=nb_states, start=2, end=10, step=1)
         self.sel_state_slider = Slider(title='Change selection to state', value=1, start=1,
                                        end=self.num_states_slider.value, step=1)
+        self.bg_button = Button(label='Subtract background')
+        self.bg_test_button = Button(label='Test')
+        self.bg_eps = Spinner(value=9, step=1)
         self.supervision_slider = Slider(title='Influence supervision', value=1.0, start=0.0, end=1.0, step=0.01)
         self.buffer_slider = Slider(title='Buffer', value=3, start=0, end=20, step=1)
         self.notification = PreText(text='', width=1000, height=15)
@@ -188,7 +179,8 @@ class Gui(object):
         if len(self.data.data) > self.nb_threads:  # predict [nb_threads] traces as indicator of logprob
             idx = self.data.data.index[self.data.data.is_labeled].to_numpy()
             if len(idx) < self.nb_threads:
-                idx = np.union1d(idx, np.random.choice(self.data.data.index[np.invert(self.data.data.is_labeled)],
+                # todo: suddenly is_labeled is not bool anymore??
+                idx = np.union1d(idx, np.random.choice(self.data.data.index[np.invert(self.data.data.is_labeled.astype(bool))],
                                                        self.nb_threads - len(idx), replace=True))
         else:
             idx = self.data.data.index
@@ -236,12 +228,14 @@ class Gui(object):
         # Process .trace files
         if '.traces' in fn:
             df_list = parse_trace_file(file_contents, fn, self.nb_threads)
+            # self.doc.add_next_tick_callback(self.update_notification(f'{print_timestamp()}Adding to list'))
             print(f'{print_timestamp()}Adding to list')
             self.data.add_df_list(df_list)
             print(f'{print_timestamp()}Done')
 
         # Process .dat files
         elif '.dat' in fn:
+            # self.doc.add_next_tick_callback(self.update_notification(f'{print_timestamp()}Adding to list'))
             file_contents = base64.b64decode(b64_contents).decode('utf-8')
             file_contents = np.column_stack([np.fromstring(n, sep=' ') for n in file_contents.split('\n') if len(n)])
             if len(file_contents):
@@ -323,7 +317,7 @@ class Gui(object):
                                                        True if len(x) == 0
                                                                or any(np.in1d(self.showme_checkboxes.active, x))
                                                        else False)
-            valid_bool = np.logical_and(sm_check, np.invert(self.data.data.is_labeled))
+            valid_bool = np.logical_and(sm_check, np.invert(self.data.data.is_labeled.astype(bool)))
             if not any(valid_bool):
                 self.notification.text = f'{print_timestamp()} No new traces with states of interest left'
                 return
@@ -368,6 +362,17 @@ class Gui(object):
             self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
             self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
 
+    def subtract_background(self):
+        self.data.subtract_background(self.bg_eps.value)
+        self._redraw_all()
+
+    def subtract_test(self):
+        self.data.subtract_background(self.bg_eps.value, [self.cur_example_idx])
+        self._redraw_all()
+
+    def restore_background(self):
+        self.data.restore_background()
+        self._redraw_all()
 
     def update_accuracy_hist(self):
         acc_counts = np.histogram(self.data.accuracy[0], bins=np.linspace(5, 100, num=20))[0]
@@ -513,13 +518,9 @@ class Gui(object):
         else:
             self.notification.text = f'''\n{print_timestamp()}No valid (unclassified) traces to display for classes {', '.join([str(ts + 1) for ts in new])}'''
 
-        # if any(valid_bool):
-        #     self.example_select.options = list(self.data.data.index[valid_bool])
-        #     if self.cur_example_idx not in self.example_select.options:
-        #         new_example_idx = np.random.choice(self.example_select.options)
-        #         self.update_example = new_example_idx
-        # else:
-        #     self.notification.text = f'''\n{print_timestamp()}No valid (unclassified) traces to display for classes {', '.join([str(ts+1) for ts in new]) }'''
+    # @gen.coroutine
+    # def update_notification(self, text):
+    #     self.notification.text = text
 
     def make_document(self, doc):
         # --- Define widgets ---
@@ -568,7 +569,7 @@ class Gui(object):
         # --- Define plots ---
 
         # Main timeseries
-        ts = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,xpan', plot_width=1075, plot_height=275, active_drag='xbox_select')
+        ts = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,pan', plot_width=1075, plot_height=275, active_drag='xbox_select')
         ts.rect('time', 'rect_mid', height='rect_height', fill_color={'field': 'labels_pct',
                                                                       'transform': self.col_mapper},
                 source=self.source, **rect_opts)
@@ -577,8 +578,8 @@ class Gui(object):
         ts_panel = Panel(child=ts, title='Traces')
 
         # E_FRET series
-        ts_efret = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,xpan', plot_width=1075, plot_height=275,
-                          active_drag='xbox_select', x_range=ts.x_range)  #  todo: add tooltips=[('$index')]
+        ts_efret = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,pan', plot_width=1075, plot_height=275,
+                          active_drag='xbox_select', x_range=ts.x_range, y_range=[0,1])  #  todo: add tooltips=[('$index')]
         ts_efret.rect('time', 0.5, height=1.0, fill_color={'field': 'labels_pct',
                                                            'transform': self.col_mapper},
                 source=self.source, **rect_opts)
@@ -587,7 +588,7 @@ class Gui(object):
         efret_panel = Panel(child=ts_efret, title='E_FRET & sd')
 
         # correlation coeff series
-        ts_corr = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,xpan', plot_width=1075, plot_height=275,
+        ts_corr = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,pan', plot_width=1075, plot_height=275,
                           active_drag='xbox_select', x_range=ts.x_range)  # todo: add tooltips=[('$index')]
         ts_corr.rect('time', 0.0, height=2.0, fill_color={'field': 'labels_pct',
                                                           'transform': self.col_mapper},
@@ -596,7 +597,7 @@ class Gui(object):
         corr_panel = Panel(child=ts_corr, title='Correlation coefficient')
 
         # i_sum series
-        ts_i_sum = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,xpan', plot_width=1075, plot_height=275,
+        ts_i_sum = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,pan', plot_width=1075, plot_height=275,
                           active_drag='xbox_select', x_range=ts.x_range)
         ts_i_sum.rect('time', 'i_sum_mid', height='i_sum_height', fill_color={'field': 'labels_pct',
                                                                               'transform': self.col_mapper},
@@ -646,6 +647,8 @@ class Gui(object):
         self.loaded_model_source.on_change('data', self.load_params)
         self.example_select.on_change('value', self.update_example)
         example_button.on_click(self.update_example_retrain)
+        self.bg_button.on_click(self.subtract_background)
+        self.bg_test_button.on_click(self.subtract_test)
         self.num_states_slider.on_change('value', self.update_num_states)
         self.state_radio.on_change('active', lambda attr, old, new: self.update_state_curves())
         self.features_checkboxes.on_change('active', self.update_feature_list)
@@ -665,8 +668,10 @@ class Gui(object):
         widgets = column(ff_title,
                          Div(text="<font size=4>1. Load</font>", width=280, height=15),
                          self.algo_select,
-                         row(widgetbox(load_button, width=150), widgetbox(load_model_button, width=150),
+                         row(widgetbox(load_model_button, width=150), widgetbox(load_button, width=150),
                              width=300),
+                         row(widgetbox(self.bg_button, width=150), widgetbox(self.bg_eps, width=75),
+                             widgetbox(self.bg_test_button, width=75), width=300),
                          Div(text="<font size=4>2. Teach</font>", width=280, height=15),
                          self.num_states_slider,
                          self.sel_state_slider,
@@ -689,6 +694,7 @@ class Gui(object):
         layout = row(widgets, graphs)
         doc.add_root(layout)
         doc.title = f'FRETboard v. {self.version}'
+        self.doc = doc
 
     def start_gui(self, port=0):
         apps = {'/': Application(FunctionHandler(self.make_document))}

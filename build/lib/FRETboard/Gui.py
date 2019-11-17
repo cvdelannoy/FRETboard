@@ -6,7 +6,6 @@ import numpy as np
 import pandas as pd
 import yaml
 import importlib
-from sklearn.cluster import DBSCAN
 
 # from FRETboard.lsh_bin_selection import lsh_classify
 from cached_property import cached_property
@@ -42,18 +41,6 @@ with open(f'{__location__}/js_widgets/download_datzip.js', 'r') as fh: download_
 with open(f'{__location__}/js_widgets/download_report.js', 'r') as fh: download_report_js = fh.read()
 with open(f'{__location__}/js_widgets/download_model.js', 'r') as fh: download_csv_js = fh.read()
 
-def parallel_fn(f_array, fn_list, dt):
-    out_list = list()
-    for fi, f in enumerate(np.hsplit(f_array, f_array.shape[1])):
-        f = f.squeeze()
-        min_clust = int(f.shape[1] * 0.02)
-        for fvi, fv in enumerate(f):
-            clust = DBSCAN(eps=1.0, min_samples=min_clust).fit(fv.reshape(-1, 1))
-            offset = np.nanmin([np.mean(fv[clust.labels_ == lab]) for lab in np.unique(clust.labels_)]).astype(f.dtype)
-            f[fvi, :] -= offset
-        out_list.append(np.row_stack((np.arange(f.shape[1]), f)))
-        dt.add_tuple(np.row_stack((np.arange(f.shape[1]), f)), fn_list[fi])
-    return dt.data
 
 class Gui(object):
     def __init__(self, nb_states=3, data=[]):

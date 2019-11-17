@@ -1,5 +1,9 @@
 import os
+import io
 import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+
 from cached_property import cached_property
 import itertools
 import pandas as pd
@@ -67,9 +71,9 @@ class FretReport(object):
                 seq_condensed[-1][1] += 1
                 seq_condensed[-1][2].append(i)
             else:
-                seq_condensed[-1][2] = np.median(seq_condensed[-1][2])
+                seq_condensed[-1][2] = np.nanmedian(seq_condensed[-1][2])
                 seq_condensed.append([s, 1, [i]])
-        seq_condensed[-1][2] = np.median(seq_condensed[-1][2])
+        seq_condensed[-1][2] = np.nanmedian(seq_condensed[-1][2])
         return seq_condensed
 
     def construct_html_report(self):
@@ -80,9 +84,10 @@ class FretReport(object):
         with open(f'{__location__}/templates/report_template.html', 'r') as fh:
             template = Template(fh.read())
         esh, esd = components(ed_scatter)
-        thh, thd = components(tdp_hex)
+        # thh, thd = components(tdp_hex)
         return template.render(ed_scatter_script=esh, ed_scatter_div=esd,
-                               tdp_hex_script=thh, tdp_hex_div=thd,
+                               # tdp_hex_script=thh,
+                               tdp_hex_div=tdp_hex,
                                tm_table_div=tm_table,
                                em_table_div=em_table,
                                date=print_timestamp(),
@@ -115,14 +120,36 @@ class FretReport(object):
         return ed_scatter
 
     def draw_transition_density_plot(self):
-        tdp_hex = figure(plot_width=500, plot_height=500,
-                         background_fill_color='#440154',
-                         x_range=(0.0, 1.0), y_range=(0.0, 1.0))
-        tdp_hex.grid.visible = False
-        tdp_hex.xaxis.axis_label = 'E FRET before transition'
-        tdp_hex.yaxis.axis_label = 'E FRET after transition'
-        tdp_hex.hexbin(x=self.transition_df['E_FRET_before'], y=self.transition_df['E_FRET_after'], size=0.01)
-        return tdp_hex
+        ax = sns.kdeplot(self.transition_df.E_FRET_before, self.transition_df.E_FRET_after, shade=True, cmap="coolwarm")
+        plt.xlim(0, 1)
+        plt.ylim(0, 1)
+
+        mu_list = self.classifier.get_states_mu('E_FRET')
+        sd_list = self.classifier.get_states_sd('E_FRET')
+        for mi, mm in enumerate(mu_list[:-1]):
+            ratio = sd_list[mi] / (sd_list[mi] + sd_list[mi + 1])
+            dmu = mu_list[mi + 1] - mm
+            lin = mm + dmu * ratio
+            plt.axvline(lin, color='black')
+            plt.axhline(lin, color='black')
+
+        ax.set_aspect('equal')
+        ax.set_xlabel('$E_{FRET}$ before')
+        ax.set_ylabel('$E_{FRET}$ after')
+
+        f = io.StringIO()
+        plt.savefig(f, format='svg')
+        return f.getvalue()
+
+    # def draw_transition_density_plot(self):
+    #     tdp_hex = figure(plot_width=500, plot_height=500,
+    #                      background_fill_color='#440154',
+    #                      x_range=(0.0, 1.0), y_range=(0.0, 1.0))
+    #     tdp_hex.grid.visible = False
+    #     tdp_hex.xaxis.axis_label = 'E FRET before transition'
+    #     tdp_hex.yaxis.axis_label = 'E FRET after transition'
+    #     tdp_hex.hexbin(x=self.transition_df['E_FRET_before'], y=self.transition_df['E_FRET_after'], size=0.01)
+    #     return tdp_hex
 
     def get_stats_tables(self):
         # time spent in each state
