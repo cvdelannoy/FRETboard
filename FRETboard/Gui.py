@@ -294,7 +294,7 @@ class Gui(object):
             if not len(self.data.data.loc[new, 'prediction']):
                 pred, logprob = self.classifier.predict([new])
                 self.data.data.at[new, 'prediction'] = pred[0]
-                self.data.data.loc[new, 'logprob'] = logprob
+                self.data.data.loc[new, 'logprob'] = logprob[0]
             self.data.set_value(new, 'labels', self.data.data.loc[new, 'prediction'].copy())
             self.data.set_value(new, 'edge_labels', self.get_edge_labels(self.data.data.loc[new, 'labels']))
             self.data.set_value(new, 'is_labeled', True)
