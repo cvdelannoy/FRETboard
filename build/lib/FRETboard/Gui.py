@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 import shutil
 import base64
@@ -7,7 +8,11 @@ import pandas as pd
 import yaml
 import importlib
 # from tornado import gen
-# from threading import Thread
+import threading
+from threading import Thread
+import asyncio
+from time import sleep
+from joblib import Parallel
 
 from cached_property import cached_property
 from bokeh.server.server import Server
@@ -20,6 +25,7 @@ from bokeh.models.callbacks import CustomJS
 from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Div, CheckboxButtonGroup, CheckboxGroup, Spinner
 from bokeh.models.widgets.panels import Panel, Tabs
 from tornado.ioloop import IOLoop
+from tornado import gen
 
 from FRETboard.io_functions import parse_trace_file
 from FRETboard.helper_functions import print_timestamp
@@ -43,14 +49,55 @@ with open(f'{__location__}/js_widgets/download_report.js', 'r') as fh: download_
 with open(f'{__location__}/js_widgets/download_model.js', 'r') as fh: download_csv_js = fh.read()
 
 
+# def installThreadExcepthook():
+#     """
+#     Workaround for sys.excepthook thread bug
+#     From
+# http://spyced.blogspot.com/2007/06/workaround-for-sysexcepthook-bug.html
+#
+# (https://sourceforge.net/tracker/?func=detail&atid=105470&aid=1230540&group_id=5470).
+#     Call once from __main__ before creating any threads.
+#     If using psyco, call psyco.cannotcompile(threading.Thread.run)
+#     since this replaces a new-style class method.
+#     """
+#     init_old = threading.Thread.__init__
+#
+#     def init(self, *args, **kwargs):
+#         init_old(self, *args, **kwargs)
+#         run_old = self.run
+#
+#         def run_with_except_hook(*args, **kw):
+#             try:
+#                 run_old(*args, **kw)
+#             except (KeyboardInterrupt, SystemExit):
+#                 raise
+#             except:
+#                 sys.excepthook(*sys.exc_info())
+#
+#         self.run = run_with_except_hook
+#
+#     threading.Thread.__init__ = init
+
 class Gui(object):
     def __init__(self, nb_states=3, data=[]):
+        # installThreadExcepthook()
+        # sys.excepthook = self.error_logging
         self.version = '0.0.3'
         self.cur_example_idx = None
         self.nb_threads = 8
         self.feature_list = ['E_FRET', 'E_FRET_sd', 'i_sum', 'i_sum_sd', 'correlation_coefficient', 'i_don', 'i_acc']
+        self.data = MainTable(data, np.nan)
 
-        self.data = MainTable(data)
+        # Buffer stores and triggers (for concurrency)
+        self.notification_buffer = ''
+        self.model_buffer = ''
+        self.classifier_source_buffer = None
+        self.fn_buffer = []
+        self.new_data_buffer = []
+        self.loading_in_progress = False
+        self.training_in_progress = False
+        self.prediction_in_progress = False
+        self.new_example_bool = False
 
         # widgets
         self.algo_select = Select(title='Algorithm:', value=list(algo_dict)[0], options=list(algo_dict))
@@ -58,9 +105,10 @@ class Gui(object):
         self.num_states_slider = Slider(title='Number of states', value=nb_states, start=2, end=10, step=1)
         self.sel_state_slider = Slider(title='Change selection to state', value=1, start=1,
                                        end=self.num_states_slider.value, step=1)
+        self.bg_checkbox = CheckboxGroup(labels=[''], active=[])
         self.bg_button = Button(label='Subtract background')
         self.bg_test_button = Button(label='Test')
-        self.bg_eps = Spinner(value=9, step=1)
+        self.eps_spinner = Spinner(value=9, step=1)
         self.supervision_slider = Slider(title='Influence supervision', value=1.0, start=0.0, end=1.0, step=0.01)
         self.buffer_slider = Slider(title='Buffer', value=3, start=0, end=20, step=1)
         self.notification = PreText(text='', width=1000, height=15)
@@ -157,6 +205,185 @@ class Gui(object):
     def i_sum(self):
         return self.data.data.loc[self.cur_example_idx].i_sum
 
+    # --- trigger functions ---
+    # Required to enable communication between threads
+
+    def notify(self, text):
+        self.notification_buffer = f'{print_timestamp()}{text}\n'
+        self.doc.add_next_tick_callback(self.push_notification)
+
+    def train_trigger(self):
+        self.notify('Start training...')
+        self.doc.add_next_tick_callback(self.train_and_update)
+
+    def redraw_trigger(self):
+        self.doc.add_next_tick_callback(self._redraw_all)
+
+#     def error_logging(self, type, value, tb):
+#         text = f'''Server encountered an error!
+#
+# Please open an issue at github.com/cvdelannoy/FRETboard/issues. Include the error message below and
+# the files with which the error occurred, if possible
+# ---begin error message ---
+# {str(value)}'''
+#         with open('/home/carlos/errortst.txt', 'w') as fh:
+#             fh.write(text)
+#         self.notify(text)
+
+    def append_fn(self, fn):
+        self.fn_buffer.append(fn)
+        self.doc.add_next_tick_callback(self.push_fn)
+
+    def push_fn(self):
+        self.example_select.options = self.example_select.options + [self.fn_buffer.pop()]
+
+    def push_notification(self):
+        self.notification.text = self.notification_buffer + self.notification.text
+
+    # --- asynchronous functions ---
+    def update_data(self):
+        """
+        Update MainTable with new provided examples
+        """
+        while self.main_thread.is_alive():
+            if not len(self.new_data_buffer):
+                sleep(1)
+                continue
+            self.loading_in_progress = True
+            if self.new_cur == 0:
+                self.notify('Loading data in background...')
+            raw_contents, fn = self.new_data_buffer.pop()
+            _, b64_contents = raw_contents.split(",", 1)  # remove the prefix that JS adds
+            file_contents = base64.b64decode(b64_contents)
+            if '.traces' in fn:
+
+                self.notify(f'processing {fn}...')
+
+                nb_colors = 2
+                nb_frames, _, nb_traces = np.frombuffer(file_contents, dtype=np.int16, count=3)
+                nb_samples = nb_traces // nb_colors
+                traces_vec = np.frombuffer(file_contents, dtype=np.int16)
+                traces_vec = traces_vec[3:]
+                nb_points_expected = nb_colors * nb_samples * nb_frames
+                traces_vec = traces_vec[:nb_points_expected]
+                file_contents = traces_vec.reshape((nb_colors, nb_samples, nb_frames), order='F')
+                fn_clean = os.path.splitext(fn)[0]
+
+                fn_list = [f'{fn_clean}_{it}.dat' for it in range(nb_samples)]
+                print_thres = 10
+                for fi, f in enumerate(np.hsplit(file_contents, file_contents.shape[1])):
+                    f = f.squeeze()
+                    self.data.add_tuple(np.row_stack((np.arange(f.shape[1]), f)), fn_list[fi])
+                    self.append_fn(fn_list[fi])
+                    pct_done = int(fi / nb_samples * 100)
+                    if pct_done > print_thres:
+                        self.notify(f'{fi} ({pct_done} %) traces from {fn_clean} loaded')
+                        print_thres += 10
+                    if not self.model_loaded and not self.training_in_progress:
+                        self.training_in_progress = True
+                        self.train_trigger()
+                self.notify('Done')
+                # df_list = parse_trace_file(file_contents, fn, self.nb_threads, self.parallel_pool)
+                # self.data.add_df_list(df_list)
+
+            # Process .dat files
+            elif '.dat' in fn:
+                # self.doc.add_next_tick_callback(self.update_notification(f'{print_timestamp()}Adding to list'))
+                file_contents = base64.b64decode(b64_contents).decode('utf-8')
+                file_contents = np.column_stack([np.fromstring(n, sep=' ') for n in file_contents.split('\n') if len(n)])
+                if len(file_contents):
+                    self.data.add_tuple(file_contents, fn)
+                    self.append_fn(fn)
+                    # Already start training if no previous model exists and more than 100 traces are loaded
+                    if not self.model_loaded and not self.training_in_progress:
+                        self.training_in_progress = True
+                        self.train_trigger()
+            self.new_cur += 1
+
+            if self.new_tot.data['value'][0] == self.new_cur:
+                self.new_cur = 0
+                self.notify(f'All data loaded')
+                self.loading_in_progress = False
+
+    def subtract_background(self):
+        """
+        Subtract background continuously, when:
+        - Data is available for bg subtraction
+        :return:
+        """
+        while self.main_thread.is_alive():
+            eps_series = self.data.data.eps
+            sb_indices = eps_series.index[np.nan_to_num(eps_series) != np.nan_to_num(self.data.eps)]
+            if not len(sb_indices):
+                sleep(1)
+                continue
+            if self.cur_example_idx in sb_indices:
+                idx = self.cur_example_idx
+            else:
+                idx = sb_indices[0]
+            self.data.subtract_background(idx)
+            if idx == self.cur_example_idx:
+                self.redraw_trigger()
+
+    def predict(self):
+        """
+        predict valid examples continuously, when:
+        - Model is loaded
+        - Not in training
+        - to-be predicted examples are present:
+            - Is not marked as junk (in self.data_clean)
+            - Has proper background subtraction applied to it (in self.data_clean)
+            - has not been predicted yet: is_predicted is False
+        """
+        while self.main_thread.is_alive():
+            if not self.model_loaded:
+                sleep(1)
+                continue
+            is_predicted_series = self.data.data_clean.is_predicted.copy()
+            if is_predicted_series.all():
+                sleep(1)
+                continue
+            if self.training_in_progress:
+                sleep(1)
+                continue
+            if self.cur_example_idx is None:
+                sleep(1)
+                continue
+            self.prediction_in_progress = True
+            if not self.cur_example_idx in is_predicted_series:
+                idx = self.cur_example_idx
+            else:
+                idx = is_predicted_series.loc[np.invert(is_predicted_series)].index[0]
+            pred_list, logprob = self.classifier.predict(idx)
+            self.data.data.at[idx, 'prediction'] = np.array(pred_list)
+            self.data.data.loc[idx, 'logprob'] = np.array(logprob)
+            self.data.data.loc[idx, 'is_predicted'] = True
+            if idx == self.cur_example_idx:
+                if not len(self.data.data.at[self.cur_example_idx, 'labels']):
+                    self.data.data.at[self.cur_example_idx, 'labels'] = np.array(pred_list)
+                self.redraw_trigger()
+            self.prediction_in_progress = False
+
+            # if self.cur_example_idx is None:
+            #     self.cur_example_idx = self.data.data_clean.index[0]
+            # self.prediction_in_progress = True
+            # if not self.data.data.is_predicted.loc[self.cur_example_idx]:
+            #     idx = self.cur_example_idx
+            # else:
+            #     # temp_array = self.data.data_clean.is_predicted.copy()
+            #     # np.random.choice(temp_array.loc[temp_array].index)
+            #     temp_array = self.data.data_clean.is_predicted.copy()
+            #     np.random.choice(temp_array.loc[temp_array].index)
+            #     idx = np.random.choice(self.data.data_clean.index[np.invert(self.data.data_clean.is_predicted)])
+            # pred_list, logprob = self.classifier.predict(idx)
+            # self.data.data.at[idx, 'prediction'] = np.array(pred_list)
+            # self.data.data.loc[idx, 'logprob'] = np.array(logprob)
+            # self.data.data.loc[idx, 'is_predicted'] = True
+            # if idx == self.cur_example_idx:
+            #     self.data.data.at[self.cur_example_idx, 'labels'] = np.array(pred_list)
+            #     self.redraw_trigger()
+            # self.prediction_in_progress = False
+
     def get_buffer_state_matrix(self):
         ns = self.num_states_slider.value
         bsm = np.zeros((ns, ns), dtype=int)
@@ -172,37 +399,36 @@ class Gui(object):
             if k in self.__dict__:
                 del self.__dict__[k]
 
-    def predict_safe(self):
-        """
-        If more than nb_threads samples exist, predict nb_threads randomly chosen ones to cut down on running time.
-        """
-        if len(self.data.data) > self.nb_threads:  # predict [nb_threads] traces as indicator of logprob
-            idx = self.data.data.index[self.data.data.is_labeled].to_numpy()
-            if len(idx) < self.nb_threads:
-                # todo: suddenly is_labeled is not bool anymore??
-                idx = np.union1d(idx, np.random.choice(self.data.data.index[np.invert(self.data.data.is_labeled.astype(bool))],
-                                                       self.nb_threads - len(idx), replace=True))
-        else:
-            idx = self.data.data.index
-        print(f'{print_timestamp()}starting predictions')
-        self.predict_all(idx=idx)
-
-    def predict_all(self, idx=None):
-        """
-        Rerun prediction for all of idx, remove other predictions.
-        """
-        if idx is None: idx = self.data.data.index
-        pred_list, logprob_list = self.classifier.predict(idx)
-        pred_series = pd.Series([[]]*len(self.data.data), index=self.data.data.index, dtype=object)
-        pred_series.loc[idx] = pred_list
-        self.data.data.logprob = np.nan
-        self.data.data.prediction = pred_series
-        self.data.data.loc[idx, 'logprob'] = logprob_list
 
     def train_and_update(self):
+        while self.prediction_in_progress:
+            sleep(0.1)
+        self.training_in_progress = True
         self.classifier.train(supervision_influence=self.supervision_slider.value)
-        self.predict_safe()
+        self.data.data.is_predicted = False
+        self.model_loaded = True
+        self.training_in_progress = False
+        if self.cur_example_idx is None:
+            self.example_select.value = self.data.data_clean.index[0]
+        elif self.new_example_bool:
+            self.new_example_bool = False
+            if all(self.data.data.is_labeled):
+                self.notify('All examples have already been manually classified')
+            else:
+                sidx = self.data.data.index.copy()
+                sm_check = self.data.data.loc[sidx, 'prediction'].apply(lambda x:
+                                                                        True if len(x) == 0 or any(
+                                                                            np.in1d(self.showme_checkboxes.active, x))
+                                                                        else False)
+                valid_bool = np.logical_and(sm_check, np.invert(self.data.data.loc[sidx, 'is_labeled']))
+                if not any(valid_bool):
+                    self.notify('No new traces with states of interest left')
+                    return
+                new_example_idx = np.random.choice(self.data.data.loc[sidx].loc[valid_bool].index)
+                self.example_select.value = new_example_idx
         self.classifier_source.data = dict(params=[self.classifier.get_params()])
+
+
 
     def load_params(self, attr, old, new):
         raw_contents = self.loaded_model_source.data['file_contents'][0]
@@ -212,55 +438,21 @@ class Gui(object):
         # file_contents = base64.b64decode(b64_contents).decode('utf-8').split('\n')[1:-1]
         self.classifier.load_params(file_contents)
         self.num_states_slider.value = self.classifier.nb_states
+        if np.isnan(self.data.eps):
+            self.bg_checkbox.active = []
+        else:
+            self.eps_spinner.value = self.data.eps
+            self.bg_checkbox.active = [0]
         self.model_loaded = True
-        self.notification.text = f'{print_timestamp()}Model loaded'
+        self.notify('Model loaded')
         if self.data.data.shape[0] != 0:
             self.data.data.is_labeled = False
             self.predict_safe()
             self._redraw_all()
 
-    def update_data(self, attr, old, new):
-        raw_contents = self.new_source.data['file_contents'][0]
-        _, b64_contents = raw_contents.split(",", 1)  # remove the prefix that JS adds
-        file_contents = base64.b64decode(b64_contents)
-        fn = self.new_source.data['file_name'][0]
-        nb_colors = 2
-        # Process .trace files
-        if '.traces' in fn:
-            df_list = parse_trace_file(file_contents, fn, self.nb_threads)
-            # self.doc.add_next_tick_callback(self.update_notification(f'{print_timestamp()}Adding to list'))
-            print(f'{print_timestamp()}Adding to list')
-            self.data.add_df_list(df_list)
-            print(f'{print_timestamp()}Done')
+    def buffer_data(self, attr, old, new):
+        self.new_data_buffer.append((self.new_source.data['file_contents'][0], self.new_source.data['file_name'][0]))
 
-        # Process .dat files
-        elif '.dat' in fn:
-            # self.doc.add_next_tick_callback(self.update_notification(f'{print_timestamp()}Adding to list'))
-            file_contents = base64.b64decode(b64_contents).decode('utf-8')
-            file_contents = np.column_stack([np.fromstring(n, sep=' ') for n in file_contents.split('\n') if len(n)])
-            if len(file_contents):
-                self.data.add_tuple(file_contents, self.new_source.data['file_name'][0])
-        self.new_cur += 1
-
-        # Reload/retrain model
-        if self.new_tot.data['value'][0] == self.new_cur:
-            self.new_cur = 0
-            if len(self.data.data):
-                self.example_select.options = self.data.data.index.tolist()
-                self.showme_checkboxes.active = list(range(self.classifier.nb_states))
-            if self.model_loaded:
-                self.notification.text = f'{print_timestamp()} Classifying loaded traces using current model...'
-                self.predict_safe()
-            else:
-                self.notification.text = f'{print_timestamp()} Training initial model, on loaded traces...'
-                self.train_and_update()
-                self.model_loaded = True
-            if self.cur_example_idx is None:
-                self.example_select.value = self.example_select.options[0]
-                # self.update_example(None, None, self.example_select.options[0])
-            else:
-                self._redraw_all()
-            self.notification.text = f'{print_timestamp()} Done'
 
     def get_edge_labels(self, labels):
         """
@@ -290,44 +482,41 @@ class Gui(object):
         """
         if old == new:
             return
+        self.cur_example_idx = new
+        if old == 'None':
+            new_list = self.example_select.options
+            new_list.remove('None')
+            self.example_select.options = new_list
         if not self.data.data.loc[new, 'is_labeled']:
-            if not len(self.data.data.loc[new, 'prediction']):
-                pred, logprob = self.classifier.predict([new])
-                self.data.data.at[new, 'prediction'] = pred[0]
-                self.data.data.loc[new, 'logprob'] = logprob[0]
+            if not self.data.data.loc[new, 'is_predicted']:
+                self.notify('Predicting current example...')
+            while not self.data.data.loc[new, 'is_predicted']:
+                sleep(0.5)
             self.data.set_value(new, 'labels', self.data.data.loc[new, 'prediction'].copy())
             self.data.set_value(new, 'edge_labels', self.get_edge_labels(self.data.data.loc[new, 'labels']))
             self.data.set_value(new, 'is_labeled', True)
         self.cur_example_idx = new
+        # todo risk of deadlock if junk is manually selected!
         if self.data.data.loc[new, 'is_junk']:
-            self.notification.text = f'{print_timestamp()} Warning: {new} was marked junk!'
+            self.notify(f'Warning: {new} was marked junk!')
         elif self.data.data.loc[new, 'predicted_junk']:
-            self.notification.text = f'{print_timestamp()} Warning: {new} is predicted junk!'
+            self.notify(f'Warning: {new} is predicted junk!')
         self._redraw_all()
 
     def update_example_retrain(self):
         """
         Assume current example is labeled correctly, retrain and display new random example
         """
-        self.train_and_update()
-        if all(self.data.data.is_labeled):
-            self.notification.text = f'{print_timestamp()}All examples have already been manually classified'
-        else:
-            sm_check = self.data.data.prediction.apply(lambda x:
-                                                       True if len(x) == 0
-                                                               or any(np.in1d(self.showme_checkboxes.active, x))
-                                                       else False)
-            valid_bool = np.logical_and(sm_check, np.invert(self.data.data.is_labeled.astype(bool)))
-            if not any(valid_bool):
-                self.notification.text = f'{print_timestamp()} No new traces with states of interest left'
-                return
-            new_example_idx = np.random.choice(self.data.data.loc[valid_bool, 'logprob'].index)
-            self.example_select.value = new_example_idx
+        self.new_example_bool = True
+        try:
+            self.train_trigger()
+        except:
+            self.notify('Training failed!')
 
     def _redraw_all(self):
         self.invalidate_cached_properties()
         nb_samples = self.i_don.size
-        all_ts = np.concatenate((self.i_don, self.i_acc))
+        all_ts = np.concatenate((self.i_don, self.i_acc))  # todo: i_acc shape != i_don shape???
         rect_mid = (all_ts.min() + all_ts.max()) / 2
         rect_height = np.abs(all_ts.min()) + np.abs(all_ts.max())
         self.source.data = dict(i_don=self.i_don, i_acc=self.i_acc, time=np.arange(nb_samples),
@@ -345,7 +534,12 @@ class Gui(object):
         self.update_stats_text()
 
     def generate_report(self):
-        self.predict_all()
+        if self.loading_in_progress:
+            self.notify('Please wait for data loading to finish before generating a report')
+            return
+        if not np.all(self.data.data.is_predicted):
+            self.notify('Please wait for prediction to finish before generating a report')
+            return
         self.html_source.data['html_text'] = [FretReport(self).construct_html_report()]
         self.report_holder.text += ' '
 
@@ -362,17 +556,11 @@ class Gui(object):
             self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
             self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
 
-    def subtract_background(self):
-        self.data.subtract_background(self.bg_eps.value)
-        self._redraw_all()
-
-    def subtract_test(self):
-        self.data.subtract_background(self.bg_eps.value, [self.cur_example_idx])
-        self._redraw_all()
-
-    def restore_background(self):
-        self.data.restore_background()
-        self._redraw_all()
+    def update_eps(self):
+        if not len(self.bg_checkbox.active):
+            self.data.eps = np.nan
+            return
+        self.data.eps = self.eps_spinner.value
 
     def update_accuracy_hist(self):
         acc_counts = np.histogram(self.data.accuracy[0], bins=np.linspace(5, 100, num=20))[0]
@@ -399,7 +587,7 @@ class Gui(object):
         if old == new: return
         self.classifier.feature_list = [feat for fi, feat in enumerate(self.feature_list) if fi in new]
         self.train_and_update()
-        self.predict_safe()
+        self.data.data.is_predicted = False
         self.data.data.loc[self.cur_example_idx, 'is_labeled'] = False
         self.update_example(None, None, self.cur_example_idx)
 
@@ -425,18 +613,17 @@ class Gui(object):
         if old == new:
             return
         self.classifier_class = importlib.import_module('FRETboard.algorithms.'+algo_dict[new]).Classifier
+        self.training_in_progress = True
         self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, data=self.data, gui=self,
                                                 features=self.feature_list)
         if len(self.data.data):
             self.train_and_update()
-            self.predict_safe()
             self.data.data.loc[self.cur_example_idx, 'is_labeled'] = False
             self.update_example(None, None, self.cur_example_idx)
 
     def update_num_states(self, attr, old, new):
         if new != self.classifier.nb_states:
-            self.data.data.loc[self.data.data.index, 'labels'] = [ [[]] * len(self.data.data)]
-            self.data.data.loc[self.data.data.index, 'edge_labels'] = [[[]] * len(self.data.data)]
+            self.training_in_progress = True
             self.data.data.is_labeled = False
             self.classifier = self.classifier_class(nb_states=new, data=self.data, gui=self, features=self.feature_list)
 
@@ -465,13 +652,6 @@ class Gui(object):
             self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
             self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
             self.data.set_value(self.cur_example_idx, 'is_labeled', True)
-
-            # # retraining classifier
-            # if self.data.data.shape[0] != 0:
-            #     self.invalidate_cachedhttps://github.com/akdel/locality-sensitive-hashing/blob/master/LSH/period_based.py_properties()
-            #     self.train_and_update()
-            #     self.update_state_curves()
-            #     self.update_example(None, '', self.cur_example_idx)
 
     def export_data(self):
         self.fretReport = FretReport(self)
@@ -516,11 +696,8 @@ class Gui(object):
                 new_example_idx = np.random.choice(valid_idx)
                 self.update_example = new_example_idx
         else:
-            self.notification.text = f'''\n{print_timestamp()}No valid (unclassified) traces to display for classes {', '.join([str(ts + 1) for ts in new])}'''
-
-    # @gen.coroutine
-    # def update_notification(self, text):
-    #     self.notification.text = text
+            classes_not_found = ', '.join([str(ts + 1) for ts in new])
+            self.notify(f'No valid (unclassified) traces to display for classes {classes_not_found}')
 
     def make_document(self, doc):
         # --- Define widgets ---
@@ -643,12 +820,14 @@ class Gui(object):
         # --- Define update behavior ---
         self.algo_select.on_change('value', self.update_algo)
         self.source.selected.on_change('indices', self.update_classification)  # for manual selection on trace
-        self.new_source.on_change('data', self.update_data)
+        self.new_source.on_change('data', self.buffer_data)
         self.loaded_model_source.on_change('data', self.load_params)
         self.example_select.on_change('value', self.update_example)
         example_button.on_click(self.update_example_retrain)
-        self.bg_button.on_click(self.subtract_background)
-        self.bg_test_button.on_click(self.subtract_test)
+        self.bg_checkbox.on_change('active', lambda attr, old, new: self.update_eps())
+        self.bg_button.on_click(self.update_eps)
+        # self.bg_button.on_click(self.subtract_background)
+        # self.bg_test_button.on_click(self.subtract_test)
         self.num_states_slider.on_change('value', self.update_num_states)
         self.state_radio.on_change('active', lambda attr, old, new: self.update_state_curves())
         self.features_checkboxes.on_change('active', self.update_feature_list)
@@ -670,8 +849,10 @@ class Gui(object):
                          self.algo_select,
                          row(widgetbox(load_model_button, width=150), widgetbox(load_button, width=150),
                              width=300),
-                         row(widgetbox(self.bg_button, width=150), widgetbox(self.bg_eps, width=75),
-                             widgetbox(self.bg_test_button, width=75), width=300),
+                         row(Div(text="DBSCAN background subtraction ", width=250, height=15),
+                             widgetbox(self.bg_checkbox, width=25), width=300),
+                         row(Div(text='epsilon: ', height=15, width=60), widgetbox(self.eps_spinner, width=75),
+                             widgetbox(self.bg_button, width=65), width=300),
                          Div(text="<font size=4>2. Teach</font>", width=280, height=15),
                          self.num_states_slider,
                          self.sel_state_slider,
@@ -693,11 +874,22 @@ class Gui(object):
                         self.report_holder, self.datzip_holder)
         layout = row(widgets, graphs)
         doc.add_root(layout)
+
+        # doc.add_periodic_callback(self.periodic_update, 1000)
         doc.title = f'FRETboard v. {self.version}'
         self.doc = doc
 
     def start_gui(self, port=0):
         apps = {'/': Application(FunctionHandler(self.make_document))}
+
+        # Start background threads for prediction and data loading
+        self.main_thread = threading.main_thread()
+        self.data_load_thread = Thread(target=self.update_data, name='data_loading')
+        self.predict_thread = Thread(target=self.predict, name='predict')
+        self.bg_subtraction_thread = Thread(target=self.subtract_background, name='subtract_background')
+        self.data_load_thread.start()
+        self.predict_thread.start()
+        self.bg_subtraction_thread.start()
         server = Server(apps, port=port, websocket_max_message_size=100000000)
         server.show('/')
         loop = IOLoop.current()

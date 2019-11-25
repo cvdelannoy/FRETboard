@@ -2,7 +2,7 @@ import os
 import fnmatch
 import warnings
 import numpy as np
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed, parallel_backend
 from FRETboard.MainTable import MainTable
 
 
@@ -41,7 +41,7 @@ def parallel_fn(f_array, fn_list, dt):
     return dt.data
 
 
-def parse_trace_file(file_contents, fn, threads):
+def parse_trace_file(file_contents, fn, threads, pool):
     """
     Take contents extracted from .trace binary file, return list of [threads] MainTable objects
     """
@@ -57,6 +57,6 @@ def parse_trace_file(file_contents, fn, threads):
     file_chunks = np.array_split(file_contents, threads, axis=1)
     fn_list = [f'{fn_clean}_{it}.dat' for it in range(file_contents.shape[1])]
     fn_chunks = np.array_split(fn_list, threads)
-    df_list = Parallel(n_jobs=threads)(delayed(parallel_fn)(fc, fnc, MainTable([]))
-                                       for fc, fnc in zip(file_chunks, fn_chunks))
+    df_list = pool(delayed(parallel_fn)(fc, fnc, MainTable([]))
+                   for fc, fnc in zip(file_chunks, fn_chunks))
     return df_list

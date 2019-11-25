@@ -54,6 +54,7 @@ class Classifier(object):
         self.state_names = None  # names assigned to states in same order as pomegranate model
         self.pg_gui_state_dict = dict()
         self.gui_state_dict = dict()
+        self.str2num_state_dict = dict()
 
     # --- training ---
     def train(self, supervision_influence=1.0):
@@ -84,15 +85,45 @@ class Classifier(object):
             if any(self.data.data_clean.is_labeled):
                 # Case 2: semi-supervised --> perform training with inertia on pre-determined labeled sequences
                 labels = list(self.data.data_clean.labels.to_numpy(copy=True))
-                labels = [list(lab) if len(lab) else [None] for lab in labels]
+                nsi = 1.0 - supervision_influence
+                weights = [supervision_influence if len(lab) else nsi for lab in labels]
+                labels = [self.add_boundary_labels(lab, hmm) if len(lab) else None for lab in labels]
                 hmm.fit(self.get_matrix(self.data.data_clean.loc[seq_idx, self.feature_list]),
-                        inertia=supervision_influence, labels=labels, n_jobs=self.nb_threads,
-                        use_pseudocounts=True)
+                        weights=weights, labels=labels, n_jobs=self.nb_threads,
+                        use_pseudocount=True)
             else:
                 # Case 3: unsupervised --> just train
                 hmm.fit(self.get_matrix(self.data.data_clean.loc[seq_idx, self.feature_list]),
-                        inertia=0.0, n_jobs=self.nb_threads)
+                        inertia=0.0, n_jobs=self.nb_threads, use_pseudocount=True)
         return hmm
+
+    def add_boundary_labels(self, labels, hmm):
+        """
+        Add transitional boundary layers when labels switch class
+        """
+        states = hmm.states
+        out_labels = [None] * len(labels)
+        overhang_left = self.buffer // 2
+        overhang_right = self.buffer - overhang_left
+        oh_counter = 0
+        prev_label = None
+        cur_label = labels[0]
+        for li, l in enumerate(labels):
+            if l == cur_label:
+                if oh_counter != 0:
+                    out_labels[li] = states[self.str2num_state_dict[f'e{prev_label}{cur_label}_{self.buffer - oh_counter}']]
+                    oh_counter -= 1
+                else:
+                    out_labels[li] = states[self.str2num_state_dict[f's{cur_label}']]
+            else:
+                prev_label = cur_label
+                cur_label = l
+                oh_counter = overhang_right
+                ol_safe = min(overhang_left, li-1)  # save against extending edge labels beyond range
+                ol_residual = overhang_left - ol_safe
+                out_labels[li-overhang_left+1:li+1] = [
+                    states[self.str2num_state_dict[f'e{prev_label}{cur_label}_{i + ol_residual}']] for i in range(ol_safe)]
+        return [hmm.start] + out_labels + [hmm.end]
 
     def get_untrained_hmm(self, seq_idx):
         """
@@ -106,6 +137,8 @@ class Classifier(object):
         states, edge_states, pg_gui_state_dict = self.get_states(seq_idx)
         tm_dict, pstart_dict, pend_dict = self.get_transitions(seq_idx)
         for k in tm_dict: tm_dict[k] = max(tm_dict[k], 0.000001)  # reset 0-prob transitions to essentially 0, avoids nans on edges
+        for k in pstart_dict: pstart_dict[k] = max(pstart_dict[k], 0.000001)
+        for k in pend_dict: pend_dict[k] = max(pend_dict[k], 0.000001)
 
         # Add states, self-transitions, transitions to start/end state
         for sidx, s_name in enumerate(states):
@@ -129,6 +162,7 @@ class Classifier(object):
         state_names = np.array([state.name for state in hmm.states])
         self.pg_gui_state_dict = pg_gui_state_dict
         self.gui_state_dict = {si: pg_gui_state_dict.get(s, None) for si, s in enumerate(state_names)}
+        self.str2num_state_dict = {str(si): ni for si, ni in zip(state_names, list(self.gui_state_dict))}
         return hmm
 
     def get_states(self, seq_idx):
@@ -136,7 +170,7 @@ class Classifier(object):
         Return dicts of pomgranate states with initialized normal multivariate distributions
         """
         left_buffer = self.buffer // 2
-        data = self.data.data_clean.loc[seq_idx, :]
+        data = self.data.data_clean.loc[seq_idx, :]  # todo: may throw error if background subtraction runs while training --> data_clean changes
         if not any(data.is_labeled):
             # Estimate emission distributions (same as pomegranate does usually)
             data_vec = np.concatenate([np.stack(list(tup), axis=-1) for tup in data.loc[:, self.feature_list].to_numpy()], 0)
@@ -227,25 +261,33 @@ class Classifier(object):
         """
         Predict labels for given indices.
 
-        :param idx: list of indices in self.data.data_clean for which to predict labels
+        :param idx: index [str] in self.data.data_clean for which to predict labels
         :returns:
         pred_list: list of numpy arrays of length len(idx) containing predicted labels
         logprob_list: list of floats of length len(idx) containing posterior log-probabilities
         """
-        tuple_list = np.array([np.stack(list(tup), axis=-1)
-                               for tup in self.data.data_clean.loc[idx, self.feature_list].to_numpy()])
+        # idx=[idx]
+        # tuple_list = np.array([np.stack(list(tup), axis=-1)
+        #                        for tup in self.data.data_clean.loc[idx, self.feature_list].to_numpy()])
+        #
+        # # fwd/bwd also logprobs parallel
+        # nb_threads = min(len(idx), self.nb_threads)
+        # batch_idx = np.array_split(np.arange(len(tuple_list)), nb_threads)
+        # parallel_list = Parallel(n_jobs=nb_threads)(delayed(parallel_predict)(tuple_list[bi], self.trained)
+        #                                             for bi in batch_idx)
+        # logprob_list, pred_list = list(map(list, zip(*parallel_list)))
+        # logprob_list = list(itertools.chain.from_iterable(logprob_list))
+        # pred_list = [np.vectorize(self.gui_state_dict.__getitem__)(pred[1:-1])
+        #              for pred in itertools.chain.from_iterable(pred_list)]
+        #
+        # return pred_list[0], logprob_list[0]
 
-        # fwd/bwd also logprobs parallel
-        nb_threads = min(len(idx), self.nb_threads)
-        batch_idx = np.array_split(np.arange(len(tuple_list)), nb_threads)
-        parallel_list = Parallel(n_jobs=nb_threads)(delayed(parallel_predict)(tuple_list[bi], self.trained)
-                                                   for bi in batch_idx)
-        logprob_list, pred_list = list(map(list, zip(*parallel_list)))
-        logprob_list = list(itertools.chain.from_iterable(logprob_list))
-        pred_list = [np.vectorize(self.gui_state_dict.__getitem__)(pred[1:-1])
-                     for pred in itertools.chain.from_iterable(pred_list)]
+        logprob, trace_state_list = self.trained.viterbi(np.stack(self.data.data_clean.loc[idx, self.feature_list].to_numpy(), axis=-1))
+        if logprob == -np.inf:
+            pass
+        state_list = np.vectorize(self.gui_state_dict.__getitem__)([ts[0] for ts in trace_state_list[1:-1]])
+        return state_list, logprob
 
-        return pred_list, logprob_list
 
     def get_matrix(self, df):
         """
@@ -305,10 +347,12 @@ class Classifier(object):
         return df
 
     # --- saving/loading models ---
+    # todo: add DBSCAN parameter
     def get_params(self):
         mod_txt = self.trained.to_yaml()
         gui_state_dict_txt = yaml.dump(self.gui_state_dict)
         pg_gui_state_dict_txt = yaml.dump(self.pg_gui_state_dict)
+        str2num_state_dict_txt = yaml.dump(self.str2num_state_dict)
         feature_txt = '\n'.join(self.feature_list)
         div = '\nSTART_NEW_SECTION\n'
         out_txt = ('EdgeAwareHmm'
@@ -316,7 +360,8 @@ class Classifier(object):
                    + div + feature_txt
                    + div + gui_state_dict_txt
                    + div + pg_gui_state_dict_txt
-                   + div + f'nb_states: {str(self.nb_states)}\nbuffer: {self.buffer}')
+                   + div + str2num_state_dict_txt
+                   + div + f'nb_states: {str(self.nb_states)}\nbuffer: {self.buffer}\ndbscan_epsilon: {self.data.eps}')
         return out_txt
 
     def load_params(self, file_contents):
@@ -325,6 +370,7 @@ class Classifier(object):
          feature_txt,
          gui_state_dict_txt,
          pg_gui_state_dict_txt,
+         str2num_state_dict_txt,
          misc_txt) = file_contents.split('\nSTART_NEW_SECTION\n')
         if mod_check != 'EdgeAwareHmm':
             error_msg = '\nERROR: loaded model parameters are not for a boundary-aware HMM!'
@@ -336,6 +382,9 @@ class Classifier(object):
         self.feature_list = feature_txt.split('\n')
         self.gui_state_dict = yaml.load(gui_state_dict_txt, Loader=yaml.FullLoader)
         self.pg_gui_state_dict = yaml.load(pg_gui_state_dict_txt, Loader=yaml.FullLoader)
+        self.str2num_state_dict = yaml.load(str2num_state_dict_txt, Loader=yaml.FullLoader)
         misc_dict = yaml.load(misc_txt, Loader=yaml.SafeLoader)
+        if misc_dict['dbscan_epsilon'] == 'nan': misc_dict['dbscan_epsilon'] = np.nan
         self.nb_states = misc_dict['nb_states']
         self.buffer = misc_dict['buffer']
+        self.data.eps = misc_dict['dbscan_epsilon']
