@@ -1,8 +1,12 @@
 import os
 import io
 import numpy as np
+
+import matplotlib
+matplotlib.use('Agg')
 import seaborn as sns
 import matplotlib.pyplot as plt
+
 
 from cached_property import cached_property
 import itertools
