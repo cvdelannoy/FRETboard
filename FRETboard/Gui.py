@@ -49,38 +49,38 @@ with open(f'{__location__}/js_widgets/download_report.js', 'r') as fh: download_
 with open(f'{__location__}/js_widgets/download_model.js', 'r') as fh: download_csv_js = fh.read()
 
 
-# def installThreadExcepthook():
-#     """
-#     Workaround for sys.excepthook thread bug
-#     From
-# http://spyced.blogspot.com/2007/06/workaround-for-sysexcepthook-bug.html
-#
-# (https://sourceforge.net/tracker/?func=detail&atid=105470&aid=1230540&group_id=5470).
-#     Call once from __main__ before creating any threads.
-#     If using psyco, call psyco.cannotcompile(threading.Thread.run)
-#     since this replaces a new-style class method.
-#     """
-#     init_old = threading.Thread.__init__
-#
-#     def init(self, *args, **kwargs):
-#         init_old(self, *args, **kwargs)
-#         run_old = self.run
-#
-#         def run_with_except_hook(*args, **kw):
-#             try:
-#                 run_old(*args, **kw)
-#             except (KeyboardInterrupt, SystemExit):
-#                 raise
-#             except:
-#                 sys.excepthook(*sys.exc_info())
-#
-#         self.run = run_with_except_hook
-#
-#     threading.Thread.__init__ = init
+def installThreadExcepthook():
+    """
+    Workaround for sys.excepthook thread bug
+    From
+http://spyced.blogspot.com/2007/06/workaround-for-sysexcepthook-bug.html
+
+(https://sourceforge.net/tracker/?func=detail&atid=105470&aid=1230540&group_id=5470).
+    Call once from __main__ before creating any threads.
+    If using psyco, call psyco.cannotcompile(threading.Thread.run)
+    since this replaces a new-style class method.
+    """
+    init_old = threading.Thread.__init__
+
+    def init(self, *args, **kwargs):
+        init_old(self, *args, **kwargs)
+        run_old = self.run
+
+        def run_with_except_hook(*args, **kw):
+            try:
+                run_old(*args, **kw)
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except:
+                sys.excepthook(*sys.exc_info())
+
+        self.run = run_with_except_hook
+
+    threading.Thread.__init__ = init
 
 class Gui(object):
     def __init__(self, nb_states=3, data=[]):
-        # installThreadExcepthook()
+        installThreadExcepthook()
         # sys.excepthook = self.error_logging
         self.version = '0.0.3'
         self.cur_example_idx = None
@@ -212,6 +212,15 @@ class Gui(object):
         self.notification_buffer = f'{print_timestamp()}{text}\n'
         self.doc.add_next_tick_callback(self.push_notification)
 
+    def notify_exception(self, e, section):
+        self.notify(f'''Exception of type {str(e.__class__)} encountered during {section}! 
+                    Please register an issue at github.com/cvdelannoy/FRETboard/issues, include the data on which it occurred if
+                    possible, and the error message below
+                    --- location error ---
+                    {str(e.__traceback__.tb_frame)}
+                    --- start error message ---
+                    {str(e)}''')
+
     def train_trigger(self):
         self.notify('Start training...')
         self.doc.add_next_tick_callback(self.train_and_update)
@@ -326,6 +335,15 @@ class Gui(object):
                 self.redraw_trigger()
 
     def predict(self):
+        while self.main_thread.is_alive():
+            try:
+                self.pred_fun()
+            except Exception as e:
+                self.prediction_in_progress = False
+                self.notify_exception(e, 'prediction')
+                return
+
+    def pred_fun(self):
         """
         predict valid examples continuously, when:
         - Model is loaded
@@ -335,54 +353,36 @@ class Gui(object):
             - Has proper background subtraction applied to it (in self.data_clean)
             - has not been predicted yet: is_predicted is False
         """
-        while self.main_thread.is_alive():
-            if not self.model_loaded:
-                sleep(1)
-                continue
-            is_predicted_series = self.data.data_clean.is_predicted.copy()
-            if is_predicted_series.all():
-                sleep(1)
-                continue
-            if self.training_in_progress:
-                sleep(1)
-                continue
-            if self.cur_example_idx is None:
-                sleep(1)
-                continue
-            self.prediction_in_progress = True
-            if not self.cur_example_idx in is_predicted_series:
-                idx = self.cur_example_idx
-            else:
-                idx = is_predicted_series.loc[np.invert(is_predicted_series)].index[0]
-            pred_list, logprob = self.classifier.predict(idx)
-            self.data.data.at[idx, 'prediction'] = np.array(pred_list)
-            self.data.data.loc[idx, 'logprob'] = np.array(logprob)
-            self.data.data.loc[idx, 'is_predicted'] = True
-            if idx == self.cur_example_idx:
-                if not len(self.data.data.at[self.cur_example_idx, 'labels']):
-                    self.data.data.at[self.cur_example_idx, 'labels'] = np.array(pred_list)
-                self.redraw_trigger()
+        if not self.model_loaded:
+            sleep(1)
+            return
+        if self.training_in_progress:
+            sleep(1)
+            return
+        if self.cur_example_idx is None:
+            sleep(1)
+            return
+        self.prediction_in_progress = True
+        is_predicted_series = self.data.data_clean.is_predicted.copy()
+        not_predicted_indices = is_predicted_series.index[np.invert(is_predicted_series)]
+        if not len(not_predicted_indices):
             self.prediction_in_progress = False
+            sleep(1)
+            return
+        if self.cur_example_idx in not_predicted_indices:
+            idx = self.cur_example_idx
+        else:
+            idx = not_predicted_indices[0]
+        pred_list, logprob = self.classifier.predict(idx)
+        self.data.data.at[idx, 'prediction'] = np.array(pred_list)
+        self.data.data.loc[idx, 'logprob'] = np.array(logprob)
+        self.data.data.loc[idx, 'is_predicted'] = True
+        if idx == self.cur_example_idx:
+            if not len(self.data.data.at[self.cur_example_idx, 'labels']):
+                self.data.data.at[self.cur_example_idx, 'labels'] = np.array(pred_list)
+            self.redraw_trigger()
+        self.prediction_in_progress = False
 
-            # if self.cur_example_idx is None:
-            #     self.cur_example_idx = self.data.data_clean.index[0]
-            # self.prediction_in_progress = True
-            # if not self.data.data.is_predicted.loc[self.cur_example_idx]:
-            #     idx = self.cur_example_idx
-            # else:
-            #     # temp_array = self.data.data_clean.is_predicted.copy()
-            #     # np.random.choice(temp_array.loc[temp_array].index)
-            #     temp_array = self.data.data_clean.is_predicted.copy()
-            #     np.random.choice(temp_array.loc[temp_array].index)
-            #     idx = np.random.choice(self.data.data_clean.index[np.invert(self.data.data_clean.is_predicted)])
-            # pred_list, logprob = self.classifier.predict(idx)
-            # self.data.data.at[idx, 'prediction'] = np.array(pred_list)
-            # self.data.data.loc[idx, 'logprob'] = np.array(logprob)
-            # self.data.data.loc[idx, 'is_predicted'] = True
-            # if idx == self.cur_example_idx:
-            #     self.data.data.at[self.cur_example_idx, 'labels'] = np.array(pred_list)
-            #     self.redraw_trigger()
-            # self.prediction_in_progress = False
 
     def get_buffer_state_matrix(self):
         ns = self.num_states_slider.value
@@ -401,32 +401,36 @@ class Gui(object):
 
 
     def train_and_update(self):
-        while self.prediction_in_progress:
-            sleep(0.1)
-        self.training_in_progress = True
-        self.classifier.train(supervision_influence=self.supervision_slider.value)
-        self.data.data.is_predicted = False
-        self.model_loaded = True
-        self.training_in_progress = False
-        if self.cur_example_idx is None:
-            self.example_select.value = self.data.data_clean.index[0]
-        elif self.new_example_bool:
-            self.new_example_bool = False
-            if all(self.data.data.is_labeled):
-                self.notify('All examples have already been manually classified')
-            else:
-                sidx = self.data.data.index.copy()
-                sm_check = self.data.data.loc[sidx, 'prediction'].apply(lambda x:
-                                                                        True if len(x) == 0 or any(
-                                                                            np.in1d(self.showme_checkboxes.active, x))
-                                                                        else False)
-                valid_bool = np.logical_and(sm_check, np.invert(self.data.data.loc[sidx, 'is_labeled']))
-                if not any(valid_bool):
-                    self.notify('No new traces with states of interest left')
-                    return
-                new_example_idx = np.random.choice(self.data.data.loc[sidx].loc[valid_bool].index)
-                self.example_select.value = new_example_idx
-        self.classifier_source.data = dict(params=[self.classifier.get_params()])
+        try:
+            while self.prediction_in_progress:
+                sleep(0.1)
+            self.training_in_progress = True
+            self.classifier.train(supervision_influence=self.supervision_slider.value)
+            self.data.data.is_predicted = False
+            self.model_loaded = True
+            self.training_in_progress = False
+            if self.cur_example_idx is None:
+                self.example_select.value = self.data.data_clean.index[0]
+            elif self.new_example_bool:
+                self.new_example_bool = False
+                if all(self.data.data.is_labeled):
+                    self.notify('All examples have already been manually classified')
+                else:
+                    sidx = self.data.data.index.copy()
+                    sm_check = self.data.data.loc[sidx, 'prediction'].apply(lambda x:
+                                                                            True if len(x) == 0 or any(
+                                                                                np.in1d(self.showme_checkboxes.active, x))
+                                                                            else False)
+                    valid_bool = np.logical_and(sm_check, np.invert(self.data.data.loc[sidx, 'is_labeled']))
+                    if not any(valid_bool):
+                        self.notify('No new traces with states of interest left')
+                        return
+                    new_example_idx = np.random.choice(self.data.data.loc[sidx].loc[valid_bool].index)
+                    self.example_select.value = new_example_idx
+            self.classifier_source.data = dict(params=[self.classifier.get_params()])
+            self.notify('Finished training')
+        except Exception as e:
+            self.notify_exception(e, 'training')
 
 
 
@@ -497,7 +501,7 @@ class Gui(object):
             self.data.set_value(new, 'is_labeled', True)
         self.cur_example_idx = new
         # todo risk of deadlock if junk is manually selected!
-        if self.data.data.loc[new, 'is_junk']:
+        if self.data.data.loc[new, 'marked_junk']:
             self.notify(f'Warning: {new} was marked junk!')
         elif self.data.data.loc[new, 'predicted_junk']:
             self.notify(f'Warning: {new} is predicted junk!')
@@ -508,10 +512,7 @@ class Gui(object):
         Assume current example is labeled correctly, retrain and display new random example
         """
         self.new_example_bool = True
-        try:
-            self.train_trigger()
-        except:
-            self.notify('Training failed!')
+        self.train_trigger()
 
     def _redraw_all(self):
         self.invalidate_cached_properties()
@@ -540,6 +541,13 @@ class Gui(object):
         if not np.all(self.data.data.is_predicted):
             self.notify('Please wait for prediction to finish before generating a report')
             return
+        self.notify('Generating report, this may take a while...')
+        try:
+            self.doc.add_next_tick_callback(self.generate_report_fun)
+        except Exception as e:
+            self.notify_exception(e, 'report generation')
+
+    def generate_report_fun(self):
         self.html_source.data['html_text'] = [FretReport(self).construct_html_report()]
         self.report_holder.text += ' '
 
@@ -558,8 +566,12 @@ class Gui(object):
 
     def update_eps(self):
         if not len(self.bg_checkbox.active):
+            while self.prediction_in_progress:
+                sleep(0.001)
             self.data.eps = np.nan
             return
+        while self.prediction_in_progress:
+            sleep(0.001)
         self.data.eps = self.eps_spinner.value
 
     def update_accuracy_hist(self):
@@ -586,10 +598,11 @@ class Gui(object):
         if len(new) == 0: return
         if old == new: return
         self.classifier.feature_list = [feat for fi, feat in enumerate(self.feature_list) if fi in new]
-        self.train_and_update()
-        self.data.data.is_predicted = False
-        self.data.data.loc[self.cur_example_idx, 'is_labeled'] = False
-        self.update_example(None, None, self.cur_example_idx)
+        if len(self.data.data):
+            self.train_trigger()
+            self.data.data.is_predicted = False
+            self.data.data.loc[self.cur_example_idx, 'is_labeled'] = False
+            self.update_example(None, None, self.cur_example_idx)
 
     def update_state_curves(self):
         feature = self.feature_list[self.state_radio.active]
@@ -617,9 +630,11 @@ class Gui(object):
         self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, data=self.data, gui=self,
                                                 features=self.feature_list)
         if len(self.data.data):
-            self.train_and_update()
+            self.train_trigger()
             self.data.data.loc[self.cur_example_idx, 'is_labeled'] = False
             self.update_example(None, None, self.cur_example_idx)
+        else:
+            self.training_in_progress = False
 
     def update_num_states(self, attr, old, new):
         if new != self.classifier.nb_states:
@@ -657,8 +672,10 @@ class Gui(object):
         self.fretReport = FretReport(self)
 
     def generate_dats(self):
+        if (len(self.data.data) - self.data.is_junk.sum() != len(self.data.data_clean)):
+            self.notify('Please wait for prediction to finish before downloading labeled data...')
+            return
         tfh = tempfile.TemporaryDirectory()
-        self.predict_all()
         for fn, tup in self.data.data.iterrows():
             sm_test = tup.labels if len(tup.labels) else tup.prediction
             sm_bool = [True for sm in self.saveme_checkboxes.active if sm in sm_test]
@@ -677,7 +694,7 @@ class Gui(object):
 
     def del_trace(self):
         self.data.del_tuple(self.cur_example_idx)
-        nonjunk_bool = np.logical_and(self.data.data.is_labeled, np.invert(self.data.data.is_junk))
+        # nonjunk_bool = np.logical_and(self.data.data.is_labeled, np.invert(self.data.data.is_junk))
         # if any(nonjunk_bool):  # Cant predict without positive examples
         #     df = self.data.data.loc[self.data.data.is_labeled]
         #     x = np.stack(df.E_FRET.to_numpy())
@@ -886,7 +903,7 @@ class Gui(object):
         self.main_thread = threading.main_thread()
         self.data_load_thread = Thread(target=self.update_data, name='data_loading')
         self.predict_thread = Thread(target=self.predict, name='predict')
-        self.bg_subtraction_thread = Thread(target=self.subtract_background, name='subtract_background')
+        self.bg_subtraction_thread = Thread(target=self.subtract_background, name='Redo subtraction')
         self.data_load_thread.start()
         self.predict_thread.start()
         self.bg_subtraction_thread.start()

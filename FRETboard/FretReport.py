@@ -39,7 +39,7 @@ class FretReport(object):
     def event_df(self):
         seq_mat = self.condensed_seq_df.values
         seq_mat = np.array(list(itertools.chain.from_iterable(seq_mat)))
-        event_df = pd.DataFrame({'state': seq_mat[:, 0].astype(int), 'E_FRET': seq_mat[:, 2],
+        event_df = pd.DataFrame({'state': seq_mat[:, 0] / seq_mat[:,0].max(), 'E_FRET': seq_mat[:, 2],
                                  'duration': seq_mat[:, 1].astype(int)})
         return event_df
 
@@ -78,7 +78,8 @@ class FretReport(object):
 
     def construct_html_report(self):
         ed_scatter = self.draw_Efret_duration_plot()
-        tdp_hex = self.draw_transition_density_plot()
+        tdp = self.draw_transition_density_plot()
+        efret_hist = self.draw_efret_histograms()
         tm_table, em_table = self.get_param_tables()
         # kinetic_table = self.get_stats_tables()
         with open(f'{__location__}/templates/report_template.html', 'r') as fh:
@@ -87,7 +88,8 @@ class FretReport(object):
         # thh, thd = components(tdp_hex)
         return template.render(ed_scatter_script=esh, ed_scatter_div=esd,
                                # tdp_hex_script=thh,
-                               tdp_hex_div=tdp_hex,
+                               transition_density_plot=tdp,
+                               efret_hist=efret_hist,
                                tm_table_div=tm_table,
                                em_table_div=em_table,
                                date=print_timestamp(),
@@ -160,6 +162,24 @@ class FretReport(object):
             tst.append(mean_times * self.out_labels.apply(lambda x: np.sum(x == state)))
             time_dict[state] = np.sum(mean_times * self.out_labels.apply(lambda x: np.sum(x == state)))
 
+    def draw_efret_histograms(self):
+        fig = plt.figure()
+        ax = fig.gca()
+        efret_vec = np.concatenate(self.data.data_clean.E_FRET)
+        label_vec = np.concatenate(self.out_labels)
+        unique_labels = np.unique(label_vec)
+        colors = sns.color_palette('Blues', len(unique_labels))
+        for li, lab in enumerate(unique_labels):
+            sns.distplot(efret_vec[label_vec == lab], kde=False, bins=100, color=colors[li])
+
+        ax.set_xlabel('$E_{FRET}$')
+        ax.set_ylabel('count')
+
+        f = io.StringIO()
+        plt.savefig(f, format='svg')
+        return f.getvalue()
+
+
     def get_param_tables(self):
         # Transitions table
         nb_states = self.classifier.nb_states
@@ -167,7 +187,6 @@ class FretReport(object):
         state_list_bold = [f'<b>{s}</b>' for s in state_list]
         ci_vecs = self.classifier.confidence_intervals
         tm_trained = self.classifier.get_tm(self.classifier.trained).to_numpy()
-
 
         tm1 = np.char.array(tm_trained.round(3).astype(str))
         tm_newline = np.tile(np.char.array('<br/>'), (nb_states, nb_states))
