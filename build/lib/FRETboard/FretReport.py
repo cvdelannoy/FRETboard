@@ -1,8 +1,12 @@
 import os
 import io
 import numpy as np
+
+import matplotlib
+matplotlib.use('Agg')
 import seaborn as sns
 import matplotlib.pyplot as plt
+
 
 from cached_property import cached_property
 import itertools
@@ -122,9 +126,11 @@ class FretReport(object):
         return ed_scatter
 
     def draw_transition_density_plot(self):
-        ax = sns.kdeplot(self.transition_df.E_FRET_before, self.transition_df.E_FRET_after, shade=True, cmap="coolwarm")
-        plt.xlim(0, 1)
-        plt.ylim(0, 1)
+        fig = plt.figure()
+        ax = sns.kdeplot(self.transition_df.E_FRET_before, self.transition_df.E_FRET_after, shade=True, cmap="coolwarm", ax=fig.gca())
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        # plt.ylim(0, 1)
 
         mu_list = self.classifier.get_states_mu('E_FRET')
         sd_list = self.classifier.get_states_sd('E_FRET')
@@ -170,7 +176,9 @@ class FretReport(object):
         unique_labels = np.unique(label_vec)
         colors = sns.color_palette('Blues', len(unique_labels))
         for li, lab in enumerate(unique_labels):
-            sns.distplot(efret_vec[label_vec == lab], kde=False, bins=100, color=colors[li])
+            cur_vec = efret_vec[label_vec == lab]
+            cur_vec = cur_vec[~np.isnan(cur_vec)]
+            ax = sns.distplot(cur_vec, kde=False, bins=100, color=colors[li], ax=ax)
 
         ax.set_xlabel('$E_{FRET}$')
         ax.set_ylabel('count')
