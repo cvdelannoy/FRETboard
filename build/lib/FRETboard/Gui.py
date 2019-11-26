@@ -896,9 +896,10 @@ class Gui(object):
         doc.title = f'FRETboard v. {self.version}'
         self.doc = doc
 
-    def create_gui(self, port=0):
-        apps = {'/': Application(FunctionHandler(self.make_document))}
+    def create_gui(self):
+        self.make_document(curdoc())
 
+    def start_threads(self):
         # Start background threads for prediction and data loading
         self.main_thread = threading.main_thread()
         self.data_load_thread = Thread(target=self.update_data, name='data_loading')
@@ -907,12 +908,10 @@ class Gui(object):
         self.data_load_thread.start()
         self.predict_thread.start()
         self.bg_subtraction_thread.start()
+
+    def start_ioloop(self, port=0):
+        apps = {'/': Application(FunctionHandler(self.make_document))}
         server = Server(apps, port=port, websocket_max_message_size=100000000)
         server.show('/')
         self.loop = IOLoop.current()
-        # if not IOLoop.current()._thread_identity == threading.get_ident():
-        #     loop = IOLoop.current()
-        #     loop.start()
-
-    def start_ioloop(self):
         self.loop.start()
