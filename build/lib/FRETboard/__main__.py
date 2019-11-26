@@ -13,7 +13,8 @@ def main(args=None):
                         help='Port where bokeh will listen.')
     args = parser.parse_args(args)
     gui_obj = Gui(args.nb_states, [])
-    gui_obj.start_gui(port=args.port)
+    gui_obj.create_gui(port=args.port)
+    gui_obj.start_ioloop()
 
 if __name__ == '__main__':
     main()
