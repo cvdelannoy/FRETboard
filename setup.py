@@ -6,7 +6,7 @@ def readme():
 
 setup(
     name='FRET-board',
-    version='0.0.3',
+    version='0.0.4',
     packages=['FRETboard'],
     install_requires=['numpy==1.17.3',
                       'pandas==0.25.3',
