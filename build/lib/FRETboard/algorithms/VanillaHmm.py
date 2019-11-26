@@ -16,18 +16,6 @@ def parallel_predict(tup_list, mod):
         state_list.append([ts[0] for ts in tsl])
     return logprob_list, state_list
 
-
-def get_dist(data_vec):
-    dist_list = []
-    for vec in data_vec:
-        vec = vec[~np.isnan(vec)]
-        if len(vec):
-            dist_list.append(pg.NormalDistribution(np.nanmean(vec), max(np.std(vec), 1E-6)))
-        else:
-            dist_list.append(pg.NormalDistribution(0, 999999))
-    return pg.IndependentComponentsDistribution(dist_list)
-
-
 class Classifier(object):
     """ HMM classifier that automatically adds 'edge states' to better recognize valid transitions between states.
     """
@@ -49,6 +37,7 @@ class Classifier(object):
         self.state_names = None  # names assigned to states in same order as pomegranate model
         self.pg_gui_state_dict = dict()
         self.gui_state_dict = dict()
+        self.str2num_state_dict = dict()
 
     # --- training ---
     def train(self, supervision_influence=1.0):
@@ -78,14 +67,16 @@ class Classifier(object):
             if any(self.data.data_clean.is_labeled):
                 # Case 2: semi-supervised --> perform training with inertia on pre-determined labeled sequences
                 labels = list(self.data.data_clean.labels.to_numpy(copy=True))
-                labels = [list(lab) if len(lab) else [None] for lab in labels]
+                nsi = 1.0 - supervision_influence
+                weights = [supervision_influence if len(lab) else nsi for lab in labels]
+                labels = [list(lab) if len(lab) else None for lab in labels]
                 hmm.fit(self.get_matrix(self.data.data_clean.loc[seq_idx, self.feature_list]),
-                        inertia=supervision_influence, labels=labels, n_jobs=self.nb_threads,
-                        use_pseudocounts=True)
+                        weights=weights, labels=labels, n_jobs=self.nb_threads,
+                        use_pseudocount=True)
             else:
                 # Case 3: unsupervised --> just train
                 hmm.fit(self.get_matrix(self.data.data_clean.loc[seq_idx, self.feature_list]),
-                        inertia=0.0, n_jobs=self.nb_threads)
+                        inertia=0.0, n_jobs=self.nb_threads, use_pseudocount=True)
         return hmm
 
     def get_untrained_hmm(self, seq_idx):
@@ -98,6 +89,10 @@ class Classifier(object):
         # Get emission distributions & transition probs
         dists, pg_gui_state_dict = self.get_states(seq_idx)
         trans_df, pstart_dict, pend_dict = self.get_transitions(seq_idx)
+        trans_df.replace(0, 0.000001, inplace=True)
+        # for k in tm_dict: tm_dict[k] = max(tm_dict[k], 0.000001)  # reset 0-prob transitions to essentially 0, avoids nans on edges
+        for k in pstart_dict: pstart_dict[k] = max(pstart_dict[k], 0.000001)
+        for k in pend_dict: pend_dict[k] = max(pend_dict[k], 0.000001)
 
         state_names = list(dists)
         tm_mat = trans_df.loc[state_names, state_names].to_numpy()
@@ -108,6 +103,7 @@ class Classifier(object):
                                                state_names=state_names)
         self.pg_gui_state_dict = pg_gui_state_dict
         self.gui_state_dict = {si: pg_gui_state_dict.get(s, None) for si, s in enumerate(state_names)}
+        self.str2num_state_dict = {str(si): ni for si, ni in zip(state_names, list(self.gui_state_dict))}
         return hmm
 
     def get_states(self, seq_idx):
@@ -135,9 +131,20 @@ class Classifier(object):
         dists = dict()
         for i in range(self.nb_states):
             sn = f's{i}'
-            dists[sn] = get_dist(data_vec[y == i, :])
+            dists[sn] = self.get_dist(data_vec[y == i, :].T)
             pg_gui_state_dict[sn] = i
         return dists, pg_gui_state_dict
+
+    @staticmethod
+    def get_dist(data_vec):
+        dist_list = []
+        for vec in data_vec:
+            vec = vec[~np.isnan(vec)]
+            if len(vec):
+                dist_list.append(pg.NormalDistribution(np.nanmean(vec), max(np.std(vec), 1E-6)))
+            else:
+                dist_list.append(pg.NormalDistribution(0, 999999))
+        return pg.IndependentComponentsDistribution(dist_list)
 
     def get_transitions(self, seq_idx):
         data = self.data.data_clean.loc[seq_idx, :]
@@ -195,20 +202,25 @@ class Classifier(object):
         pred_list: list of numpy arrays of length len(idx) containing predicted labels
         logprob_list: list of floats of length len(idx) containing posterior log-probabilities
         """
-        tuple_list = np.array([np.stack(list(tup), axis=-1)
-                               for tup in self.data.data_clean.loc[idx, self.feature_list].to_numpy()])
+        logprob, trace_state_list = self.trained.viterbi(
+            np.stack(self.data.data_clean.loc[idx, self.feature_list].to_numpy(), axis=-1))
+        state_list = np.vectorize(self.gui_state_dict.__getitem__)([ts[0] for ts in trace_state_list[1:-1]])
+        return state_list, logprob
 
-        # fwd/bwd also logprobs parallel
-        nb_threads = min(len(idx), self.nb_threads)
-        batch_idx = np.array_split(np.arange(len(tuple_list)), nb_threads)
-        parallel_list = Parallel(n_jobs=nb_threads)(delayed(parallel_predict)(tuple_list[bi], self.trained)
-                                                   for bi in batch_idx)
-        logprob_list, pred_list = list(map(list, zip(*parallel_list)))
-        logprob_list = list(itertools.chain.from_iterable(logprob_list))
-        pred_list = [np.vectorize(self.gui_state_dict.__getitem__)(pred[1:-1])
-                     for pred in itertools.chain.from_iterable(pred_list)]
-
-        return pred_list, logprob_list
+        # tuple_list = np.array([np.stack(list(tup), axis=-1)
+        #                        for tup in self.data.data_clean.loc[idx, self.feature_list].to_numpy()])
+        #
+        # # fwd/bwd also logprobs parallel
+        # nb_threads = min(len(idx), self.nb_threads)
+        # batch_idx = np.array_split(np.arange(len(tuple_list)), nb_threads)
+        # parallel_list = Parallel(n_jobs=nb_threads)(delayed(parallel_predict)(tuple_list[bi], self.trained)
+        #                                            for bi in batch_idx)
+        # logprob_list, pred_list = list(map(list, zip(*parallel_list)))
+        # logprob_list = list(itertools.chain.from_iterable(logprob_list))
+        # pred_list = [np.vectorize(self.gui_state_dict.__getitem__)(pred[1:-1])
+        #              for pred in itertools.chain.from_iterable(pred_list)]
+        #
+        # return pred_list, logprob_list
 
     def get_matrix(self, df):
         """
@@ -255,16 +267,13 @@ class Classifier(object):
         state_idx_dict = {st.name: idx for idx, st in enumerate(hmm.states)}
         dense_tm = hmm.dense_transition_matrix()
         for s0, s1 in [(i1, i2) for i1 in range(self.nb_states) for i2 in range(self.nb_states)]:
-            if s0 == s1:
-                si0 = state_idx_dict[f's{s0}']; si1 = state_idx_dict[f's{s1}']
-            else:
-                si0 = state_idx_dict[f's{s0}']; si1 = state_idx_dict[f'e{s0}{s1}_0']
+            si0 = state_idx_dict[f's{s0}']; si1 = state_idx_dict[f's{s1}']
             df.loc[s0, s1] = dense_tm[si0, si1]
-        # todo: switching to transition rates i.o. probs here, for kinSoft challenge
-        mean_durations = self.data.data_clean.time.apply(lambda x: (x[-1] - x[0]) / len(x))
-        duration_frame = np.mean(mean_durations)
-        df[np.eye(self.nb_states, dtype=bool)] -= 1
-        df /= duration_frame
+        # # todo: switching to transition rates i.o. probs here, for kinSoft challenge
+        # mean_durations = self.data.data_clean.time.apply(lambda x: (x[-1] - x[0]) / len(x))
+        # duration_frame = np.mean(mean_durations)
+        # df[np.eye(self.nb_states, dtype=bool)] -= 1
+        # df /= duration_frame
         return df
 
     # --- saving/loading models ---
@@ -272,6 +281,7 @@ class Classifier(object):
         mod_txt = self.trained.to_yaml()
         gui_state_dict_txt = yaml.dump(self.gui_state_dict)
         pg_gui_state_dict_txt = yaml.dump(self.pg_gui_state_dict)
+        str2num_state_dict_txt = yaml.dump(self.str2num_state_dict)
         feature_txt = '\n'.join(self.feature_list)
         div = '\nSTART_NEW_SECTION\n'
         out_txt = ('VanillaHmm'
@@ -279,7 +289,8 @@ class Classifier(object):
                    + div + feature_txt
                    + div + gui_state_dict_txt
                    + div + pg_gui_state_dict_txt
-                   + div + f'nb_states: {str(self.nb_states)}')
+                   + div + str2num_state_dict_txt
+                   + div + f'nb_states: {str(self.nb_states)}\ndbscan_epsilon: {self.data.eps}')
         return out_txt
 
     def load_params(self, file_contents):
@@ -288,16 +299,21 @@ class Classifier(object):
          feature_txt,
          gui_state_dict_txt,
          pg_gui_state_dict_txt,
+         str2num_state_dict_txt,
          misc_txt) = file_contents.split('\nSTART_NEW_SECTION\n')
         if mod_check != 'VanillaHmm':
             error_msg = '\nERROR: loaded model parameters are not for a Vanilla HMM!'
             if self.gui:
-                self.gui.text = error_msg
+                self.gui.notify(error_msg)
+                return
             else:
                 raise ValueError(error_msg)
         self.trained = pg.HiddenMarkovModel().from_yaml(model_txt)
         self.feature_list = feature_txt.split('\n')
         self.gui_state_dict = yaml.load(gui_state_dict_txt, Loader=yaml.FullLoader)
         self.pg_gui_state_dict = yaml.load(pg_gui_state_dict_txt, Loader=yaml.FullLoader)
+        self.str2num_state_dict = yaml.load(str2num_state_dict_txt, Loader=yaml.FullLoader)
         misc_dict = yaml.load(misc_txt, Loader=yaml.SafeLoader)
+        if misc_dict['dbscan_epsilon'] == 'nan': misc_dict['dbscan_epsilon'] = np.nan
         self.nb_states = misc_dict['nb_states']
+        self.data.eps = misc_dict['dbscan_epsilon']

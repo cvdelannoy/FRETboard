@@ -7,23 +7,6 @@ from joblib import Parallel, delayed
 from FRETboard.helper_functions import subtract_background_fun, get_derived_features, bg_filter_trace, parallel_subtract
 
 
-# def get_derived_features(i_don, i_acc):
-#     window = 9
-#     ss = (window - 1) // 2  # sequence shortening
-#     i_sum = np.sum((i_don, i_acc), axis=0)
-#     with warnings.catch_warnings():
-#         warnings.simplefilter("ignore")
-#         E_FRET = np.divide(i_acc, np.sum((i_don, i_acc), axis=0))
-#     E_FRET[i_sum == 0] = np.nan  # set to nan where i_don and i_acc after background correction cancel out
-#
-#     correlation_coefficient = np.full_like(E_FRET, np.nan)
-#     correlation_coefficient[ss:-ss] = rolling_corr_coef(i_don, i_acc, window)
-#     E_FRET_sd = np.full_like(E_FRET, np.nan)
-#     E_FRET_sd[ss:-ss] = rolling_var(E_FRET, window)
-#     i_sum_sd = np.full_like(E_FRET, np.nan)
-#     i_sum_sd[ss:-ss] = rolling_var(i_sum, window)
-#     return E_FRET, E_FRET_sd, i_sum, i_sum_sd, correlation_coefficient
-
 class MainTable(object):
 
     def __init__(self, data, eps):
@@ -45,6 +28,10 @@ class MainTable(object):
         # return self._data.loc[np.invert(self._data.predicted_junk).astype(bool), :]
         return self._data.loc[np.logical_and(np.invert(self._data.predicted_junk).astype(bool),
                                              np.nan_to_num(self._data.eps) == np.nan_to_num(self.eps)), :]
+
+    @property
+    def is_junk(self):
+        return np.logical_or(self._data.marked_junk, self._data.predicted_junk)
 
     @data.setter
     def data(self, dat_files):
@@ -68,7 +55,7 @@ class MainTable(object):
         df_out['logprob'] = pd.Series([np.nan] * nb_files, dtype=float)
         df_out['is_labeled'] = pd.Series([False] * nb_files, dtype=bool)
         df_out['is_predicted'] = pd.Series([False] * nb_files, dtype=bool)
-        df_out['is_junk'] = pd.Series([False] * nb_files, dtype=bool)
+        df_out['marked_junk'] = pd.Series([False] * nb_files, dtype=bool)
         df_out['predicted_junk'] = pd.Series([False] * nb_files, dtype=bool)
         self._data = df_out
         for dat_file in dat_files:
@@ -110,7 +97,7 @@ class MainTable(object):
                               self.eps,                      # DBSCAN filter epsilon value [int]
                               np.nan,                   # logprob of prediction [float]
                               False, False,             # is_labeled [bool], is_predicted [bool]
-                              False, False)             # is_junk [bool], predicted_junk [bool]
+                              False, False)             # marked_junk [bool], predicted_junk [bool]
 
     def add_df_list(self, df_list):
         """
@@ -123,7 +110,7 @@ class MainTable(object):
 
 
     def del_tuple(self, idx):
-        self._data.loc[idx, 'is_junk'] = True
+        self._data.loc[idx, 'marked_junk'] = True
         # self._data.drop(idx, inplace=True)
 
     def set_value(self, example_idx, column, value, idx=None):

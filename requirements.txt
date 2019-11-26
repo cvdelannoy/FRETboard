@@ -2,6 +2,10 @@ numpy
 pandas
 pomegranate
 bokeh==1.4.0
+tornado
+scikit-learn
+seaborn
+matplotlib
 cached-property
 tabulate
 joblib

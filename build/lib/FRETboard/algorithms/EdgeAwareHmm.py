@@ -6,7 +6,7 @@ from random import choices
 import itertools
 from itertools import permutations
 import yaml
-from joblib import Parallel, delayed
+# from joblib import Parallel, delayed
 
 
 def parallel_predict(tup_list, mod):
@@ -16,18 +16,6 @@ def parallel_predict(tup_list, mod):
     for tsl in trace_state_list:
         state_list.append([ts[0] for ts in tsl])
     return logprob_list, state_list
-
-
-def get_dist(data_vec):
-    dist_list = []
-    for vec in data_vec:
-        vec = vec[~np.isnan(vec)]
-        if len(vec):
-            dist_list.append(pg.NormalDistribution(np.nanmean(vec), max(np.std(vec), 1E-6)))
-        else:
-            dist_list.append(pg.NormalDistribution(0, 999999))
-    return pg.IndependentComponentsDistribution(dist_list)
-
 
 class Classifier(object):
     """ HMM classifier that automatically adds 'edge states' to better recognize valid transitions between states.
@@ -70,7 +58,6 @@ class Classifier(object):
             nb_labeled = self.data.data_clean.is_labeled.sum()
             nb_unlabeled = len(self.data.data_clean) - nb_labeled
             labeled_seqs = choices(self.data.data_clean.index[self.data.data_clean.is_labeled], k=nb_labeled)
-            self.data._data.is_labeled = self.data._data.is_labeled.astype(bool)
             unlabeled_seqs = choices(self.data.data_clean.index[np.invert(self.data.data_clean.is_labeled)], k=nb_unlabeled)
             seq_idx = labeled_seqs + unlabeled_seqs
         else:
@@ -181,7 +168,7 @@ class Classifier(object):
             km = Kmeans(k=self.nb_states, n_init=1).fit(X=data_vec[km_idx, :], n_jobs=self.nb_threads)
             y = km.predict(data_vec)
             def distfun(s1, s2):
-                return get_dist(data_vec[np.logical_or(y == s1, y == s2), :].T)
+                return self.get_dist(data_vec[np.logical_or(y == s1, y == s2), :].T)
         else:
             # Estimate emission distributions from given class labels
             data = data.loc[data.is_labeled, :]
@@ -189,14 +176,14 @@ class Classifier(object):
             y_edge = np.concatenate([np.stack(list(tup), axis=-1) for tup in data.loc[:, 'edge_labels'].to_numpy()], 0)
             data_vec = np.concatenate([np.stack(list(tup), axis=-1) for tup in data.loc[:, self.feature_list].to_numpy()], 0)
             def distfun(s1, s2):
-                return get_dist(data_vec[y_edge == f'e{s1}{s2}', :].T)
+                return self.get_dist(data_vec[y_edge == f'e{s1}{s2}', :].T)
 
         # Create states
         pg_gui_state_dict = dict()
         states = dict()
         for i in range(self.nb_states):
             sn = f's{i}'
-            states[sn] = pg.State(get_dist(data_vec[y == i, :].T), name=f's{i}')
+            states[sn] = pg.State(self.get_dist(data_vec[y == i, :].T), name=f's{i}')
             pg_gui_state_dict[sn] = i
 
         # Create edge states
@@ -210,6 +197,17 @@ class Classifier(object):
                 pg_gui_state_dict[f'{sn}_{i}'] = edge[0] if i < left_buffer else edge[1]
             edge_states[sn] = [estates_list, (f's{edge[0]}', f's{edge[1]}')]
         return states, edge_states, pg_gui_state_dict
+
+    @staticmethod
+    def get_dist(data_vec):
+        dist_list = []
+        for vec in data_vec:
+            vec = vec[~np.isnan(vec)]
+            if len(vec):
+                dist_list.append(pg.NormalDistribution(np.nanmean(vec), max(np.std(vec), 1E-6)))
+            else:
+                dist_list.append(pg.NormalDistribution(0, 999999))
+        return pg.IndependentComponentsDistribution(dist_list)
 
     def get_transitions(self, seq_idx):
         data = self.data.data_clean.loc[seq_idx, :]
@@ -266,28 +264,9 @@ class Classifier(object):
         pred_list: list of numpy arrays of length len(idx) containing predicted labels
         logprob_list: list of floats of length len(idx) containing posterior log-probabilities
         """
-        # idx=[idx]
-        # tuple_list = np.array([np.stack(list(tup), axis=-1)
-        #                        for tup in self.data.data_clean.loc[idx, self.feature_list].to_numpy()])
-        #
-        # # fwd/bwd also logprobs parallel
-        # nb_threads = min(len(idx), self.nb_threads)
-        # batch_idx = np.array_split(np.arange(len(tuple_list)), nb_threads)
-        # parallel_list = Parallel(n_jobs=nb_threads)(delayed(parallel_predict)(tuple_list[bi], self.trained)
-        #                                             for bi in batch_idx)
-        # logprob_list, pred_list = list(map(list, zip(*parallel_list)))
-        # logprob_list = list(itertools.chain.from_iterable(logprob_list))
-        # pred_list = [np.vectorize(self.gui_state_dict.__getitem__)(pred[1:-1])
-        #              for pred in itertools.chain.from_iterable(pred_list)]
-        #
-        # return pred_list[0], logprob_list[0]
-
         logprob, trace_state_list = self.trained.viterbi(np.stack(self.data.data_clean.loc[idx, self.feature_list].to_numpy(), axis=-1))
-        if logprob == -np.inf:
-            pass
         state_list = np.vectorize(self.gui_state_dict.__getitem__)([ts[0] for ts in trace_state_list[1:-1]])
         return state_list, logprob
-
 
     def get_matrix(self, df):
         """
@@ -347,7 +326,6 @@ class Classifier(object):
         return df
 
     # --- saving/loading models ---
-    # todo: add DBSCAN parameter
     def get_params(self):
         mod_txt = self.trained.to_yaml()
         gui_state_dict_txt = yaml.dump(self.gui_state_dict)
@@ -375,7 +353,8 @@ class Classifier(object):
         if mod_check != 'EdgeAwareHmm':
             error_msg = '\nERROR: loaded model parameters are not for a boundary-aware HMM!'
             if self.gui:
-                self.gui.text = error_msg
+                self.gui.notify(error_msg)
+                return
             else:
                 raise ValueError(error_msg)
         self.trained = pg.HiddenMarkovModel().from_yaml(model_txt)
