@@ -3,7 +3,7 @@ import io
 import numpy as np
 
 import matplotlib
-matplotlib.use('Agg')
+# matplotlib.use('Agg')
 import seaborn as sns
 import matplotlib.pyplot as plt
 
@@ -43,7 +43,9 @@ class FretReport(object):
     def event_df(self):
         seq_mat = self.condensed_seq_df.values
         seq_mat = np.array(list(itertools.chain.from_iterable(seq_mat)))
-        event_df = pd.DataFrame({'state': seq_mat[:, 0] / seq_mat[:,0].max(), 'E_FRET': seq_mat[:, 2],
+        event_df = pd.DataFrame({'state': seq_mat[:, 0],
+                                 'state_pct': seq_mat[:, 0] / seq_mat[:, 0].max(),
+                                 'E_FRET': seq_mat[:, 2],
                                  'duration': seq_mat[:, 1].astype(int)})
         return event_df
 
@@ -51,11 +53,62 @@ class FretReport(object):
     def transition_df(self):
         before = []
         after = []
+        state_before = []
+        state_after = []
         for r in self.condensed_seq_df:
             r_array = np.array(r)
             before.extend(r_array[:-1, 2])
             after.extend(r_array[1:, 2])
-        return pd.DataFrame({'E_FRET_before': before, 'E_FRET_after': after})
+            state_before.extend(r_array[:-1, 0])
+            state_after.extend(r_array[1:, 0])
+        return pd.DataFrame({'E_FRET_before': before, 'E_FRET_after': after,
+                             'state_before': state_before, 'state_after': state_after})
+
+    @cached_property
+    def out_label_vec(self):
+        'Labels returned as one long numpy vector'
+        return np.concatenate([np.stack(list(tup), axis=-1) for tup in self.out_labels], 0)
+
+    @cached_property
+    def out_label_vec_not_last(self):
+        'Labels returned as one long numpy vector, omitting the last label in each sequence'
+        return np.concatenate([np.stack(list(tup)[:-1], axis=-1) for tup in self.out_labels], 0)
+
+    @cached_property
+    def efret_vec(self):
+        'efret values returned as one long numpy vector'
+        return np.concatenate([np.stack(list(tup), axis=-1) for tup in self.data.data.E_FRET.to_numpy()], 0)
+
+    @cached_property
+    def data_states_mu(self):
+        return [np.mean(self.efret_vec[self.out_label_vec==yn]) for yn in np.arange(self.classifier.nb_states)]
+
+    @cached_property
+    def data_states_sd(self):
+        return [np.std(self.efret_vec[self.out_label_vec == yn]) for yn in np.arange(self.classifier.nb_states)]
+
+    @cached_property
+    def data_efret_stats(self):
+        state_list = [str(nb + 1) for nb in range(self.classifier.nb_states)]
+        state_list_bold = [f'<b>{s}</b>' for s in state_list]
+        table = tabulate({'mu': self.data_states_mu, 'sd': self.data_states_sd},
+                         tablefmt='html', headers=['mean E_FRET', 'sd E_FRET'], showindex=state_list_bold,
+                         numalign='center', stralign='center')
+        return table
+
+    @cached_property
+    def data_tm(self):
+        frame_rate = 1 / np.concatenate(self.data.data.time.apply(lambda x: x[1:] - x[:-1]).to_numpy()).mean()
+        states = np.arange(self.classifier.nb_states)
+        tm_df = pd.DataFrame(0, index=states, columns=states)
+        sb = self.transition_df.state_before
+        sa = self.transition_df.state_after
+        for s1, s2 in itertools.permutations(states, 2):
+            # tm_df.loc[s1, s2] = np.sum(np.logical_and(sb == s1, sa == s2)) / (np.sum(self.out_label_vec_not_last == s1)/10 )
+            tm_df.loc[s1,s2] = np.sum(np.logical_and(sb == s1, sa == s2)) / np.sum(self.out_label_vec_not_last == s1) * frame_rate
+        for s in states:
+            tm_df.loc[s,s] = -1* np.sum(tm_df.loc[s,:])
+        return tm_df.to_html()
 
     # @ cached_property
     # def k_off(self):
@@ -94,6 +147,8 @@ class FretReport(object):
                                # tdp_hex_script=thh,
                                transition_density_plot=tdp,
                                efret_hist=efret_hist,
+                               data_efret_stats=self.data_efret_stats,
+                               data_tm_div=self.data_tm,
                                tm_table_div=tm_table,
                                em_table_div=em_table,
                                date=print_timestamp(),
@@ -121,7 +176,7 @@ class FretReport(object):
         ed_scatter.grid.visible = False
         ed_scatter.xaxis.axis_label = 'duration (# measurements)'
         ed_scatter.yaxis.axis_label = 'E FRET'
-        ed_scatter.scatter(x='duration', y='E_FRET', color={'field': 'state', 'transform': self.gui.col_mapper},
+        ed_scatter.scatter(x='duration', y='E_FRET', color={'field': 'state_pct', 'transform': self.gui.col_mapper},
                            source=cds)
         return ed_scatter
 

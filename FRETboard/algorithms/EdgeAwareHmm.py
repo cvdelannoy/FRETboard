@@ -71,7 +71,7 @@ class Classifier(object):
         if supervision_influence < 1.0:
             if any(self.data.data_clean.is_labeled):
                 # Case 2: semi-supervised --> perform training with inertia on pre-determined labeled sequences
-                labels = list(self.data.data_clean.labels.to_numpy(copy=True))
+                labels = list(self.data.data_clean.loc[self.data.data_clean.is_labeled, 'labels'].to_numpy(copy=True))
                 nsi = 1.0 - supervision_influence
                 weights = [supervision_influence if len(lab) else nsi for lab in labels]
                 labels = [self.add_boundary_labels(lab, hmm) if len(lab) else None for lab in labels]
@@ -135,7 +135,7 @@ class Classifier(object):
             hmm.add_transition(s, hmm.end, pend_dict[s_name], pseudocount=0)
             hmm.add_transition(s, s, tm_dict[(s_name, s_name)], pseudocount=0)
 
-        # Make connections between states using edge states
+        # Make connections be   tween states using edge states
         for es_name in edge_states:
             es_list = edge_states[es_name][0]
             s1, s2 = [states[s] for s in edge_states[es_name][1]]

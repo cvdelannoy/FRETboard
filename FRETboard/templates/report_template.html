@@ -37,6 +37,15 @@
 {{ date }}
 <h1>FRETboard report</h1>
 
+<h3>FRET efficiency statistics </h3>
+Note: these statistics are derived from the actual dataset, not the model
+
+<h4>FRET efficiency per state</h4>
+<div class="container">{{ data_efret_stats }}</div>
+
+<h4>transition rate matrix</h4>
+<div class="container"> {{ data_tm_div }}</div>
+
 <h3>Emissions</h3>
 Mean (mu) and standard deviation (sd) per state and feature.
 <div class="container"> {{ em_table_div }} </div>

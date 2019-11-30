@@ -1,4 +1,5 @@
 MANIFEST.in
+README.md
 setup.py
 FRET_board.egg-info/PKG-INFO
 FRET_board.egg-info/SOURCES.txt

@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import yaml
 import importlib
+import traceback
 # from tornado import gen
 import threading
 from threading import Thread
@@ -97,7 +98,9 @@ class Gui(object):
         self.loading_in_progress = False
         self.training_in_progress = False
         self.prediction_in_progress = False
+        self.eps_change_in_progress = False
         self.new_example_bool = False
+        self.redraw_bool = False
 
         # widgets
         self.algo_select = Select(title='Algorithm:', value=list(algo_dict)[0], options=list(algo_dict))
@@ -212,14 +215,12 @@ class Gui(object):
         self.notification_buffer = f'{print_timestamp()}{text}\n'
         self.doc.add_next_tick_callback(self.push_notification)
 
-    def notify_exception(self, e, section):
+    def notify_exception(self, e, tb_str, section):
         self.notify(f'''Exception of type {str(e.__class__)} encountered during {section}! 
-                    Please register an issue at github.com/cvdelannoy/FRETboard/issues, include the data on which it occurred if
-                    possible, and the error message below
-                    --- location error ---
-                    {str(e.__traceback__.tb_frame)}
-                    --- start error message ---
-                    {str(e)}''')
+Please register an issue at github.com/cvdelannoy/FRETboard/issues, include the data on which it occurred if
+possible, and the error message below
+--- start error message ---
+{tb_str}''')
 
     def train_trigger(self):
         self.notify('Start training...')
@@ -228,16 +229,8 @@ class Gui(object):
     def redraw_trigger(self):
         self.doc.add_next_tick_callback(self._redraw_all)
 
-#     def error_logging(self, type, value, tb):
-#         text = f'''Server encountered an error!
-#
-# Please open an issue at github.com/cvdelannoy/FRETboard/issues. Include the error message below and
-# the files with which the error occurred, if possible
-# ---begin error message ---
-# {str(value)}'''
-#         with open('/home/carlos/errortst.txt', 'w') as fh:
-#             fh.write(text)
-#         self.notify(text)
+    def redraw_info_trigger(self):
+        self.doc.add_next_tick_callback(self._redraw_info)
 
     def append_fn(self, fn):
         self.fn_buffer.append(fn)
@@ -340,7 +333,7 @@ class Gui(object):
                 self.pred_fun()
             except Exception as e:
                 self.prediction_in_progress = False
-                self.notify_exception(e, 'prediction')
+                self.notify_exception(e, traceback.format_exc(), 'prediction')
                 return
 
     def pred_fun(self):
@@ -356,7 +349,7 @@ class Gui(object):
         if not self.model_loaded:
             sleep(1)
             return
-        if self.training_in_progress:
+        if self.training_in_progress or self.eps_change_in_progress:
             sleep(1)
             return
         if self.cur_example_idx is None:
@@ -381,6 +374,8 @@ class Gui(object):
             if not len(self.data.data.at[self.cur_example_idx, 'labels']):
                 self.data.data.at[self.cur_example_idx, 'labels'] = np.array(pred_list)
             self.redraw_trigger()
+        else:
+            self.redraw_info_trigger()
         self.prediction_in_progress = False
 
 
@@ -402,9 +397,9 @@ class Gui(object):
 
     def train_and_update(self):
         try:
+            self.training_in_progress = True
             while self.prediction_in_progress:
                 sleep(0.1)
-            self.training_in_progress = True
             self.classifier.train(supervision_influence=self.supervision_slider.value)
             self.data.data.is_predicted = False
             self.model_loaded = True
@@ -427,10 +422,13 @@ class Gui(object):
                         return
                     new_example_idx = np.random.choice(self.data.data.loc[sidx].loc[valid_bool].index)
                     self.example_select.value = new_example_idx
+            elif self.redraw_bool:
+                self.redraw_bool = False
+                self.redraw_trigger()
             self.classifier_source.data = dict(params=[self.classifier.get_params()])
             self.notify('Finished training')
         except Exception as e:
-            self.notify_exception(e, 'training')
+            self.notify_exception(e, traceback.format_exc(), 'training')
 
 
 
@@ -516,6 +514,10 @@ class Gui(object):
 
     def _redraw_all(self):
         self.invalidate_cached_properties()
+        if not self.data.data.loc[self.cur_example_idx, 'is_labeled']:
+            if not self.data.data.loc[self.cur_example_idx, 'is_predicted']: sleep(0.01)
+            self.data.data.at[self.cur_example_idx, 'labels'] = self.data.data.loc[self.cur_example_idx, 'prediction']
+            self.data.data.loc[self.cur_example_idx, 'is_labeled'] = True
         nb_samples = self.i_don.size
         all_ts = np.concatenate((self.i_don, self.i_acc))  # todo: i_acc shape != i_don shape???
         rect_mid = (all_ts.min() + all_ts.max()) / 2
@@ -528,7 +530,13 @@ class Gui(object):
                                 i_sum_height=np.repeat(self.i_sum.max(), nb_samples),
                                 i_sum_mid=np.repeat(self.i_sum.mean(), nb_samples),
                                 labels=self.data.data.loc[self.cur_example_idx, 'labels'],
-                                labels_pct=self.data.data.loc[self.cur_example_idx, 'labels'] * 1.0 / self.num_states_slider.value)
+                                labels_pct=self.data.data.loc[self.cur_example_idx, 'labels'] * 1.0 / (self.num_states_slider.value - 1))
+        self.update_accuracy_hist()
+        self.update_logprob_hist()
+        self.update_state_curves()
+        self.update_stats_text()
+
+    def _redraw_info(self):
         self.update_accuracy_hist()
         self.update_logprob_hist()
         self.update_state_curves()
@@ -545,7 +553,7 @@ class Gui(object):
         try:
             self.doc.add_next_tick_callback(self.generate_report_fun)
         except Exception as e:
-            self.notify_exception(e, 'report generation')
+            self.notify_exception(e, traceback.format_exc(), 'report generation')
 
     def generate_report_fun(self):
         self.html_source.data['html_text'] = [FretReport(self).construct_html_report()]
@@ -565,14 +573,15 @@ class Gui(object):
             self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
 
     def update_eps(self):
-        if not len(self.bg_checkbox.active):
-            while self.prediction_in_progress:
-                sleep(0.001)
-            self.data.eps = np.nan
-            return
+        self.eps_change_in_progress = True
         while self.prediction_in_progress:
             sleep(0.001)
-        self.data.eps = self.eps_spinner.value
+        if not len(self.bg_checkbox.active):
+            self.data.eps = np.nan
+            self.eps_change_in_progress = False
+        else:
+            self.data.eps = self.eps_spinner.value
+        self.eps_change_in_progress = False
 
     def update_accuracy_hist(self):
         acc_counts = np.histogram(self.data.accuracy[0], bins=np.linspace(5, 100, num=20))[0]
@@ -597,12 +606,15 @@ class Gui(object):
     def update_feature_list(self, attr, old, new):
         if len(new) == 0: return
         if old == new: return
+        self.training_in_progress = True
+        while self.prediction_in_progress: sleep(0.01)
         self.classifier.feature_list = [feat for fi, feat in enumerate(self.feature_list) if fi in new]
         if len(self.data.data):
-            self.train_trigger()
             self.data.data.is_predicted = False
             self.data.data.loc[self.cur_example_idx, 'is_labeled'] = False
-            self.update_example(None, None, self.cur_example_idx)
+            self.redraw_bool = True
+            self.train_trigger()
+            # self.update_example(None, None, self.cur_example_idx)
 
     def update_state_curves(self):
         feature = self.feature_list[self.state_radio.active]
@@ -639,6 +651,7 @@ class Gui(object):
     def update_num_states(self, attr, old, new):
         if new != self.classifier.nb_states:
             self.training_in_progress = True
+            while self.prediction_in_progress: sleep(0.01)
             self.data.data.is_labeled = False
             self.classifier = self.classifier_class(nb_states=new, data=self.data, gui=self, features=self.feature_list)
 
@@ -654,19 +667,22 @@ class Gui(object):
             self.sel_state_slider.end = new
             if self.sel_state_slider.value > new: self.sel_state_slider.value = new
 
-            # retraining is too heavy for longer traces, setting current example to lowest state instead
-            blank_labels = [(i, 0) for i in range(len(self.data.data.loc[self.cur_example_idx, 'i_don']))]
-            patch = {'labels': blank_labels,
-                     'labels_pct': blank_labels}
-            self.source.patch(patch)
-            self.source.selected.indices = []
-            self.update_accuracy_hist()
-            self.update_stats_text()
+            self.redraw_bool = True
+            self.train_trigger()
 
-            # update data in main table
-            self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
-            self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
-            self.data.set_value(self.cur_example_idx, 'is_labeled', True)
+            # # retraining is too heavy for longer traces, setting current example to lowest state instead
+            # blank_labels = [(i, 0) for i in range(len(self.data.data.loc[self.cur_example_idx, 'i_don']))]
+            # patch = {'labels': blank_labels,
+            #          'labels_pct': blank_labels}
+            # self.source.patch(patch)
+            # self.source.selected.indices = []
+            # self.update_accuracy_hist()
+            # self.update_stats_text()
+            #
+            # # update data in main table
+            # self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
+            # self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
+            # self.data.set_value(self.cur_example_idx, 'is_labeled', True)
 
     def export_data(self):
         self.fretReport = FretReport(self)

@@ -14,7 +14,9 @@ setup(
                       'bokeh==1.4.0',
                       'cached-property==1.5.1',
                       'tabulate==0.8.3',
-                      'tornado==6.0.3'],
+                      'tornado==6.0.3',
+                      'seaborn==0.9.0',
+                      'scikit-learn==0.21.2'],
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License"
