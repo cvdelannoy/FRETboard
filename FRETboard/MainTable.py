@@ -26,8 +26,10 @@ class MainTable(object):
         traces without those predicted/marked junk, not currently update with bg subtraction
         """
         # return self._data.loc[np.invert(self._data.predicted_junk).astype(bool), :]
-        return self._data.loc[np.logical_and(np.invert(self._data.predicted_junk).astype(bool),
-                                             np.nan_to_num(self._data.eps) == np.nan_to_num(self.eps)), :]
+        data = self._data[['eps', 'marked_junk']].copy()
+        return_idx = data.loc[np.logical_and(np.invert(data.marked_junk).astype(bool),
+                                       np.nan_to_num(data.eps) == np.nan_to_num(self.eps)), :].index
+        return self._data.loc[return_idx, :]
 
     @property
     def is_junk(self):
