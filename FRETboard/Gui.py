@@ -101,6 +101,7 @@ class Gui(object):
         self.eps_change_in_progress = False
         self.new_example_bool = False
         self.redraw_bool = False
+        self.predict_error_count = 0
 
         # widgets
         self.algo_select = Select(title='Algorithm:', value=list(algo_dict)[0], options=list(algo_dict))
@@ -334,7 +335,10 @@ possible, and the error message below
             except Exception as e:
                 self.prediction_in_progress = False
                 self.notify_exception(e, traceback.format_exc(), 'prediction')
-                return
+                self.predict_error_count += 1
+                if self.predict_error_count > 10:
+                    return
+                continue
 
     def pred_fun(self):
         """
@@ -370,7 +374,7 @@ possible, and the error message below
             idx = not_predicted_indices[0]
         pred_list, logprob = self.classifier.predict(idx)
         self.data.data.at[idx, 'prediction'] = np.array(pred_list)
-        self.data.data.loc[idx, 'logprob'] = np.array(logprob)
+        self.data.data.loc[idx, 'logprob'] = logprob
         self.data.data.loc[idx, 'is_predicted'] = True
         if idx == self.cur_example_idx:
             if not len(self.data.data.at[self.cur_example_idx, 'labels']):
