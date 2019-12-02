@@ -356,7 +356,9 @@ possible, and the error message below
             sleep(1)
             return
         self.prediction_in_progress = True
-        is_predicted_series = self.data.data_clean.is_predicted.copy()
+        is_predicted_series = self.data.data_clean.is_predicted.copy().astype(bool)
+        if not len(is_predicted_series):
+            return
         not_predicted_indices = is_predicted_series.index[np.invert(is_predicted_series)]
         if not len(not_predicted_indices):
             self.prediction_in_progress = False
