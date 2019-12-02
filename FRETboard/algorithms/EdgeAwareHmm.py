@@ -318,6 +318,7 @@ class Classifier(object):
             else:
                 si0 = state_idx_dict[f's{s0}']; si1 = state_idx_dict[f'e{s0}{s1}_0']
             df.loc[s0, s1] = dense_tm[si0, si1]
+        df = df / df.sum(1).T  # correct for start/end transitions
         # todo: switching to transition rates i.o. probs here, for kinSoft challenge
         mean_durations = self.data.data_clean.time.apply(lambda x: (x[-1] - x[0]) / len(x))
         duration_frame = np.mean(mean_durations)

@@ -563,7 +563,7 @@ possible, and the error message below
         if len(new):
             self.source.selected.indices = []
             patch = {'labels': [(i, self.sel_state_slider.value - 1) for i in new],
-                     'labels_pct': [(i, (self.sel_state_slider.value - 1) * 1.0 / self.num_states_slider.value) for i in new]}
+                     'labels_pct': [(i, (self.sel_state_slider.value - 1) * 1.0 / (self.num_states_slider.value - 1)) for i in new]}
             self.source.patch(patch)
             self.update_accuracy_hist()
             self.update_stats_text()

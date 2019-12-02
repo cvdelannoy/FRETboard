@@ -112,7 +112,7 @@ for fb in fb_files:
     ks = ks_dict[re.search('[0-9]+(?=.dat)', basename(fb)).group(0)]
     ks_df = pd.read_csv(ks, sep='\t')
     ks_df.loc[:,'t_end (s)'] = ks_df.loc[:,'t_start (s)'] + ks_df.loc[:, 't_dwell (s)']
-    ks_label = [ks_df.loc[ks_df[ks_df.loc[:, 't_start (s)'] < t].index.max(), '%state'] for t in dat_df.time]
+    ks_label = [ks_df.loc[ks_df[ks_df.loc[:, 't_start (s)'] <= t].index.max(), '%state'] for t in dat_df.time]
     dat_df.loc[:, 'ks_label'] = ks_label
 
     # set classes same

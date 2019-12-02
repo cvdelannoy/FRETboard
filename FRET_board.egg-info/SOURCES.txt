@@ -13,17 +13,12 @@ FRETboard/MainTable.py
 FRETboard/__init__.py
 FRETboard/__main__.py
 FRETboard/algorithms.yml
-FRETboard/async_test.py
 FRETboard/helper_functions.py
 FRETboard/io_functions.py
 FRETboard/lsh_bin_selection.py
 FRETboard/main.py
-FRETboard/minimal_example.py
 FRETboard/algorithms/EdgeAwareHmm.py
-FRETboard/algorithms/EdgeAwareHmm_backup.py
-FRETboard/algorithms/EdgeAwareHmm_old.py
 FRETboard/algorithms/VanillaHmm.py
-FRETboard/algorithms/VanillaHmm_backup.py
 FRETboard/js_widgets/download_csv.js
 FRETboard/js_widgets/download_datzip.js
 FRETboard/js_widgets/download_model.js
