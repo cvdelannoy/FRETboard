@@ -1,0 +1,12 @@
+{% extends base %}
+{% block css_resources %}
+	{{ bokeh_css }}
+{% endblock %}
+
+{%block js_resources %}
+{{ bokeh_js }}
+	<script src="https://cdn.pydata.org/bokeh/release/bokeh-1.4.0.min.js"></script>
+	<script src="https://cdn.pydata.org/bokeh/release/bokeh-widgets-1.4.0.min.js"></script>
+	<script src="https://cdn.pydata.org/bokeh/release/bokeh-tables-1.4.0.min.js"></script>
+	<script src="https://cdn.pydata.org/bokeh/release/bokeh-gl-1.4.0.min.js"></script>
+{% endblock %}
