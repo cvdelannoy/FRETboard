@@ -3,7 +3,7 @@ import io
 import numpy as np
 
 import matplotlib
-# matplotlib.use('Agg')
+matplotlib.use('Agg')
 import seaborn as sns
 import matplotlib.pyplot as plt
 
