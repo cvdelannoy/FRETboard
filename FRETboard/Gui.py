@@ -8,6 +8,7 @@ import pandas as pd
 import yaml
 import importlib
 import traceback
+from multiprocessing import Process
 # from tornado import gen
 import threading
 from threading import Thread
@@ -99,9 +100,10 @@ class Gui(object):
         self.training_in_progress = False
         self.prediction_in_progress = False
         self.eps_change_in_progress = False
-        self.new_example_bool = False
-        self.redraw_bool = False
+        self.redraw_activated = False
+        self.user_notified_of_training = False
         self.predict_error_count = 0
+
 
         # widgets
         self.algo_select = Select(title='Algorithm:', value=list(algo_dict)[0], options=list(algo_dict))
@@ -135,9 +137,9 @@ class Gui(object):
         # ColumnDataSources
         self.source = ColumnDataSource(data=dict(i_don=[], i_acc=[], E_FRET=[],
                                                  correlation_coefficient=[], E_FRET_sd=[], i_sum=[], time=[],
-                                                 rect_height=[], rect_mid=[],
+                                                 rect_height=[], rect_height_half=[], rect_mid=[], rect_mid_up=[], rect_mid_down=[],
                                                  i_sum_height=[], i_sum_mid=[],
-                                                 labels=[], labels_pct=[]))
+                                                 labels=[], labels_pct=[], prediction_pct=[]))
         ahb = np.arange(start=0, stop=100, step=5)
         self.new_source = ColumnDataSource({'file_contents': [], 'file_name': []})
         self.accuracy_source = ColumnDataSource(data=dict(lb=ahb[:-1], rb=ahb[1:], accuracy_counts=np.repeat(0, 19)))
@@ -225,10 +227,12 @@ possible, and the error message below
 
     def train_trigger(self):
         self.notify('Start training...')
-        self.doc.add_next_tick_callback(self.train_and_update)
+        self.doc.add_next_tick_callback(self.train)
 
     def redraw_trigger(self):
-        self.doc.add_next_tick_callback(self._redraw_all)
+        if not self.redraw_activated:
+            self.redraw_activated = True
+            self.doc.add_next_tick_callback(self._redraw_all)
 
     def redraw_info_trigger(self):
         self.doc.add_next_tick_callback(self._redraw_info)
@@ -354,6 +358,9 @@ possible, and the error message below
             sleep(1)
             return
         if self.training_in_progress or self.eps_change_in_progress:
+            if not self.user_notified_of_training:
+                self.notify('Parameters changed, pausing prediction...')
+                self.user_notified_of_training = True
             sleep(1)
             return
         if self.cur_example_idx is None:
@@ -400,8 +407,7 @@ possible, and the error message below
             if k in self.__dict__:
                 del self.__dict__[k]
 
-
-    def train_and_update(self):
+    def train(self):
         try:
             self.training_in_progress = True
             while self.prediction_in_progress:
@@ -412,31 +418,28 @@ possible, and the error message below
             self.training_in_progress = False
             if self.cur_example_idx is None:
                 self.example_select.value = self.data.data_clean.index[0]
-            elif self.new_example_bool:
-                self.new_example_bool = False
-                if all(self.data.data.is_labeled):
-                    self.notify('All examples have already been manually classified')
-                else:
-                    sidx = self.data.data.index.copy()
-                    sm_check = self.data.data.loc[sidx, 'prediction'].apply(lambda x:
-                                                                            True if len(x) == 0 or any(
-                                                                                np.in1d(self.showme_checkboxes.active, x))
-                                                                            else False)
-                    valid_bool = np.logical_and(sm_check, np.invert(self.data.data.loc[sidx, 'is_labeled']))
-                    if not any(valid_bool):
-                        self.notify('No new traces with states of interest left')
-                        return
-                    new_example_idx = np.random.choice(self.data.data.loc[sidx].loc[valid_bool].index)
-                    self.example_select.value = new_example_idx
-            elif self.redraw_bool:
-                self.redraw_bool = False
+            else:
                 self.redraw_trigger()
             self.classifier_source.data = dict(params=[self.classifier.get_params()])
             self.notify('Finished training')
         except Exception as e:
             self.notify_exception(e, traceback.format_exc(), 'training')
 
-
+    def new_example(self):
+        if all(self.data.data.is_labeled):
+            self.notify('All examples have already been manually classified')
+        else:
+            sidx = self.data.data.index.copy()
+            sm_check = self.data.data.loc[sidx, 'prediction'].apply(lambda x:
+                                                                    True if len(x) == 0 or any(
+                                                                        np.in1d(self.showme_checkboxes.active, x))
+                                                                    else False)
+            valid_bool = np.logical_and(sm_check, np.invert(self.data.data.loc[sidx, 'is_labeled']))
+            if not any(valid_bool):
+                self.notify('No new traces with states of interest left')
+                return
+            new_example_idx = np.random.choice(self.data.data.loc[sidx].loc[valid_bool].index)
+            self.example_select.value = new_example_idx
 
     def load_params(self, attr, old, new):
         raw_contents = self.loaded_model_source.data['file_contents'][0]
@@ -455,8 +458,8 @@ possible, and the error message below
         self.notify('Model loaded')
         if self.data.data.shape[0] != 0:
             self.data.data.is_labeled = False
-            self.predict_safe()
-            self._redraw_all()
+            self.redraw_trigger()
+            # self._redraw_all()
 
     def buffer_data(self, attr, old, new):
         self.new_data_buffer.append((self.new_source.data['file_contents'][0], self.new_source.data['file_name'][0]))
@@ -503,22 +506,22 @@ possible, and the error message below
             self.data.set_value(new, 'labels', self.data.data.loc[new, 'prediction'].copy())
             self.data.set_value(new, 'edge_labels', self.get_edge_labels(self.data.data.loc[new, 'labels']))
             self.data.set_value(new, 'is_labeled', True)
-        self.cur_example_idx = new
         # todo risk of deadlock if junk is manually selected!
         if self.data.data.loc[new, 'marked_junk']:
             self.notify(f'Warning: {new} was marked junk!')
         elif self.data.data.loc[new, 'predicted_junk']:
             self.notify(f'Warning: {new} is predicted junk!')
-        self._redraw_all()
+        self.redraw_trigger()
+        # self._redraw_all()
 
     def update_example_retrain(self):
         """
         Assume current example is labeled correctly, retrain and display new random example
         """
-        self.new_example_bool = True
         self.train_trigger()
 
     def _redraw_all(self):
+        self.redraw_activated = False
         self.invalidate_cached_properties()
         if not self.data.data.loc[self.cur_example_idx, 'is_labeled']:
             if not self.data.data.loc[self.cur_example_idx, 'is_predicted']: sleep(0.01)
@@ -526,17 +529,27 @@ possible, and the error message below
             self.data.data.loc[self.cur_example_idx, 'is_labeled'] = True
         nb_samples = self.i_don.size
         all_ts = np.concatenate((self.i_don, self.i_acc))  # todo: i_acc shape != i_don shape???
-        rect_mid = (all_ts.min() + all_ts.max()) / 2
-        rect_height = np.abs(all_ts.min()) + np.abs(all_ts.max())
+        ts_range = all_ts.max() - all_ts.min()
+        rect_mid = (all_ts.max() + all_ts.min()) / 2
+        rect_mid_up = all_ts.min() + ts_range * 0.75
+        rect_mid_down = all_ts.min() + ts_range * 0.25
+        rect_height = np.abs(all_ts.max()) + np.abs(all_ts.min())
+        rect_height_half = rect_height / 2
         self.source.data = dict(i_don=self.i_don, i_acc=self.i_acc, time=np.arange(nb_samples),
                                 E_FRET=self.E_FRET, correlation_coefficient=self.correlation_coefficient, i_sum=self.i_sum,
                                 E_FRET_sd=self.E_FRET_sd,
                                 rect_height=np.repeat(rect_height, nb_samples),
+                                rect_height_half=np.repeat(rect_height_half, nb_samples),
                                 rect_mid=np.repeat(rect_mid, nb_samples),
+                                rect_mid_up=np.repeat(rect_mid_up, nb_samples),
+                                rect_mid_down=np.repeat(rect_mid_down, nb_samples),
                                 i_sum_height=np.repeat(self.i_sum.max(), nb_samples),
                                 i_sum_mid=np.repeat(self.i_sum.mean(), nb_samples),
                                 labels=self.data.data.loc[self.cur_example_idx, 'labels'],
-                                labels_pct=self.data.data.loc[self.cur_example_idx, 'labels'] * 1.0 / (self.num_states_slider.value - 1))
+                                labels_pct=self.data.data.loc[self.cur_example_idx, 'labels'] * 1.0 / (self.num_states_slider.value - 1),
+                                prediction_pct=self.data.data.loc[self.cur_example_idx, 'prediction'] * 1.0 / (self.num_states_slider.value - 1))
+        self.x_range.start = 0; self.x_range.end = nb_samples
+        self.y_range.start = all_ts.min(); self.y_range.end = all_ts.max()
         self.update_accuracy_hist()
         self.update_logprob_hist()
         self.update_state_curves()
@@ -578,6 +591,17 @@ possible, and the error message below
             self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
             self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
 
+    def revert_manual_labels(self):
+        patch = {'labels': [(i, v) for i, v in enumerate(self.data.data.loc[self.cur_example_idx, 'prediction']) ],
+                 'labels_pct': [(i, v) for i, v in enumerate(self.data.data.loc[self.cur_example_idx, 'prediction'] * 1.0 / (self.num_states_slider.value - 1))]}
+        self.source.patch(patch)
+        self.update_accuracy_hist()
+        self.update_stats_text()
+
+        # update data in main table
+        self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
+        self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
+
     def update_eps(self):
         self.eps_change_in_progress = True
         while self.prediction_in_progress:
@@ -617,9 +641,7 @@ possible, and the error message below
         self.classifier.feature_list = [feat for fi, feat in enumerate(self.feature_list) if fi in new]
         if len(self.data.data):
             self.data.data.is_predicted = False
-            self.data.data.loc[self.cur_example_idx, 'is_labeled'] = False
-            self.redraw_bool = True
-            self.train_trigger()
+            # self.train_trigger()
             # self.update_example(None, None, self.cur_example_idx)
 
     def update_state_curves(self):
@@ -648,8 +670,7 @@ possible, and the error message below
         self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, data=self.data, gui=self,
                                                 features=self.feature_list)
         if len(self.data.data):
-            self.train_trigger()
-            self.data.data.loc[self.cur_example_idx, 'is_labeled'] = False
+            # self.train_trigger()
             self.update_example(None, None, self.cur_example_idx)
         else:
             self.training_in_progress = False
@@ -673,8 +694,7 @@ possible, and the error message below
             self.sel_state_slider.end = new
             if self.sel_state_slider.value > new: self.sel_state_slider.value = new
 
-            self.redraw_bool = True
-            self.train_trigger()
+            # self.train_trigger()
 
             # # retraining is too heavy for longer traces, setting current example to lowest state instead
             # blank_labels = [(i, 0) for i in range(len(self.data.data.loc[self.cur_example_idx, 'i_don']))]
@@ -750,6 +770,8 @@ possible, and the error message below
         load_model_button = Button(label='Model')
         load_model_button.callback = CustomJS(args=dict(file_source=self.loaded_model_source),
                                               code=upload_model_js)
+        revert_labels_button = Button(label='Undo changes')
+        revert_labels_button.on_click(self.revert_manual_labels)
 
 
         # --- 2. Teach ---
@@ -765,7 +787,8 @@ possible, and the error message below
                             self.showme_checkboxes,
                             height=80, width=300)
 
-        example_button = Button(label='Train', button_type='success')
+        train_button = Button(label='Train', button_type='warning')
+        new_example_button = Button(label='New trace', button_type='success')
 
         # --- 3. Save ---
         save_model_button = Button(label='Model')
@@ -785,13 +808,16 @@ possible, and the error message below
         # --- Define plots ---
 
         # Main timeseries
-        ts = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,pan', plot_width=1075, plot_height=275, active_drag='xbox_select')
+        ts = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,pan', plot_width=1075, plot_height=275,
+                         active_drag='xbox_select')
         ts.rect('time', 'rect_mid', height='rect_height', fill_color={'field': 'labels_pct',
                                                                       'transform': self.col_mapper},
                 source=self.source, **rect_opts)
         ts.line('time', 'i_don', color='#4daf4a', source=self.source, **line_opts)
         ts.line('time', 'i_acc', color='#e41a1c', source=self.source, **line_opts)
         ts_panel = Panel(child=ts, title='Traces')
+        self.x_range = ts.x_range
+        self.y_range = ts.y_range
 
         # E_FRET series
         ts_efret = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,pan', plot_width=1075, plot_height=275,
@@ -821,7 +847,20 @@ possible, and the error message below
         ts_i_sum.line('time', 'i_sum', color='#1f78b4', source=self.source, **line_opts)
         i_sum_panel = Panel(child=ts_i_sum, title='I sum')
 
-        tabs = Tabs(tabs=[ts_panel, efret_panel, corr_panel, i_sum_panel])
+        # manual and predicted timeseries
+        ts_manual = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,pan', plot_width=1075, plot_height=275,
+                    active_drag='xbox_select', x_range=ts.x_range)
+        ts_manual.rect('time', 'rect_mid_up', height='rect_height_half', fill_color={'field': 'labels_pct',
+                                                                         'transform': self.col_mapper},
+                source=self.source, **rect_opts)
+        ts_manual.rect('time', 'rect_mid_down', height='rect_height_half', fill_color={'field': 'prediction_pct',
+                                                                           'transform': self.col_mapper},
+                source=self.source, **rect_opts)
+        ts_manual.line('time', 'i_don', color='#4daf4a', source=self.source, **line_opts)
+        ts_manual.line('time', 'i_acc', color='#e41a1c', source=self.source, **line_opts)
+        pred_vs_manual_panel = Panel(child=widgetbox(column(ts_manual,revert_labels_button)), title='Predicted')
+
+        tabs = Tabs(tabs=[ts_panel, efret_panel, corr_panel, i_sum_panel, pred_vs_manual_panel])
 
         # accuracy histogram
         acc_hist = figure(toolbar_location=None, plot_width=275, plot_height=275, x_range=[0, 100],
@@ -862,7 +901,8 @@ possible, and the error message below
         self.new_source.on_change('data', self.buffer_data)
         self.loaded_model_source.on_change('data', self.load_params)
         self.example_select.on_change('value', self.update_example)
-        example_button.on_click(self.update_example_retrain)
+        train_button.on_click(self.train_trigger)
+        new_example_button.on_click(self.new_example)
         self.bg_checkbox.on_change('active', lambda attr, old, new: self.update_eps())
         self.bg_button.on_click(self.update_eps)
         # self.bg_button.on_click(self.subtract_background)
@@ -898,7 +938,7 @@ possible, and the error message below
                          self.supervision_slider,
                          self.buffer_slider,
                          showme_col,
-                         row(widgetbox(del_trace_button, width=150), widgetbox(example_button, width=150)),
+                         row(widgetbox(del_trace_button, width=100), widgetbox(train_button, width=100), widgetbox(new_example_button, width=100)),
                          Div(text="<font size=4>3. Save</font>", width=280, height=15),
                          saveme_col,
                          row(widgetbox(report_button, width=100), widgetbox(save_data_button, width=100), widgetbox(save_model_button, width=100)),

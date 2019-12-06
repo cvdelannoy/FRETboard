@@ -74,7 +74,7 @@ def bg_filter_trace(tr, eps):
 
 
 def get_derived_features(i_don, i_acc):
-    window = 9
+    window = 5
     ss = (window - 1) // 2  # sequence shortening
     i_sum = np.sum((i_don, i_acc), axis=0)
     with warnings.catch_warnings():

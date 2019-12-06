@@ -41,7 +41,6 @@ def parse_input_path(location, pattern=None):
     return all_files
 
 
-
 def plot_trace(data_dicts, nb_classes):
     """
     Plot traces, provided as one dict per plot
