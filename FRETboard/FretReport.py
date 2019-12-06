@@ -187,14 +187,18 @@ class FretReport(object):
         ax.set_ylim(0, 1)
         # plt.ylim(0, 1)
 
-        mu_list = self.classifier.get_states_mu('E_FRET')
-        sd_list = self.classifier.get_states_sd('E_FRET')
-        for mi, mm in enumerate(mu_list[:-1]):
-            ratio = sd_list[mi] / (sd_list[mi] + sd_list[mi + 1])
-            dmu = mu_list[mi + 1] - mm
-            lin = mm + dmu * ratio
-            plt.axvline(lin, color='black')
-            plt.axhline(lin, color='black')
+        if 'E_FRET' in self.classifier.feature_list:
+            mu_list = self.classifier.get_states_mu('E_FRET')
+            sd_list = self.classifier.get_states_sd('E_FRET')
+            for m in mu_list:
+                plt.axvline(m, color='black', ls='--')
+                plt.axhline(m, color='black', ls='--')
+            # for mi, mm in enumerate(mu_list[:-1]):
+            #     ratio = sd_list[mi] / (sd_list[mi] + sd_list[mi + 1])
+            #     dmu = mu_list[mi + 1] - mm
+            #     lin = mm + dmu * ratio
+            #     plt.axvline(lin, color='black')
+            #     plt.axhline(lin, color='black')
 
         ax.set_aspect('equal')
         ax.set_xlabel('$E_{FRET}$ before')
@@ -203,16 +207,6 @@ class FretReport(object):
         f = io.StringIO()
         plt.savefig(f, format='svg')
         return f.getvalue()
-
-    # def draw_transition_density_plot(self):
-    #     tdp_hex = figure(plot_width=500, plot_height=500,
-    #                      background_fill_color='#440154',
-    #                      x_range=(0.0, 1.0), y_range=(0.0, 1.0))
-    #     tdp_hex.grid.visible = False
-    #     tdp_hex.xaxis.axis_label = 'E FRET before transition'
-    #     tdp_hex.yaxis.axis_label = 'E FRET after transition'
-    #     tdp_hex.hexbin(x=self.transition_df['E_FRET_before'], y=self.transition_df['E_FRET_after'], size=0.01)
-    #     return tdp_hex
 
     def get_stats_tables(self):
         # time spent in each state

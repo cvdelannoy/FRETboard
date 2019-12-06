@@ -101,6 +101,7 @@ class Gui(object):
         self.prediction_in_progress = False
         self.eps_change_in_progress = False
         self.redraw_activated = False
+        self.buffer_updated = False
         self.user_notified_of_training = False
         self.predict_error_count = 0
 
@@ -359,7 +360,7 @@ possible, and the error message below
             return
         if self.training_in_progress or self.eps_change_in_progress:
             if not self.user_notified_of_training:
-                self.notify('Parameters changed, pausing prediction...')
+                self.notify('Parameters or classification changed, pausing prediction...')
                 self.user_notified_of_training = True
             sleep(1)
             return
@@ -409,9 +410,13 @@ possible, and the error message below
 
     def train(self):
         try:
+            # Ensure training does not clash with prediction
             self.training_in_progress = True
             while self.prediction_in_progress:
                 sleep(0.1)
+            if self.buffer_updated:
+                for idx in self.data.data.loc[self.data.data.is_labeled].index:
+                    self.data.set_value(idx, 'edge_labels', self.get_edge_labels(self.data.data.loc[idx, 'labels']))
             self.classifier.train(supervision_influence=self.supervision_slider.value)
             self.data.data.is_predicted = False
             self.model_loaded = True
@@ -487,6 +492,10 @@ possible, and the error message below
                 oh_counter = overhang_right
         return edge_labels
 
+    def update_buffer(self, attr, old, new):
+        if old == new: return
+        self.buffer_updated = True
+
     def update_example(self, attr, old, new):
         """
         Update the example currently on the screen.
@@ -513,12 +522,6 @@ possible, and the error message below
             self.notify(f'Warning: {new} is predicted junk!')
         self.redraw_trigger()
         # self._redraw_all()
-
-    def update_example_retrain(self):
-        """
-        Assume current example is labeled correctly, retrain and display new random example
-        """
-        self.train_trigger()
 
     def _redraw_all(self):
         self.redraw_activated = False
@@ -580,6 +583,7 @@ possible, and the error message below
 
     def update_classification(self, attr, old, new):
         if len(new):
+            self.training_in_progress = True
             self.source.selected.indices = []
             patch = {'labels': [(i, self.sel_state_slider.value - 1) for i in new],
                      'labels_pct': [(i, (self.sel_state_slider.value - 1) * 1.0 / (self.num_states_slider.value - 1)) for i in new]}
@@ -736,6 +740,7 @@ possible, and the error message below
 
     def del_trace(self):
         self.data.del_tuple(self.cur_example_idx)
+        self.new_example()
         # nonjunk_bool = np.logical_and(self.data.data.is_labeled, np.invert(self.data.data.is_junk))
         # if any(nonjunk_bool):  # Cant predict without positive examples
         #     df = self.data.data.loc[self.data.data.is_labeled]
@@ -743,7 +748,6 @@ possible, and the error message below
         #     predicted_junk = lsh_classify(x, self.data.data.is_junk, x, bits=32)
         #     self.data.data.predicted_junk = np.logical_or(self.data.data.junk, predicted_junk)
         #     # self.example_select.options.remove(self.cur_example_idx)
-        self.update_example_retrain()
 
     def update_showme(self, attr, old, new):
         if old == new: return
@@ -910,6 +914,7 @@ possible, and the error message below
         self.num_states_slider.on_change('value', self.update_num_states)
         self.state_radio.on_change('active', lambda attr, old, new: self.update_state_curves())
         self.features_checkboxes.on_change('active', self.update_feature_list)
+        self.buffer_slider.on_change('value', self.update_buffer)
 
         # hidden holders to generate saves
         self.report_holder.js_on_change('text', CustomJS(args=dict(file_source=self.html_source),
