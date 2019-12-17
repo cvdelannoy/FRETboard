@@ -53,7 +53,7 @@ class MainTable(object):
             'edge_labels': [np.array([], dtype=np.int64)] * nb_files,
             'prediction': [np.array([], dtype=np.int64)] * nb_files},
             index=dat_files, dtype=object)
-        df_out['eps'] = pd.Series([np.nan] * nb_files, dtype=int)
+        df_out['eps'] = pd.Series([np.nan] * nb_files)
         df_out['logprob'] = pd.Series([np.nan] * nb_files, dtype=float)
         df_out['is_labeled'] = pd.Series([False] * nb_files, dtype=bool)
         df_out['is_predicted'] = pd.Series([False] * nb_files, dtype=bool)

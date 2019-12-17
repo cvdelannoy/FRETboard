@@ -1,5 +1,7 @@
 import os
 import sys
+from sklearn.cluster import DBSCAN
+from scipy.stats import mode
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 sys.path.insert(1, f'{__location__}/..')
 import argparse
@@ -31,6 +33,20 @@ def plot_sr_dists(mu, sd, label=None):
     plt.ylabel('density')
     plt.legend()
 
+def remove_last_event(labels):
+    labels = np.copy(labels)
+    ground_state = labels.min()
+    nb_rows = len(labels) - 1
+    ground_bool = labels == ground_state
+    state_found = False
+    for gi, gb in enumerate(ground_bool[::-1]):
+        if not gb:
+            state_found = True
+            labels[nb_rows - gi] = ground_state
+        elif state_found:
+            break
+    return labels
+
 parser = argparse.ArgumentParser(description='extract ssFRET peaks from TIRF data.')
 parser.add_argument('--indir', type=str, required=True, nargs='+',
                     help='Input directories/files')
@@ -44,27 +60,18 @@ parser.add_argument('--analysis-type', type=str, nargs='+', choices=['samples', 
                     default=['samples'],
                     help='return one ssFRET value for all files (samples), one per trace (traces) or one per '
                          'uninterrupted event (events).')
-parser.add_argument('--groups', nargs='+', type=str,
+parser.add_argument('--groups', nargs='+', type=str, required=True,
                     help='regex patterns used to classify different groups of traces based on name,'
                          'plotted with different colors')
 parser.add_argument('--threads', default=1, type=int,
                     help='Number of threads to use for DBSCAN filter')
+parser.add_argument('--remove-last-event', action='store_true',
+                    help='special for Mikes approach: remove last non-ground state event')
 args = parser.parse_args()
 
 outdir = parse_output_dir(args.outdir, clean=False)
 label_0based = args.label - 1
 
-# load data
-dat_list = parse_input_path(args.indir, pattern='*.dat')
-traces_list = parse_input_path(args.indir, pattern='*.traces')
-main_table = MainTable(dat_list)
-
-if len(traces_list):
-    table_list = []
-    for trace_fn in traces_list:
-        with open(trace_fn, 'rb') as fh: trace_content = fh.read()
-        table_list.extend(parse_trace_file(trace_content, trace_fn, args.threads))
-    main_table.add_df_list(table_list)
 
 # load model
 with open(f'{__location__}/../FRETboard/algorithms.yml', 'r') as fh: algo_dict = yaml.safe_load(fh)
@@ -73,15 +80,37 @@ model_list = model_txt.split('\nSTART_NEW_SECTION\n')
 model_name = model_list[0]
 features = model_list[2].split('\n')
 misc_dict = yaml.load(model_list[-1], Loader=yaml.SafeLoader)
-classifier = importlib.import_module('FRETboard.algorithms.'+model_name).Classifier(nb_states=misc_dict['nb_states'],
-                                                                                    buffer=misc_dict['buffer'],
-                                                                                    features=features,
-                                                                                    data=main_table,
-                                                                                    nb_threads=args.threads)
+
+# load data
+dat_list = parse_input_path(args.indir, pattern='*.dat')
+traces_list = parse_input_path(args.indir, pattern='*.traces')
+main_table = MainTable(dat_list, eps=misc_dict['dbscan_epsilon'])
+if len(traces_list):
+    table_list = []
+    for trace_fn in traces_list:
+        with open(trace_fn, 'rb') as fh: trace_content = fh.read()
+        table_list.extend(parse_trace_file(trace_content, trace_fn, args.threads))
+    main_table.add_df_list(table_list)
+
+load_dict = dict(nb_states=misc_dict['nb_states'],
+                 features=features,
+                 data=main_table,
+                 nb_threads=args.threads)
+
+if 'buffer' in misc_dict:
+    load_dict['buffer'] = misc_dict['buffer']
+classifier = importlib.import_module('FRETboard.algorithms.'+model_name).Classifier(**load_dict)
 classifier.load_params(model_txt)
 
 # classify samples
-pred, logprob = classifier.predict(main_table.data.index)
+pred, logprob = [], []
+for idx in main_table.data.index:
+    pr, lp = classifier.predict(idx)
+    if args.remove_last_event:
+        pr = remove_last_event(pr)
+    pred.append(pr)
+    logprob.append(lp)
+
 
 if 'samples' in args.analysis_type:
     # Return one value for histogram of all samples in all traces
@@ -92,6 +121,10 @@ if 'samples' in args.analysis_type:
         label_mat = np.concatenate([p for pi, p in enumerate(pred) if group_bool[pi]])
         efret = efret_mat[label_mat == label_0based]
         efret = efret[np.invert(np.isnan(efret))]
+        if len(efret) > 40000:
+            efret = np.random.choice(efret, 40000, replace=False)
+        db_labels = DBSCAN(eps=0.005).fit_predict(efret.reshape(-1, 1))
+        efret = efret[db_labels == mode(db_labels)[0][0]]
         out_df.loc[group] = get_ssfret_dist(efret)
         plot_efret_hist(efret, label=group)
     plt.savefig(outdir + 'samples_hist.png', dpi=400)
@@ -112,6 +145,12 @@ if 'events' in args.analysis_type:
         events = [condense_sequence(val, lab) for val, lab in zip(main_table.data.loc[group_bool, 'E_FRET'], pred_group)]
         events = list(chain.from_iterable(events))
         efret = np.array([ev[2] for ev in events if ev[0] == label_0based])
+
+        if len(efret) > 40000:
+            efret = np.random.choice(efret, 40000, replace=False)
+        db_labels = DBSCAN(eps=0.005).fit_predict(efret.reshape(-1,1))
+        efret = efret[db_labels == mode(db_labels)[0][0]]
+
         out_df.loc[group] = get_ssfret_dist(efret)
         plot_efret_hist(efret, label=group)
     plt.savefig(outdir + 'events_hist.png', dpi=400)

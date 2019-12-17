@@ -11,7 +11,7 @@ import traceback
 from multiprocessing import Process
 # from tornado import gen
 import threading
-from threading import Thread
+from threading import Thread, Event
 import asyncio
 from time import sleep
 from joblib import Parallel
@@ -96,6 +96,7 @@ class Gui(object):
         self.classifier_source_buffer = None
         self.fn_buffer = []
         self.new_data_buffer = []
+        self.params_changed = False
         self.loading_in_progress = False
         self.training_in_progress = False
         self.prediction_in_progress = False
@@ -255,7 +256,7 @@ possible, and the error message below
         """
         while self.main_thread.is_alive():
             if not len(self.new_data_buffer):
-                sleep(1)
+                Event().wait(0.01)
                 continue
             self.loading_in_progress = True
             if self.new_cur == 0:
@@ -288,7 +289,6 @@ possible, and the error message below
                         self.notify(f'{fi} ({pct_done} %) traces from {fn_clean} loaded')
                         print_thres += 10
                     if not self.model_loaded and not self.training_in_progress:
-                        self.training_in_progress = True
                         self.train_trigger()
                 self.notify('Done')
                 # df_list = parse_trace_file(file_contents, fn, self.nb_threads, self.parallel_pool)
@@ -304,7 +304,6 @@ possible, and the error message below
                     self.append_fn(fn)
                     # Already start training if no previous model exists and more than 100 traces are loaded
                     if not self.model_loaded and not self.training_in_progress:
-                        self.training_in_progress = True
                         self.train_trigger()
             self.new_cur += 1
 
@@ -323,7 +322,7 @@ possible, and the error message below
             eps_series = self.data.data.eps
             sb_indices = eps_series.index[np.nan_to_num(eps_series) != np.nan_to_num(self.data.eps)]
             if not len(sb_indices):
-                sleep(1)
+                Event().wait(0.01)
                 continue
             if self.cur_example_idx in sb_indices:
                 idx = self.cur_example_idx
@@ -336,7 +335,9 @@ possible, and the error message below
     def predict(self):
         while self.main_thread.is_alive():
             try:
-                self.pred_fun()
+                pred_success = self.pred_fun()
+                if not pred_success:
+                    Event().wait(timeout=0.01)
             except Exception as e:
                 self.prediction_in_progress = False
                 self.notify_exception(e, traceback.format_exc(), 'prediction')
@@ -356,26 +357,28 @@ possible, and the error message below
             - has not been predicted yet: is_predicted is False
         """
         if not self.model_loaded:
-            sleep(1)
-            return
-        if self.training_in_progress or self.eps_change_in_progress:
+            # sleep(1)
+            return False
+        if self.params_changed or self.eps_change_in_progress:
             if not self.user_notified_of_training:
                 self.notify('Parameters or classification changed, pausing prediction...')
                 self.user_notified_of_training = True
-            sleep(1)
-            return
+            # sleep(1)
+            return False
+        if self.training_in_progress:
+            return False
         if self.cur_example_idx is None:
-            sleep(1)
-            return
+            # sleep(1)
+            return False
         self.prediction_in_progress = True
         is_predicted_series = self.data.data_clean.is_predicted.copy().astype(bool)
         if not len(is_predicted_series):
-            return
+            return False
         not_predicted_indices = is_predicted_series.index[np.invert(is_predicted_series)]
         if not len(not_predicted_indices):
             self.prediction_in_progress = False
-            sleep(1)
-            return
+            # sleep(1)
+            return False
         if self.cur_example_idx in not_predicted_indices:
             idx = self.cur_example_idx
         else:
@@ -391,6 +394,7 @@ possible, and the error message below
         else:
             self.redraw_info_trigger()
         self.prediction_in_progress = False
+        return True
 
 
     def get_buffer_state_matrix(self):
@@ -413,13 +417,14 @@ possible, and the error message below
             # Ensure training does not clash with prediction
             self.training_in_progress = True
             while self.prediction_in_progress:
-                sleep(0.1)
+                Event().wait(0.01)
             if self.buffer_updated:
                 for idx in self.data.data.loc[self.data.data.is_labeled].index:
                     self.data.set_value(idx, 'edge_labels', self.get_edge_labels(self.data.data.loc[idx, 'labels']))
             self.classifier.train(supervision_influence=self.supervision_slider.value)
             self.data.data.is_predicted = False
             self.model_loaded = True
+            self.params_changed = False
             self.training_in_progress = False
             if self.cur_example_idx is None:
                 self.example_select.value = self.data.data_clean.index[0]
@@ -511,7 +516,7 @@ possible, and the error message below
             if not self.data.data.loc[new, 'is_predicted']:
                 self.notify('Predicting current example...')
             while not self.data.data.loc[new, 'is_predicted']:
-                sleep(0.5)
+                Event().wait(0.01)
             self.data.set_value(new, 'labels', self.data.data.loc[new, 'prediction'].copy())
             self.data.set_value(new, 'edge_labels', self.get_edge_labels(self.data.data.loc[new, 'labels']))
             self.data.set_value(new, 'is_labeled', True)
@@ -527,7 +532,7 @@ possible, and the error message below
         self.redraw_activated = False
         self.invalidate_cached_properties()
         if not self.data.data.loc[self.cur_example_idx, 'is_labeled']:
-            if not self.data.data.loc[self.cur_example_idx, 'is_predicted']: sleep(0.01)
+            if not self.data.data.loc[self.cur_example_idx, 'is_predicted']: Event().wait(0.01)
             self.data.data.at[self.cur_example_idx, 'labels'] = self.data.data.loc[self.cur_example_idx, 'prediction']
             self.data.data.loc[self.cur_example_idx, 'is_labeled'] = True
         nb_samples = self.i_don.size
@@ -583,10 +588,13 @@ possible, and the error message below
 
     def update_classification(self, attr, old, new):
         if len(new):
-            self.training_in_progress = True
+            self.params_changed = True
             self.source.selected.indices = []
             patch = {'labels': [(i, self.sel_state_slider.value - 1) for i in new],
                      'labels_pct': [(i, (self.sel_state_slider.value - 1) * 1.0 / (self.num_states_slider.value - 1)) for i in new]}
+            if not self.data.data.loc[self.cur_example_idx, 'is_labeled']:
+                self.data.data.at[self.cur_example_idx, 'labels'] = self.source.data['labels']
+                self.data.data.loc[self.cur_example_idx, 'is_labeled'] = True
             self.source.patch(patch)
             self.update_accuracy_hist()
             self.update_stats_text()
@@ -609,7 +617,7 @@ possible, and the error message below
     def update_eps(self):
         self.eps_change_in_progress = True
         while self.prediction_in_progress:
-            sleep(0.001)
+            Event().wait(0.01)
         if not len(self.bg_checkbox.active):
             self.data.eps = np.nan
             self.eps_change_in_progress = False
@@ -640,8 +648,8 @@ possible, and the error message below
     def update_feature_list(self, attr, old, new):
         if len(new) == 0: return
         if old == new: return
-        self.training_in_progress = True
-        while self.prediction_in_progress: sleep(0.01)
+        self.params_changed = True
+        while self.prediction_in_progress: Event().wait(0.01)
         self.classifier.feature_list = [feat for fi, feat in enumerate(self.feature_list) if fi in new]
         if len(self.data.data):
             self.data.data.is_predicted = False
@@ -670,20 +678,23 @@ possible, and the error message below
         if old == new:
             return
         self.classifier_class = importlib.import_module('FRETboard.algorithms.'+algo_dict[new]).Classifier
-        self.training_in_progress = True
+        self.params_changed = True
         self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, data=self.data, gui=self,
                                                 features=self.feature_list)
         if len(self.data.data):
             # self.train_trigger()
             self.update_example(None, None, self.cur_example_idx)
-        else:
-            self.training_in_progress = False
 
     def update_num_states(self, attr, old, new):
         if new != self.classifier.nb_states:
-            self.training_in_progress = True
-            while self.prediction_in_progress: sleep(0.01)
+            self.params_changed = True
+            while self.prediction_in_progress: Event().wait(0.01)
             self.data.data.is_labeled = False
+            self.data.data.labels = [[]] * len(self.data.data)
+            blank_labels = [(i, 0) for i in range(len(self.data.data.loc[self.cur_example_idx, 'i_don']))]
+            patch = {'labels': blank_labels,
+                     'labels_pct': blank_labels}
+            self.source.patch(patch)
             self.classifier = self.classifier_class(nb_states=new, data=self.data, gui=self, features=self.feature_list)
 
             # Update widget: show-me checkboxes
