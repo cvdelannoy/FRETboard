@@ -88,8 +88,9 @@ main_table = MainTable(dat_list, eps=misc_dict['dbscan_epsilon'])
 if len(traces_list):
     table_list = []
     for trace_fn in traces_list:
+        print(f'Processing {trace_fn}')
         with open(trace_fn, 'rb') as fh: trace_content = fh.read()
-        table_list.extend(parse_trace_file(trace_content, trace_fn, args.threads))
+        table_list.extend(parse_trace_file(trace_content, trace_fn, args.threads, misc_dict['dbscan_epsilon']))
     main_table.add_df_list(table_list)
 
 load_dict = dict(nb_states=misc_dict['nb_states'],

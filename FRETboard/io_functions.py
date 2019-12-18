@@ -41,7 +41,7 @@ def parallel_fn(f_array, fn_list, dt):
     return dt.data
 
 
-def parse_trace_file(file_contents, fn, threads, pool):
+def parse_trace_file(file_contents, fn, threads, eps):
     """
     Take contents extracted from .trace binary file, return list of [threads] MainTable objects
     """
@@ -57,6 +57,7 @@ def parse_trace_file(file_contents, fn, threads, pool):
     file_chunks = np.array_split(file_contents, threads, axis=1)
     fn_list = [f'{fn_clean}_{it}.dat' for it in range(file_contents.shape[1])]
     fn_chunks = np.array_split(fn_list, threads)
-    df_list = pool(delayed(parallel_fn)(fc, fnc, MainTable([]))
+
+    df_list = Parallel(n_jobs=threads)(delayed(parallel_fn)(fc, fnc, MainTable([], eps))
                    for fc, fnc in zip(file_chunks, fn_chunks))
     return df_list
