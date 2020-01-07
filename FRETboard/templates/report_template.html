@@ -53,6 +53,25 @@ Mean (mu) and standard deviation (sd) per state and feature.
 <h3>Transitions</h3>
 Estimates with 95% bootstrap confidence intervals.
 <div class="container"> {{ tm_table_div }} </div>
+<input type="button" id="dwn-btn" value="Download csv"/>
+<script>
+        function download(filename, text) {
+            var element = document.createElement('a');
+            element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+            element.setAttribute('download', filename);
+            element.style.display = 'none';
+            document.body.appendChild(element);
+            element.click();
+            document.body.removeChild(element);
+            }
+        // Start file download.
+        document.getElementById("dwn-btn").addEventListener("click", function(){
+        // Generate download of hello.txt file with some content
+        var text = "{{ transition_csv }}";
+        var filename = "FRETboard_transition_rates.csv";
+        download(filename, text);
+        }, false);
+</script>
 
 <h3>Sample fret efficiency per state</h3>
 {{ efret_hist }}

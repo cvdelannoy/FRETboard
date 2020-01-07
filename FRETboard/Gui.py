@@ -114,7 +114,7 @@ class Gui(object):
         self.sel_state_slider = Slider(title='Change selection to state', value=1, start=1,
                                        end=self.num_states_slider.value, step=1)
         self.bg_checkbox = CheckboxGroup(labels=[''], active=[])
-        self.bg_button = Button(label='Subtract background')
+        self.bg_button = Button(label='Apply')
         self.bg_test_button = Button(label='Test')
         self.eps_spinner = Spinner(value=9, step=1)
         self.supervision_slider = Slider(title='Influence supervision', value=1.0, start=0.0, end=1.0, step=0.01)
@@ -573,7 +573,7 @@ possible, and the error message below
         if self.loading_in_progress:
             self.notify('Please wait for data loading to finish before generating a report')
             return
-        if not np.all(self.data.data.is_predicted):
+        if not np.all(self.data.data_clean.is_predicted):
             self.notify('Please wait for prediction to finish before generating a report')
             return
         self.notify('Generating report, this may take a while...')
@@ -733,7 +733,7 @@ possible, and the error message below
             self.notify('Please wait for prediction to finish before downloading labeled data...')
             return
         tfh = tempfile.TemporaryDirectory()
-        for fn, tup in self.data.data.iterrows():
+        for fn, tup in self.data.data_clean.iterrows():
             sm_test = tup.labels if len(tup.labels) else tup.prediction
             sm_bool = [True for sm in self.saveme_checkboxes.active if sm in sm_test]
             if not any(sm_bool): continue
@@ -875,7 +875,12 @@ possible, and the error message below
         ts_manual.line('time', 'i_acc', color='#e41a1c', source=self.source, **line_opts)
         pred_vs_manual_panel = Panel(child=widgetbox(column(ts_manual,revert_labels_button)), title='Predicted')
 
-        tabs = Tabs(tabs=[ts_panel, efret_panel, corr_panel, i_sum_panel, pred_vs_manual_panel])
+        settings_panel = Panel(child=widgetbox(column(
+            row(Div(text='DBSCAN filter epsilon: ', height=15, width=80), widgetbox(self.eps_spinner, width=75),
+                widgetbox(self.bg_button, width=65), width=320)),
+            self.supervision_slider,
+            self.buffer_slider), title='Settings')
+        tabs = Tabs(tabs=[ts_panel, efret_panel, corr_panel, i_sum_panel, pred_vs_manual_panel, settings_panel])
 
         # accuracy histogram
         acc_hist = figure(toolbar_location=None, plot_width=275, plot_height=275, x_range=[0, 100],
@@ -904,9 +909,9 @@ possible, and the error message below
         state_curves.multi_line('xs', 'ys', line_color='color', source=self.state_source)
 
         # Stats in text
-        stats_text = column( row(Div(text='Accuracy (%): ', width=140, height=18), self.acc_text, height=18),
-                             row(Div(text='Mean log-posterior: ', width=140, height=18), self.posterior_text, height=18),
-                             row(Div(text='Manually classified (%): ', width=140, height=18), self.mc_text, height=18))
+        stats_text = column( row(Div(text='Accuracy (%): ', width=150, height=18), self.acc_text, height=18),
+                             row(Div(text='Mean log-posterior: ', width=150, height=18), self.posterior_text, height=18),
+                             row(Div(text='Manually classified (%): ', width=150, height=18), self.mc_text, height=18))
 
         # todo: Average accuracy and posterior
 
@@ -946,13 +951,9 @@ possible, and the error message below
                              width=300),
                          row(Div(text="DBSCAN background subtraction ", width=250, height=15),
                              widgetbox(self.bg_checkbox, width=25), width=300),
-                         row(Div(text='epsilon: ', height=15, width=60), widgetbox(self.eps_spinner, width=75),
-                             widgetbox(self.bg_button, width=65), width=300),
                          Div(text="<font size=4>2. Teach</font>", width=280, height=15),
                          self.num_states_slider,
                          self.sel_state_slider,
-                         self.supervision_slider,
-                         self.buffer_slider,
                          showme_col,
                          row(widgetbox(del_trace_button, width=100), widgetbox(train_button, width=100), widgetbox(new_example_button, width=100)),
                          Div(text="<font size=4>3. Save</font>", width=280, height=15),

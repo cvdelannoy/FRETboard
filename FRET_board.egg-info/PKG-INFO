@@ -1,4 +1,4 @@
-Metadata-Version: 1.1
+Metadata-Version: 1.2
 Name: FRET-board
 Version: 0.0.4
 Summary: Supervise FRET event detection algorithms
@@ -72,3 +72,4 @@ Keywords: FRET Forster resonance energy transfer supervised machine learning
 Platform: UNKNOWN
 Classifier: Programming Language :: Python :: 3
 Classifier: License :: OSI Approved :: MIT License
+Requires-Python: >=3.7

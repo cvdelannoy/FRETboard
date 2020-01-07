@@ -11,7 +11,7 @@ import traceback
 from multiprocessing import Process
 # from tornado import gen
 import threading
-from threading import Thread
+from threading import Thread, Event
 import asyncio
 from time import sleep
 from joblib import Parallel
@@ -96,11 +96,13 @@ class Gui(object):
         self.classifier_source_buffer = None
         self.fn_buffer = []
         self.new_data_buffer = []
+        self.params_changed = False
         self.loading_in_progress = False
         self.training_in_progress = False
         self.prediction_in_progress = False
         self.eps_change_in_progress = False
         self.redraw_activated = False
+        self.buffer_updated = False
         self.user_notified_of_training = False
         self.predict_error_count = 0
 
@@ -112,7 +114,7 @@ class Gui(object):
         self.sel_state_slider = Slider(title='Change selection to state', value=1, start=1,
                                        end=self.num_states_slider.value, step=1)
         self.bg_checkbox = CheckboxGroup(labels=[''], active=[])
-        self.bg_button = Button(label='Subtract background')
+        self.bg_button = Button(label='Apply')
         self.bg_test_button = Button(label='Test')
         self.eps_spinner = Spinner(value=9, step=1)
         self.supervision_slider = Slider(title='Influence supervision', value=1.0, start=0.0, end=1.0, step=0.01)
@@ -254,7 +256,7 @@ possible, and the error message below
         """
         while self.main_thread.is_alive():
             if not len(self.new_data_buffer):
-                sleep(1)
+                Event().wait(0.01)
                 continue
             self.loading_in_progress = True
             if self.new_cur == 0:
@@ -287,7 +289,6 @@ possible, and the error message below
                         self.notify(f'{fi} ({pct_done} %) traces from {fn_clean} loaded')
                         print_thres += 10
                     if not self.model_loaded and not self.training_in_progress:
-                        self.training_in_progress = True
                         self.train_trigger()
                 self.notify('Done')
                 # df_list = parse_trace_file(file_contents, fn, self.nb_threads, self.parallel_pool)
@@ -303,7 +304,6 @@ possible, and the error message below
                     self.append_fn(fn)
                     # Already start training if no previous model exists and more than 100 traces are loaded
                     if not self.model_loaded and not self.training_in_progress:
-                        self.training_in_progress = True
                         self.train_trigger()
             self.new_cur += 1
 
@@ -322,7 +322,7 @@ possible, and the error message below
             eps_series = self.data.data.eps
             sb_indices = eps_series.index[np.nan_to_num(eps_series) != np.nan_to_num(self.data.eps)]
             if not len(sb_indices):
-                sleep(1)
+                Event().wait(0.01)
                 continue
             if self.cur_example_idx in sb_indices:
                 idx = self.cur_example_idx
@@ -335,7 +335,9 @@ possible, and the error message below
     def predict(self):
         while self.main_thread.is_alive():
             try:
-                self.pred_fun()
+                pred_success = self.pred_fun()
+                if not pred_success:
+                    Event().wait(timeout=0.01)
             except Exception as e:
                 self.prediction_in_progress = False
                 self.notify_exception(e, traceback.format_exc(), 'prediction')
@@ -355,26 +357,28 @@ possible, and the error message below
             - has not been predicted yet: is_predicted is False
         """
         if not self.model_loaded:
-            sleep(1)
-            return
-        if self.training_in_progress or self.eps_change_in_progress:
+            # sleep(1)
+            return False
+        if self.params_changed or self.eps_change_in_progress:
             if not self.user_notified_of_training:
-                self.notify('Parameters changed, pausing prediction...')
+                self.notify('Parameters or classification changed, pausing prediction...')
                 self.user_notified_of_training = True
-            sleep(1)
-            return
+            # sleep(1)
+            return False
+        if self.training_in_progress:
+            return False
         if self.cur_example_idx is None:
-            sleep(1)
-            return
+            # sleep(1)
+            return False
         self.prediction_in_progress = True
         is_predicted_series = self.data.data_clean.is_predicted.copy().astype(bool)
         if not len(is_predicted_series):
-            return
+            return False
         not_predicted_indices = is_predicted_series.index[np.invert(is_predicted_series)]
         if not len(not_predicted_indices):
             self.prediction_in_progress = False
-            sleep(1)
-            return
+            # sleep(1)
+            return False
         if self.cur_example_idx in not_predicted_indices:
             idx = self.cur_example_idx
         else:
@@ -390,6 +394,7 @@ possible, and the error message below
         else:
             self.redraw_info_trigger()
         self.prediction_in_progress = False
+        return True
 
 
     def get_buffer_state_matrix(self):
@@ -409,12 +414,17 @@ possible, and the error message below
 
     def train(self):
         try:
+            # Ensure training does not clash with prediction
             self.training_in_progress = True
             while self.prediction_in_progress:
-                sleep(0.1)
+                Event().wait(0.01)
+            if self.buffer_updated:
+                for idx in self.data.data.loc[self.data.data.is_labeled].index:
+                    self.data.set_value(idx, 'edge_labels', self.get_edge_labels(self.data.data.loc[idx, 'labels']))
             self.classifier.train(supervision_influence=self.supervision_slider.value)
             self.data.data.is_predicted = False
             self.model_loaded = True
+            self.params_changed = False
             self.training_in_progress = False
             if self.cur_example_idx is None:
                 self.example_select.value = self.data.data_clean.index[0]
@@ -487,6 +497,10 @@ possible, and the error message below
                 oh_counter = overhang_right
         return edge_labels
 
+    def update_buffer(self, attr, old, new):
+        if old == new: return
+        self.buffer_updated = True
+
     def update_example(self, attr, old, new):
         """
         Update the example currently on the screen.
@@ -502,7 +516,7 @@ possible, and the error message below
             if not self.data.data.loc[new, 'is_predicted']:
                 self.notify('Predicting current example...')
             while not self.data.data.loc[new, 'is_predicted']:
-                sleep(0.5)
+                Event().wait(0.01)
             self.data.set_value(new, 'labels', self.data.data.loc[new, 'prediction'].copy())
             self.data.set_value(new, 'edge_labels', self.get_edge_labels(self.data.data.loc[new, 'labels']))
             self.data.set_value(new, 'is_labeled', True)
@@ -514,17 +528,11 @@ possible, and the error message below
         self.redraw_trigger()
         # self._redraw_all()
 
-    def update_example_retrain(self):
-        """
-        Assume current example is labeled correctly, retrain and display new random example
-        """
-        self.train_trigger()
-
     def _redraw_all(self):
         self.redraw_activated = False
         self.invalidate_cached_properties()
         if not self.data.data.loc[self.cur_example_idx, 'is_labeled']:
-            if not self.data.data.loc[self.cur_example_idx, 'is_predicted']: sleep(0.01)
+            if not self.data.data.loc[self.cur_example_idx, 'is_predicted']: Event().wait(0.01)
             self.data.data.at[self.cur_example_idx, 'labels'] = self.data.data.loc[self.cur_example_idx, 'prediction']
             self.data.data.loc[self.cur_example_idx, 'is_labeled'] = True
         nb_samples = self.i_don.size
@@ -565,7 +573,7 @@ possible, and the error message below
         if self.loading_in_progress:
             self.notify('Please wait for data loading to finish before generating a report')
             return
-        if not np.all(self.data.data.is_predicted):
+        if not np.all(self.data.data_clean.is_predicted):
             self.notify('Please wait for prediction to finish before generating a report')
             return
         self.notify('Generating report, this may take a while...')
@@ -580,9 +588,13 @@ possible, and the error message below
 
     def update_classification(self, attr, old, new):
         if len(new):
+            self.params_changed = True
             self.source.selected.indices = []
             patch = {'labels': [(i, self.sel_state_slider.value - 1) for i in new],
                      'labels_pct': [(i, (self.sel_state_slider.value - 1) * 1.0 / (self.num_states_slider.value - 1)) for i in new]}
+            if not self.data.data.loc[self.cur_example_idx, 'is_labeled']:
+                self.data.data.at[self.cur_example_idx, 'labels'] = self.source.data['labels']
+                self.data.data.loc[self.cur_example_idx, 'is_labeled'] = True
             self.source.patch(patch)
             self.update_accuracy_hist()
             self.update_stats_text()
@@ -605,7 +617,7 @@ possible, and the error message below
     def update_eps(self):
         self.eps_change_in_progress = True
         while self.prediction_in_progress:
-            sleep(0.001)
+            Event().wait(0.01)
         if not len(self.bg_checkbox.active):
             self.data.eps = np.nan
             self.eps_change_in_progress = False
@@ -636,8 +648,8 @@ possible, and the error message below
     def update_feature_list(self, attr, old, new):
         if len(new) == 0: return
         if old == new: return
-        self.training_in_progress = True
-        while self.prediction_in_progress: sleep(0.01)
+        self.params_changed = True
+        while self.prediction_in_progress: Event().wait(0.01)
         self.classifier.feature_list = [feat for fi, feat in enumerate(self.feature_list) if fi in new]
         if len(self.data.data):
             self.data.data.is_predicted = False
@@ -666,20 +678,23 @@ possible, and the error message below
         if old == new:
             return
         self.classifier_class = importlib.import_module('FRETboard.algorithms.'+algo_dict[new]).Classifier
-        self.training_in_progress = True
+        self.params_changed = True
         self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, data=self.data, gui=self,
                                                 features=self.feature_list)
         if len(self.data.data):
             # self.train_trigger()
             self.update_example(None, None, self.cur_example_idx)
-        else:
-            self.training_in_progress = False
 
     def update_num_states(self, attr, old, new):
         if new != self.classifier.nb_states:
-            self.training_in_progress = True
-            while self.prediction_in_progress: sleep(0.01)
+            self.params_changed = True
+            while self.prediction_in_progress: Event().wait(0.01)
             self.data.data.is_labeled = False
+            self.data.data.labels = [[]] * len(self.data.data)
+            blank_labels = [(i, 0) for i in range(len(self.data.data.loc[self.cur_example_idx, 'i_don']))]
+            patch = {'labels': blank_labels,
+                     'labels_pct': blank_labels}
+            self.source.patch(patch)
             self.classifier = self.classifier_class(nb_states=new, data=self.data, gui=self, features=self.feature_list)
 
             # Update widget: show-me checkboxes
@@ -718,7 +733,7 @@ possible, and the error message below
             self.notify('Please wait for prediction to finish before downloading labeled data...')
             return
         tfh = tempfile.TemporaryDirectory()
-        for fn, tup in self.data.data.iterrows():
+        for fn, tup in self.data.data_clean.iterrows():
             sm_test = tup.labels if len(tup.labels) else tup.prediction
             sm_bool = [True for sm in self.saveme_checkboxes.active if sm in sm_test]
             if not any(sm_bool): continue
@@ -736,6 +751,7 @@ possible, and the error message below
 
     def del_trace(self):
         self.data.del_tuple(self.cur_example_idx)
+        self.new_example()
         # nonjunk_bool = np.logical_and(self.data.data.is_labeled, np.invert(self.data.data.is_junk))
         # if any(nonjunk_bool):  # Cant predict without positive examples
         #     df = self.data.data.loc[self.data.data.is_labeled]
@@ -743,7 +759,6 @@ possible, and the error message below
         #     predicted_junk = lsh_classify(x, self.data.data.is_junk, x, bits=32)
         #     self.data.data.predicted_junk = np.logical_or(self.data.data.junk, predicted_junk)
         #     # self.example_select.options.remove(self.cur_example_idx)
-        self.update_example_retrain()
 
     def update_showme(self, attr, old, new):
         if old == new: return
@@ -860,7 +875,12 @@ possible, and the error message below
         ts_manual.line('time', 'i_acc', color='#e41a1c', source=self.source, **line_opts)
         pred_vs_manual_panel = Panel(child=widgetbox(column(ts_manual,revert_labels_button)), title='Predicted')
 
-        tabs = Tabs(tabs=[ts_panel, efret_panel, corr_panel, i_sum_panel, pred_vs_manual_panel])
+        settings_panel = Panel(child=widgetbox(column(
+            row(Div(text='DBSCAN filter epsilon: ', height=15, width=80), widgetbox(self.eps_spinner, width=75),
+                widgetbox(self.bg_button, width=65), width=320)),
+            self.supervision_slider,
+            self.buffer_slider), title='Settings')
+        tabs = Tabs(tabs=[ts_panel, efret_panel, corr_panel, i_sum_panel, pred_vs_manual_panel, settings_panel])
 
         # accuracy histogram
         acc_hist = figure(toolbar_location=None, plot_width=275, plot_height=275, x_range=[0, 100],
@@ -889,9 +909,9 @@ possible, and the error message below
         state_curves.multi_line('xs', 'ys', line_color='color', source=self.state_source)
 
         # Stats in text
-        stats_text = column( row(Div(text='Accuracy (%): ', width=140, height=18), self.acc_text, height=18),
-                             row(Div(text='Mean log-posterior: ', width=140, height=18), self.posterior_text, height=18),
-                             row(Div(text='Manually classified (%): ', width=140, height=18), self.mc_text, height=18))
+        stats_text = column( row(Div(text='Accuracy (%): ', width=150, height=18), self.acc_text, height=18),
+                             row(Div(text='Mean log-posterior: ', width=150, height=18), self.posterior_text, height=18),
+                             row(Div(text='Manually classified (%): ', width=150, height=18), self.mc_text, height=18))
 
         # todo: Average accuracy and posterior
 
@@ -910,6 +930,7 @@ possible, and the error message below
         self.num_states_slider.on_change('value', self.update_num_states)
         self.state_radio.on_change('active', lambda attr, old, new: self.update_state_curves())
         self.features_checkboxes.on_change('active', self.update_feature_list)
+        self.buffer_slider.on_change('value', self.update_buffer)
 
         # hidden holders to generate saves
         self.report_holder.js_on_change('text', CustomJS(args=dict(file_source=self.html_source),
@@ -930,13 +951,9 @@ possible, and the error message below
                              width=300),
                          row(Div(text="DBSCAN background subtraction ", width=250, height=15),
                              widgetbox(self.bg_checkbox, width=25), width=300),
-                         row(Div(text='epsilon: ', height=15, width=60), widgetbox(self.eps_spinner, width=75),
-                             widgetbox(self.bg_button, width=65), width=300),
                          Div(text="<font size=4>2. Teach</font>", width=280, height=15),
                          self.num_states_slider,
                          self.sel_state_slider,
-                         self.supervision_slider,
-                         self.buffer_slider,
                          showme_col,
                          row(widgetbox(del_trace_button, width=100), widgetbox(train_button, width=100), widgetbox(new_example_button, width=100)),
                          Div(text="<font size=4>3. Save</font>", width=280, height=15),

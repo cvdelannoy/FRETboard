@@ -79,7 +79,7 @@ def get_derived_features(i_don, i_acc):
     i_sum = np.sum((i_don, i_acc), axis=0)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        E_FRET = np.divide(i_acc, np.sum((i_don, i_acc), axis=0))
+        E_FRET = np.divide(i_acc, i_sum)
     E_FRET[i_sum == 0] = np.nan  # set to nan where i_don and i_acc after background correction cancel out
 
     correlation_coefficient = np.full_like(E_FRET, np.nan)

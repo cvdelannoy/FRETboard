@@ -2,6 +2,7 @@ import os
 import io
 import numpy as np
 
+from itertools import permutations
 import matplotlib
 matplotlib.use('Agg')
 import seaborn as sns
@@ -137,7 +138,7 @@ class FretReport(object):
         ed_scatter = self.draw_Efret_duration_plot()
         tdp = self.draw_transition_density_plot()
         efret_hist = self.draw_efret_histograms()
-        tm_table, em_table = self.get_param_tables()
+        tm_table, em_table, tm_str = self.get_param_tables()
         # kinetic_table = self.get_stats_tables()
         with open(f'{__location__}/templates/report_template.html', 'r') as fh:
             template = Template(fh.read())
@@ -152,6 +153,7 @@ class FretReport(object):
                                tm_table_div=tm_table,
                                em_table_div=em_table,
                                date=print_timestamp(),
+                               transition_csv=tm_str,
                                model_params=self.model_params())
 
     # --- plotting functions ---
@@ -212,7 +214,7 @@ class FretReport(object):
         # time spent in each state
         time_dict = {}
         tst = []
-        mean_times = self.data.data_clean.time.apply( lambda x: (x[-1] - x[0]) / len(x))
+        mean_times = self.data.data_clean.time.apply(lambda x: (x[-1] - x[0]) / len(x))
         for state in range(self.classifier.nb_states):
             tst.append(mean_times * self.out_labels.apply(lambda x: np.sum(x == state)))
             time_dict[state] = np.sum(mean_times * self.out_labels.apply(lambda x: np.sum(x == state)))
@@ -244,7 +246,12 @@ class FretReport(object):
         state_list_bold = [f'<b>{s}</b>' for s in state_list]
         ci_vecs = self.classifier.confidence_intervals
         tm_trained = self.classifier.get_tm(self.classifier.trained).to_numpy()
-
+        transition_list = [''.join(it) for it in itertools.permutations(state_list, 2)]
+        msk = np.invert(np.eye(nb_states, dtype=bool))
+        csv_df = pd.DataFrame({'rate': tm_trained[msk],
+                              'low_bound': ci_vecs[:,:,0][msk],
+                              'high_bound': ci_vecs[:,:,1][msk]}, index=transition_list)
+        csv_str = csv_df.to_csv().replace('\n', '\\n')
         tm1 = np.char.array(tm_trained.round(3).astype(str))
         tm_newline = np.tile(np.char.array('<br/>'), (nb_states, nb_states))
         tm_sm = np.tile(np.char.array('<small>'), (nb_states, nb_states))
@@ -268,7 +275,7 @@ class FretReport(object):
         em_obj = tabulate(em_dict, tablefmt='html',
                           headers=em_cols, showindex=state_list_bold,
                           numalign='center', stralign='center')
-        return tm_obj, em_obj
+        return tm_obj, em_obj, csv_str
         # todo: accuracy/posterior probability estimates: hist + text
         # todo: gauss curves per model
 
