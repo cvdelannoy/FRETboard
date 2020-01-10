@@ -18,6 +18,7 @@ FRETboard/io_functions.py
 FRETboard/lsh_bin_selection.py
 FRETboard/main.py
 FRETboard/algorithms/EdgeAwareHmm.py
+FRETboard/algorithms/SubstateHmm.py
 FRETboard/algorithms/VanillaHmm.py
 FRETboard/js_widgets/download_csv.js
 FRETboard/js_widgets/download_datzip.js
