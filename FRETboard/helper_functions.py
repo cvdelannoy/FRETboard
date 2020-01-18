@@ -4,6 +4,7 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 import warnings
 
+np.seterr(all='raise')
 
 def print_timestamp():
     dt = datetime.now().strftime('%y-%m-%d_%H:%M:%S')
@@ -27,6 +28,10 @@ def rolling_cross_correlation(don, acc,  window):
 
 
 def rolling_corr_coef(don, acc,  window):
+    """
+    Calculate rolling window correlation coefficient between don and acc, over window of size window.
+    NOTE: will return np.nan if either don or acc is filled with all the same values!
+    """
     return np.array([np.corrcoef(a, b)[0, 1] for a, b in zip(rolling_window(acc, window), rolling_window(don, window))])
 
 
@@ -83,7 +88,9 @@ def get_derived_features(i_don, i_acc):
     E_FRET[i_sum == 0] = np.nan  # set to nan where i_don and i_acc after background correction cancel out
 
     correlation_coefficient = np.full_like(E_FRET, np.nan)
-    correlation_coefficient[ss:-ss] = rolling_corr_coef(i_don, i_acc, window)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        correlation_coefficient[ss:-ss] = rolling_corr_coef(i_don, i_acc, window)
     E_FRET_sd = np.full_like(E_FRET, np.nan)
     E_FRET_sd[ss:-ss] = rolling_var(E_FRET, window)
     i_sum_sd = np.full_like(E_FRET, np.nan)

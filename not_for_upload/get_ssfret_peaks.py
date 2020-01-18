@@ -11,6 +11,7 @@ from FRETboard.io_functions import parse_trace_file
 from itertools import chain
 import importlib
 import yaml
+from itertools import product
 
 import seaborn as sns
 import numpy as np
@@ -20,7 +21,7 @@ from scipy.stats import norm
 from joblib import Parallel, delayed
 
 def plot_efret_hist(efret, label=None):
-    sns.distplot(efret, bins=50, label=label)
+    sns.distplot(efret, bins=np.arange(0, 1, 0.01), label=label)
     plt.xlabel('E_FRET')
     plt.ylabel('count')
     plt.legend()
@@ -52,8 +53,8 @@ parser.add_argument('--indir', type=str, required=True, nargs='+',
                     help='Input directories/files')
 parser.add_argument('--outdir', type=str, required=True,
                     help='output directory')
-parser.add_argument('--label', type=int, required=True,
-                    help='Number of the class for which ssFRET estimate should be returned.')
+parser.add_argument('--states', type=int, required=True, nargs='+',
+                    help='States for which ssFRET estimate should be returned.')
 parser.add_argument('--model', type=str, required=True,
                     help='Model file produced by FRETboard.')
 parser.add_argument('--analysis-type', type=str, nargs='+', choices=['samples', 'traces', 'events'],
@@ -70,7 +71,7 @@ parser.add_argument('--remove-last-event', action='store_true',
 args = parser.parse_args()
 
 outdir = parse_output_dir(args.outdir, clean=False)
-label_0based = args.label - 1
+states_0based = [st - 1 for st in args.states]
 
 
 # load model
@@ -120,14 +121,15 @@ if 'samples' in args.analysis_type:
         group_bool = main_table.data.index.str.contains(group)
         efret_mat = np.concatenate(main_table.data.loc[group_bool, 'E_FRET'].to_numpy())
         label_mat = np.concatenate([p for pi, p in enumerate(pred) if group_bool[pi]])
-        efret = efret_mat[label_mat == label_0based]
-        efret = efret[np.invert(np.isnan(efret))]
-        if len(efret) > 40000:
-            efret = np.random.choice(efret, 40000, replace=False)
-        db_labels = DBSCAN(eps=0.005).fit_predict(efret.reshape(-1, 1))
-        efret = efret[db_labels == mode(db_labels)[0][0]]
-        out_df.loc[group] = get_ssfret_dist(efret)
-        plot_efret_hist(efret, label=group)
+        for st in states_0based:
+            efret = efret_mat[label_mat == st]
+            efret = efret[np.invert(np.isnan(efret))]
+            if len(efret) > 40000:
+                efret = np.random.choice(efret, 40000, replace=False)
+            db_labels = DBSCAN(eps=0.005).fit_predict(efret.reshape(-1, 1))
+            efret = efret[db_labels == mode(db_labels)[0][0]]
+            out_df.loc[group] = get_ssfret_dist(efret)
+            plot_efret_hist(efret, label=f'{group}_s{st}')
     plt.savefig(outdir + 'samples_hist.png', dpi=400)
 
     # superresolution distributions
@@ -139,21 +141,23 @@ if 'samples' in args.analysis_type:
 if 'events' in args.analysis_type:
     # Average E_FRET over events, return one value for histogram of events of all traces
     plt.clf()
-    out_df = pd.DataFrame(index=args.groups, columns=['mu', 'sd', 'srsd', 'n_samples'])
+    out_df = pd.DataFrame(index=[f'{gr}_s{st}' for gr, st in product(*[args.groups, states_0based])],
+                          columns=['mu', 'sd', 'srsd', 'n_samples'])
     for group in args.groups:
         group_bool = main_table.data.index.str.contains(group)
         pred_group = [p for pi, p in enumerate(pred) if group_bool[pi]]
         events = [condense_sequence(val, lab) for val, lab in zip(main_table.data.loc[group_bool, 'E_FRET'], pred_group)]
         events = list(chain.from_iterable(events))
-        efret = np.array([ev[2] for ev in events if ev[0] == label_0based])
+        for st in states_0based:
+            efret = np.array([ev[2] for ev in events if ev[0] == st])
 
-        if len(efret) > 40000:
-            efret = np.random.choice(efret, 40000, replace=False)
-        db_labels = DBSCAN(eps=0.005).fit_predict(efret.reshape(-1,1))
-        efret = efret[db_labels == mode(db_labels)[0][0]]
+            if len(efret) > 40000:
+                efret = np.random.choice(efret, 40000, replace=False)
+            db_labels = DBSCAN(eps=0.005).fit_predict(efret.reshape(-1,1))
+            efret = efret[db_labels == mode(db_labels)[0][0]]
 
-        out_df.loc[group] = get_ssfret_dist(efret)
-        plot_efret_hist(efret, label=group)
+            out_df.loc[f'{group}_s{st}'] = get_ssfret_dist(efret)
+            plot_efret_hist(efret, label=f'{group}_s{st}')
     plt.savefig(outdir + 'events_hist.png', dpi=400)
 
     # superresolution distributions
@@ -162,31 +166,32 @@ if 'events' in args.analysis_type:
     plt.savefig(outdir + 'events_sr_dists.png', dpi=400)
     out_df.to_csv(outdir + 'events_stats.csv')
 
-if 'traces' in args.analysis_type:
-    # Return one value per trace, based on sample histogram
-    for ii, i in enumerate(main_table.data.index):
-        main_table.data.at[i, "prediction"] = pred[ii]
-    filtered_df = main_table.data.loc[main_table.data.prediction.apply(lambda x: np.any(x == label_0based)), :]
-    dist_list = Parallel(n_jobs=args.threads)(delayed(get_ssfret_dist)(x.E_FRET[x.prediction == label_0based], xi)
-                                  for xi, x in filtered_df.iterrows())
-    dist_df = pd.DataFrame.from_dict({idx: [mu, sd, srsd, n_points] for mu, sd, srsd, n_points, idx in dist_list},
-                                     orient='index', columns=['mu', 'sd', 'srsd', 'n_points'])
-    # plotting
-    plt.clf()
-    support = np.linspace(0.0, 1.0, 200)
-    df_list = []
-    # plot_df = pd.DataFrame(columns=['E_FRET', 'density', 'group', 'trace'], index=dist_df.index)
-    for group in args.groups:
-        for fn, f in dist_df.loc[dist_df.index.str.contains(group)].iterrows():
-            density = norm(f.mu, f.srsd).pdf(support)
-            df_list.append(pd.DataFrame({'E_FRET': support, 'density': density,
-                                         'group': group, 'trace': fn}))
-    plot_df = pd.concat(df_list)
-    sns.lineplot(x='E_FRET', y='density', hue='group', units='trace', estimator=None, data=plot_df)
-    plt.legend()
-    plt.savefig(outdir + 'traces_sr_dists.png', dpi=400)
-
-    dist_df.to_csv(outdir + 'traces_stats.csv')
+# if 'traces' in args.analysis_type:
+#     # Return one value per trace, based on sample histogram
+#     for ii, i in enumerate(main_table.data.index):
+#         main_table.data.at[i, "prediction"] = pred[ii]
+#     for st in states_0based:
+#     filtered_df = main_table.data.loc[main_table.data.prediction.apply(lambda x: np.any(x == label_0based)), :]
+#     dist_list = Parallel(n_jobs=args.threads)(delayed(get_ssfret_dist)(x.E_FRET[x.prediction == label_0based], xi)
+#                                   for xi, x in filtered_df.iterrows())
+#     dist_df = pd.DataFrame.from_dict({idx: [mu, sd, srsd, n_points] for mu, sd, srsd, n_points, idx in dist_list},
+#                                      orient='index', columns=['mu', 'sd', 'srsd', 'n_points'])
+#     # plotting
+#     plt.clf()
+#     support = np.linspace(0.0, 1.0, 200)
+#     df_list = []
+#     # plot_df = pd.DataFrame(columns=['E_FRET', 'density', 'group', 'trace'], index=dist_df.index)
+#     for group in args.groups:
+#         for fn, f in dist_df.loc[dist_df.index.str.contains(group)].iterrows():
+#             density = norm(f.mu, f.srsd).pdf(support)
+#             df_list.append(pd.DataFrame({'E_FRET': support, 'density': density,
+#                                          'group': group, 'trace': fn}))
+#     plot_df = pd.concat(df_list)
+#     sns.lineplot(x='E_FRET', y='density', hue='group', units='trace', estimator=None, data=plot_df)
+#     plt.legend()
+#     plt.savefig(outdir + 'traces_sr_dists.png', dpi=400)
+#
+#     dist_df.to_csv(outdir + 'traces_stats.csv')
 
     # heatmap plot
     # dist_mat = pd.DataFrame(columns=dist_df.index, index=dist_df.index)

@@ -24,7 +24,7 @@ from bokeh.layouts import row, column, widgetbox
 from bokeh.plotting import figure, curdoc
 from bokeh.models import ColumnDataSource, LinearColorMapper#, CustomJS
 from bokeh.models.callbacks import CustomJS
-from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Div, CheckboxButtonGroup, CheckboxGroup, Spinner
+from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Div, CheckboxButtonGroup, CheckboxGroup, Spinner, TextInput
 from bokeh.models.widgets.panels import Panel, Tabs
 from tornado.ioloop import IOLoop
 from tornado import gen
@@ -110,13 +110,17 @@ class Gui(object):
         # widgets
         self.algo_select = Select(title='Algorithm:', value=list(algo_dict)[0], options=list(algo_dict))
         self.example_select = Select(title='Current example', value='None', options=['None'])
-        self.num_states_slider = Slider(title='Number of states', value=nb_states, start=2, end=10, step=1)
-        self.sel_state_slider = Slider(title='Change selection to state', value=1, start=1,
-                                       end=self.num_states_slider.value, step=1)
+        self.num_states_slider = Slider(title='Number of states', value=nb_states, start=2, end=10, step=1,
+                                        name='num_states_slider')
+        # self.sel_state_slider = Slider(title='Change selection to state', value=1, start=1,
+        #                                end=self.num_states_slider.value, step=1)
+        self.sel_state = Div(text='1', name='sel_state')
         self.bg_checkbox = CheckboxGroup(labels=[''], active=[])
         self.bg_button = Button(label='Apply')
         self.bg_test_button = Button(label='Test')
         self.eps_spinner = Spinner(value=9, step=1)
+        self.framerate_spinner = Spinner(value=10, step=1)
+        self.remove_last_checkbox = CheckboxGroup(labels=[''], active=[])
         self.supervision_slider = Slider(title='Influence supervision', value=1.0, start=0.0, end=1.0, step=0.01)
         self.buffer_slider = Slider(title='Buffer', value=3, start=0, end=20, step=1)
         self.notification = PreText(text='', width=1000, height=15)
@@ -124,7 +128,9 @@ class Gui(object):
         self.posterior_text = PreText(text='N/A')
         self.mc_text = PreText(text='0%')
         self.report_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
-        self.datzip_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
+        self.datzip_holder = PreText(text='', css_classes=['hidden'])
+        # self.keystroke_holder = TextInput(value='test', name='keystroke_holder')  # hidden holder to generate js callbacks
+        # self.keystroke_holder = PreText(text='test', name='keystroke_holder')
 
         self.features_checkboxes = CheckboxGroup(labels=[''] * len(self.feature_list), active=[0, 1, 2, 3, 4])
         self.state_radio = RadioGroup(labels=[''] * len(self.feature_list), active=0)
@@ -151,6 +157,7 @@ class Gui(object):
             data=dict(xs=[np.arange(0, 1, 0.01)] * self.num_states_slider.value,
                       ys=[np.zeros(100, dtype=float)] * self.num_states_slider.value,
                       color=self.curve_colors))
+        self.keystroke_source = ColumnDataSource(data=dict(value=[]))
         self.loaded_model_source = ColumnDataSource(data=dict(file_contents=[]))
         self.classifier_source = ColumnDataSource(data=dict(params=[]))
         self.html_source = ColumnDataSource(data=dict(html_text=[]))
@@ -280,9 +287,11 @@ possible, and the error message below
 
                 fn_list = [f'{fn_clean}_{it}.dat' for it in range(nb_samples)]
                 print_thres = 10
+                sampling_freq = 1.0 / self.framerate_spinner.value
                 for fi, f in enumerate(np.hsplit(file_contents, file_contents.shape[1])):
                     f = f.squeeze()
-                    self.data.add_tuple(np.row_stack((np.arange(f.shape[1]), f)), fn_list[fi])
+                    time = np.arange(f.shape[1]) * sampling_freq
+                    self.data.add_tuple(np.row_stack((time, f)), fn_list[fi])
                     self.append_fn(fn_list[fi])
                     pct_done = int(fi / nb_samples * 100)
                     if pct_done > print_thres:
@@ -357,18 +366,15 @@ possible, and the error message below
             - has not been predicted yet: is_predicted is False
         """
         if not self.model_loaded:
-            # sleep(1)
             return False
         if self.params_changed or self.eps_change_in_progress:
             if not self.user_notified_of_training:
                 self.notify('Parameters or classification changed, pausing prediction...')
                 self.user_notified_of_training = True
-            # sleep(1)
             return False
         if self.training_in_progress:
             return False
         if self.cur_example_idx is None:
-            # sleep(1)
             return False
         self.prediction_in_progress = True
         is_predicted_series = self.data.data_clean.is_predicted.copy().astype(bool)
@@ -377,13 +383,20 @@ possible, and the error message below
         not_predicted_indices = is_predicted_series.index[np.invert(is_predicted_series)]
         if not len(not_predicted_indices):
             self.prediction_in_progress = False
-            # sleep(1)
             return False
         if self.cur_example_idx in not_predicted_indices:
             idx = self.cur_example_idx
         else:
             idx = not_predicted_indices[0]
         pred_list, logprob = self.classifier.predict(idx)
+        if len(self.remove_last_checkbox.active):
+            event_found = False
+            for i in range(len(pred_list)):
+                if pred_list[-i] != 0:
+                    event_found = True
+                elif event_found:
+                    break
+                pred_list[-i] = 0
         self.data.data.at[idx, 'prediction'] = np.array(pred_list)
         self.data.data.loc[idx, 'logprob'] = logprob
         self.data.data.loc[idx, 'is_predicted'] = True
@@ -395,7 +408,6 @@ possible, and the error message below
             self.redraw_info_trigger()
         self.prediction_in_progress = False
         return True
-
 
     def get_buffer_state_matrix(self):
         ns = self.num_states_slider.value
@@ -513,10 +525,12 @@ possible, and the error message below
             new_list.remove('None')
             self.example_select.options = new_list
         if not self.data.data.loc[new, 'is_labeled']:
-            if not self.data.data.loc[new, 'is_predicted']:
+            if not self.data.data.loc[new, 'is_predicted'] and not self.params_changed:
                 self.notify('Predicting current example...')
-            while not self.data.data.loc[new, 'is_predicted']:
-                Event().wait(0.01)
+                while not self.data.data.loc[new, 'is_predicted']:
+                    Event().wait(0.01)
+            elif self.params_changed and self.data.data.loc[new, 'is_predicted']:
+                raise ValueError(f'Example {new} marked as predicted but params have changed. This should not happen.')
             self.data.set_value(new, 'labels', self.data.data.loc[new, 'prediction'].copy())
             self.data.set_value(new, 'edge_labels', self.get_edge_labels(self.data.data.loc[new, 'labels']))
             self.data.set_value(new, 'is_labeled', True)
@@ -590,8 +604,8 @@ possible, and the error message below
         if len(new):
             self.params_changed = True
             self.source.selected.indices = []
-            patch = {'labels': [(i, self.sel_state_slider.value - 1) for i in new],
-                     'labels_pct': [(i, (self.sel_state_slider.value - 1) * 1.0 / (self.num_states_slider.value - 1)) for i in new]}
+            patch = {'labels': [(i, int(self.sel_state.text) - 1) for i in new],
+                     'labels_pct': [(i, (int(self.sel_state.text) - 1) * 1.0 / (self.num_states_slider.value - 1)) for i in new]}
             if not self.data.data.loc[self.cur_example_idx, 'is_labeled']:
                 self.data.data.at[self.cur_example_idx, 'labels'] = self.source.data['labels']
                 self.data.data.loc[self.cur_example_idx, 'is_labeled'] = True
@@ -634,13 +648,14 @@ possible, and the error message below
         self.logprob_source.data = {'logprob_counts': counts, 'lb': edges[:-1], 'rb': edges[1:]}
 
     def update_stats_text(self):
-        pct_labeled = round(self.data.data.is_labeled.sum() / self.data.data.is_labeled.size * 100.0, 1)
+        pct_labeled = round(self.data.data_clean.is_labeled.sum() /
+                            max(self.data.data_clean.is_labeled.size, 1) * 100.0, 1)
         if pct_labeled == 0:
             acc = 'N/A'
             post = 'N/A'
         else:
             acc = round(self.data.accuracy[1], 1)
-            post = round(self.data.data.logprob.mean(), 1)
+            post = round(self.data.data_clean.logprob.mean(), 1)
         self.acc_text.text = f'{acc}'
         self.posterior_text.text = f'{post}'
         self.mc_text.text = f'{pct_labeled}'
@@ -689,25 +704,28 @@ possible, and the error message below
         if new != self.classifier.nb_states:
             self.params_changed = True
             while self.prediction_in_progress: Event().wait(0.01)
-            self.data.data.is_labeled = False
-            self.data.data.labels = [[]] * len(self.data.data)
-            blank_labels = [(i, 0) for i in range(len(self.data.data.loc[self.cur_example_idx, 'i_don']))]
-            patch = {'labels': blank_labels,
-                     'labels_pct': blank_labels}
-            self.source.patch(patch)
             self.classifier = self.classifier_class(nb_states=new, data=self.data, gui=self, features=self.feature_list)
 
             # Update widget: show-me checkboxes
             showme_idx = list(range(new))
-            showme_states = [str(n) for n in range(1,new+1)]
+            showme_states = [str(n) for n in range(1, new + 1)]
             self.showme_checkboxes.labels = showme_states
             self.showme_checkboxes.active = showme_idx
             self.saveme_checkboxes.labels = showme_states
             self.saveme_checkboxes.active = showme_idx
 
             # Update widget: selected state slider
-            self.sel_state_slider.end = new
-            if self.sel_state_slider.value > new: self.sel_state_slider.value = new
+            # self.sel_state_slider.end = new
+            if int(self.sel_state.text) > new: self.sel_state.text = str(new)
+            # if self.sel_state_slider.value > new: self.sel_state_slider.value = new
+
+            if len(self.data.data):
+                self.data.data.is_labeled = False
+                self.data.data.labels = [[]] * len(self.data.data)
+                blank_labels = [(i, 0) for i in range(len(self.data.data.loc[self.cur_example_idx, 'i_don']))]
+                patch = {'labels': blank_labels,
+                         'labels_pct': blank_labels}
+                self.source.patch(patch)
 
             # self.train_trigger()
 
@@ -836,7 +854,7 @@ possible, and the error message below
 
         # E_FRET series
         ts_efret = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,pan', plot_width=1075, plot_height=275,
-                          active_drag='xbox_select', x_range=ts.x_range, y_range=[0,1])  #  todo: add tooltips=[('$index')]
+                          active_drag='xbox_select', x_range=ts.x_range, y_range=[0,1], name='ts')  #  todo: add tooltips=[('$index')]
         ts_efret.rect('time', 0.5, height=1.0, fill_color={'field': 'labels_pct',
                                                            'transform': self.col_mapper},
                 source=self.source, **rect_opts)
@@ -875,11 +893,21 @@ possible, and the error message below
         ts_manual.line('time', 'i_acc', color='#e41a1c', source=self.source, **line_opts)
         pred_vs_manual_panel = Panel(child=widgetbox(column(ts_manual,revert_labels_button)), title='Predicted')
 
-        settings_panel = Panel(child=widgetbox(column(
-            row(Div(text='DBSCAN filter epsilon: ', height=15, width=80), widgetbox(self.eps_spinner, width=75),
-                widgetbox(self.bg_button, width=65), width=320)),
-            self.supervision_slider,
-            self.buffer_slider), title='Settings')
+        # Additional settings panel
+        settings_panel = Panel(child=widgetbox(
+            column(
+                row(
+                    Div(text='DBSCAN filter epsilon: ', height=15, width=200), widgetbox(self.eps_spinner, width=75),
+                    widgetbox(self.bg_button, width=65), width=500),
+                row(
+                    Div(text='Frame rate .trace files (Hz): ', height=15, width=200), widgetbox(self.framerate_spinner, width=75),
+                ),
+                self.supervision_slider,
+                self.buffer_slider,
+                row(Div(text='Remove last event before analysis: ', height=15, width=250), self.remove_last_checkbox,
+                    width=500),
+                width=500),
+            ), title='Settings')
         tabs = Tabs(tabs=[ts_panel, efret_panel, corr_panel, i_sum_panel, pred_vs_manual_panel, settings_panel])
 
         # accuracy histogram
@@ -947,13 +975,15 @@ possible, and the error message below
         widgets = column(ff_title,
                          Div(text="<font size=4>1. Load</font>", width=280, height=15),
                          self.algo_select,
+                         self.num_states_slider,
                          row(widgetbox(load_model_button, width=150), widgetbox(load_button, width=150),
                              width=300),
                          row(Div(text="DBSCAN background subtraction ", width=250, height=15),
                              widgetbox(self.bg_checkbox, width=25), width=300),
                          Div(text="<font size=4>2. Teach</font>", width=280, height=15),
-                         self.num_states_slider,
-                         self.sel_state_slider,
+                         row(Div(text='Change selection to state: '),
+                             self.sel_state, width=300, height=15),
+                         # self.sel_state_slider,
                          showme_col,
                          row(widgetbox(del_trace_button, width=100), widgetbox(train_button, width=100), widgetbox(new_example_button, width=100)),
                          Div(text="<font size=4>3. Save</font>", width=280, height=15),
@@ -970,8 +1000,6 @@ possible, and the error message below
                         self.report_holder, self.datzip_holder)
         layout = row(widgets, graphs)
         doc.add_root(layout)
-
-        # doc.add_periodic_callback(self.periodic_update, 1000)
         doc.title = f'FRETboard v. {self.version}'
         self.doc = doc
 

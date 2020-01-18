@@ -154,7 +154,7 @@ class MainTable(object):
         """
         if not any(self.data_clean.is_labeled):
             return np.array([np.nan], dtype=float), np.nan
-        labeled_data = self.data.loc[ np.logical_and(self.data.is_labeled, self.data.is_predicted), ('prediction', 'labels')]
+        labeled_data = self.data_clean.loc[ np.logical_and(self.data.is_labeled, self.data.is_predicted), ('prediction', 'labels')]
         nb_correct = labeled_data.apply(lambda x: np.sum(np.equal(x.prediction, x.labels)), axis=1)
         nb_points = labeled_data.apply(lambda x: x.labels.size, axis=1)
         return nb_correct / nb_points * 100, nb_correct.sum() / nb_points.sum() * 100

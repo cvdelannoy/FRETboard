@@ -135,7 +135,7 @@ class Classifier(object):
             hmm.add_transition(s, hmm.end, pend_dict[s_name], pseudocount=0)
             hmm.add_transition(s, s, tm_dict[(s_name, s_name)], pseudocount=0)
 
-        # Make connections be   tween states using edge states
+        # Make connections between states using edge states
         for es_name in edge_states:
             es_list = edge_states[es_name][0]
             s1, s2 = [states[s] for s in edge_states[es_name][1]]
