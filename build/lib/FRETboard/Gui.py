@@ -112,8 +112,8 @@ class Gui(object):
         self.example_select = Select(title='Current example', value='None', options=['None'])
         self.num_states_slider = Slider(title='Number of states', value=nb_states, start=2, end=10, step=1,
                                         name='num_states_slider')
-        # self.sel_state_slider = Slider(title='Change selection to state', value=1, start=1,
-        #                                end=self.num_states_slider.value, step=1)
+        self.sel_state_slider = Slider(title='Change selection to state', value=1, start=1,
+                                       end=self.num_states_slider.value, step=1, name='sel_state_slider')
         self.sel_state = Div(text='1', name='sel_state')
         self.bg_checkbox = CheckboxGroup(labels=[''], active=[])
         self.bg_button = Button(label='Apply')
@@ -604,8 +604,11 @@ possible, and the error message below
         if len(new):
             self.params_changed = True
             self.source.selected.indices = []
-            patch = {'labels': [(i, int(self.sel_state.text) - 1) for i in new],
-                     'labels_pct': [(i, (int(self.sel_state.text) - 1) * 1.0 / (self.num_states_slider.value - 1)) for i in new]}
+            patch = {'labels': [(i, self.sel_state_slider.value - 1) for i in new],
+                     'labels_pct': [(i, (self.sel_state_slider.value - 1) * 1.0 / (self.num_states_slider.value - 1))
+                                    for i in new]}
+            # patch = {'labels': [(i, int(self.sel_state.text) - 1) for i in new],
+            #          'labels_pct': [(i, (int(self.sel_state.text) - 1) * 1.0 / (self.num_states_slider.value - 1)) for i in new]}
             if not self.data.data.loc[self.cur_example_idx, 'is_labeled']:
                 self.data.data.at[self.cur_example_idx, 'labels'] = self.source.data['labels']
                 self.data.data.loc[self.cur_example_idx, 'is_labeled'] = True
@@ -715,9 +718,9 @@ possible, and the error message below
             self.saveme_checkboxes.active = showme_idx
 
             # Update widget: selected state slider
-            # self.sel_state_slider.end = new
-            if int(self.sel_state.text) > new: self.sel_state.text = str(new)
-            # if self.sel_state_slider.value > new: self.sel_state_slider.value = new
+            self.sel_state_slider.end = new
+            # if int(self.sel_state.text) > new: self.sel_state.text = str(new)
+            if self.sel_state_slider.value > new: self.sel_state_slider.value = new
 
             if len(self.data.data):
                 self.data.data.is_labeled = False
@@ -981,9 +984,9 @@ possible, and the error message below
                          row(Div(text="DBSCAN background subtraction ", width=250, height=15),
                              widgetbox(self.bg_checkbox, width=25), width=300),
                          Div(text="<font size=4>2. Teach</font>", width=280, height=15),
-                         row(Div(text='Change selection to state: '),
-                             self.sel_state, width=300, height=15),
-                         # self.sel_state_slider,
+                         # row(Div(text='Change selection to state: '),
+                         #     self.sel_state, width=300, height=15),
+                         self.sel_state_slider,
                          showme_col,
                          row(widgetbox(del_trace_button, width=100), widgetbox(train_button, width=100), widgetbox(new_example_button, width=100)),
                          Div(text="<font size=4>3. Save</font>", width=280, height=15),

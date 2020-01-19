@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import dask.dataframe as dd
 import warnings
 from sklearn.cluster import DBSCAN, OPTICS
 from joblib import Parallel, delayed
@@ -37,6 +38,7 @@ class MainTable(object):
 
     @data.setter
     def data(self, dat_files):
+        nb_cores = 4
         nb_files = len(dat_files)
         df_out = pd.DataFrame({
             'time': [np.array([], dtype=np.int64)] * nb_files,
