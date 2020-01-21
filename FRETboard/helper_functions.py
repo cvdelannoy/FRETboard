@@ -4,7 +4,6 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 import warnings
 
-np.seterr(all='raise')
 
 def print_timestamp():
     dt = datetime.now().strftime('%y-%m-%d_%H:%M:%S')
@@ -64,6 +63,22 @@ def subtract_background_fun(tup, eps):
     tup.at['eps'] = eps
     return tup
 
+def remove_outliers(mat):
+    bool_out = np.ones(mat.shape[1], dtype=bool)
+    for seq in mat:
+        mu = np.mean(seq)
+        sd = np.std(seq)
+        bool_out = np.logical_and(bool_out, np.logical_and(seq > mu - 2 * sd, seq < mu + 2 * sd))
+    return mat[:, bool_out]
+
+def remove_last_event(seq):
+    event_found = False
+    for i in range(len(seq)):
+        if seq[-i] != 0:
+            event_found = True
+        elif event_found:
+            return seq
+        seq[-i] = 0
 
 def bg_filter_trace(tr, eps):
     if np.isnan(eps):

@@ -22,7 +22,8 @@ from bokeh.application import Application
 from bokeh.application.handlers.function import FunctionHandler
 from bokeh.layouts import row, column, widgetbox
 from bokeh.plotting import figure, curdoc
-from bokeh.models import ColumnDataSource, LinearColorMapper#, CustomJS
+from bokeh.models import ColumnDataSource, LinearColorMapper
+from bokeh.models.tools import BoxSelectTool, WheelZoomTool, WheelPanTool, SaveTool, PanTool
 from bokeh.models.callbacks import CustomJS
 from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Div, CheckboxButtonGroup, CheckboxGroup, Spinner, TextInput
 from bokeh.models.widgets.panels import Panel, Tabs
@@ -36,7 +37,7 @@ from FRETboard.MainTable import MainTable
 
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 line_opts = dict(line_width=1)
-rect_opts = dict(width=1.01, alpha=1, line_alpha=0)
+rect_opts = dict(alpha=1, line_alpha=0)
 with open(f'{__location__}/algorithms.yml', 'r') as fh: algo_dict = yaml.safe_load(fh)
 white_blue_colors = ['#f7fbff', '#deebf7', '#c6dbef', '#9ecae1', '#6baed6', '#4292c6', '#2171b5', '#084594']
 # pastel_colors = ["#75968f", "#a5bab7", "#c9d9d3", "#e2e2e2", "#dfccce", "#ddb7b1", "#cc7878", "#933b41", "#550b1d"]
@@ -145,7 +146,7 @@ class Gui(object):
         # ColumnDataSources
         self.source = ColumnDataSource(data=dict(i_don=[], i_acc=[], E_FRET=[],
                                                  correlation_coefficient=[], E_FRET_sd=[], i_sum=[], time=[],
-                                                 rect_height=[], rect_height_half=[], rect_mid=[], rect_mid_up=[], rect_mid_down=[],
+                                                 rect_height=[], rect_height_half=[], rect_mid=[], rect_mid_up=[], rect_mid_down=[], rect_width=[],
                                                  i_sum_height=[], i_sum_mid=[],
                                                  labels=[], labels_pct=[], prediction_pct=[]))
         ahb = np.arange(start=0, stop=100, step=5)
@@ -525,12 +526,15 @@ possible, and the error message below
             new_list.remove('None')
             self.example_select.options = new_list
         if not self.data.data.loc[new, 'is_labeled']:
-            if not self.data.data.loc[new, 'is_predicted'] and not self.params_changed:
+            if not len(self.data.data.loc[new, 'prediction']) and not self.params_changed:
+                # case 1: example never predicted before, and prediction is still in progress --> wait, next prediction will be of self.cur_example_idx
                 self.notify('Predicting current example...')
                 while not self.data.data.loc[new, 'is_predicted']:
                     Event().wait(0.01)
-            elif self.params_changed and self.data.data.loc[new, 'is_predicted']:
-                raise ValueError(f'Example {new} marked as predicted but params have changed. This should not happen.')
+            elif not len(self.data.data.loc[new, 'prediction']) and self.params_changed:
+                # case 2: example never predicted before, params changed thus prediction halted --> fill in with zeros for now
+                self.data.set_value(new, 'prediction', np.zeros(self.data.data.loc[new, 'i_don'].shape[0]))
+                self.data.data.loc[new, 'is_predicted'] = True
             self.data.set_value(new, 'labels', self.data.data.loc[new, 'prediction'].copy())
             self.data.set_value(new, 'edge_labels', self.get_edge_labels(self.data.data.loc[new, 'labels']))
             self.data.set_value(new, 'is_labeled', True)
@@ -557,7 +561,8 @@ possible, and the error message below
         rect_mid_down = all_ts.min() + ts_range * 0.25
         rect_height = np.abs(all_ts.max()) + np.abs(all_ts.min())
         rect_height_half = rect_height / 2
-        self.source.data = dict(i_don=self.i_don, i_acc=self.i_acc, time=np.arange(nb_samples),
+        rect_width = (self.time[1] - self.time[0]) * 1.01
+        self.source.data = dict(i_don=self.i_don, i_acc=self.i_acc, time=self.time,
                                 E_FRET=self.E_FRET, correlation_coefficient=self.correlation_coefficient, i_sum=self.i_sum,
                                 E_FRET_sd=self.E_FRET_sd,
                                 rect_height=np.repeat(rect_height, nb_samples),
@@ -565,12 +570,13 @@ possible, and the error message below
                                 rect_mid=np.repeat(rect_mid, nb_samples),
                                 rect_mid_up=np.repeat(rect_mid_up, nb_samples),
                                 rect_mid_down=np.repeat(rect_mid_down, nb_samples),
+                                rect_width=np.repeat(rect_width, nb_samples),
                                 i_sum_height=np.repeat(self.i_sum.max(), nb_samples),
                                 i_sum_mid=np.repeat(self.i_sum.mean(), nb_samples),
                                 labels=self.data.data.loc[self.cur_example_idx, 'labels'],
-                                labels_pct=self.data.data.loc[self.cur_example_idx, 'labels'] * 1.0 / (self.num_states_slider.value - 1),
-                                prediction_pct=self.data.data.loc[self.cur_example_idx, 'prediction'] * 1.0 / (self.num_states_slider.value - 1))
-        self.x_range.start = 0; self.x_range.end = nb_samples
+                                labels_pct=self.data.data.loc[self.cur_example_idx, 'labels'] / (self.num_states_slider.value - 1),
+                                prediction_pct=self.data.data.loc[self.cur_example_idx, 'prediction'] / (self.num_states_slider.value - 1))
+        self.x_range.start = 0; self.x_range.end = self.time.max()
         self.y_range.start = all_ts.min(); self.y_range.end = all_ts.max()
         self.update_accuracy_hist()
         self.update_logprob_hist()
@@ -688,8 +694,13 @@ possible, and the error message below
         x_high = max([mu + sd * 3 for mu, sd in zip(mus, sds)])
         x_low = min([mu - sd * 3 for mu, sd in zip(mus, sds)])
         xs = [np.arange(x_low, x_high, (x_high - x_low) / 100)] * self.num_states_slider.value
-        ys = [1 / (sd * np.sqrt(2 * np.pi)) * np.exp(-(xs[0] - mu) ** 2 / (2 * sd ** 2))
-              for mu, sd in zip(mus, sds)]
+        sdps = [-(xs[0] - mu) ** 2 / (2 * sd ** 2) for mu, sd in zip (mus, sds)]
+        ys = []
+        for sd, sdp in zip(sds, sdps):
+            if any(sdp < -708):
+                ys.append(np.zeros(len(sdp)))
+            else:
+                ys.append(1 / (sd * np.sqrt(2 * np.pi)) * np.exp(sdp))
         self.state_source.data = {'ys': ys, 'xs': xs, 'color': self.curve_colors}
 
     def update_algo(self, attr, old, new):
@@ -843,57 +854,77 @@ possible, and the error message below
 
         # --- Define plots ---
 
+        # timeseries tools
+        self.xbox_select = BoxSelectTool(dimensions='width')
+        # self.save = SaveTool()
+        self.xwheel_zoom = WheelZoomTool(dimensions='width')
+        self.xwheel_pan = WheelPanTool(dimension='width')
+        self.pan = PanTool()
+        tool_list = [self.xbox_select, self.xwheel_zoom, self.xwheel_pan, self.pan]
+
         # Main timeseries
-        ts = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,pan', plot_width=1075, plot_height=275,
-                         active_drag='xbox_select')
-        ts.rect('time', 'rect_mid', height='rect_height', fill_color={'field': 'labels_pct',
+        ts = figure(tools=tool_list, plot_width=1075, plot_height=275,
+                    active_drag=self.xbox_select, name='ts',
+                    x_axis_label='Time (s)', y_axis_label='Intensity')
+        ts.rect(x='time', y='rect_mid', width='rect_width', height='rect_height', fill_color={'field': 'labels_pct',
                                                                       'transform': self.col_mapper},
                 source=self.source, **rect_opts)
         ts.line('time', 'i_don', color='#4daf4a', source=self.source, **line_opts)
         ts.line('time', 'i_acc', color='#e41a1c', source=self.source, **line_opts)
         ts_panel = Panel(child=ts, title='Traces')
+
         self.x_range = ts.x_range
         self.y_range = ts.y_range
+        self.ts_toolbar = ts.toolbar
 
         # E_FRET series
-        ts_efret = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,pan', plot_width=1075, plot_height=275,
-                          active_drag='xbox_select', x_range=ts.x_range, y_range=[0,1], name='ts')  #  todo: add tooltips=[('$index')]
-        ts_efret.rect('time', 0.5, height=1.0, fill_color={'field': 'labels_pct',
+        ts_efret = figure(tools=tool_list, plot_width=1075, plot_height=275,
+                          active_drag=self.xbox_select, x_range=ts.x_range, y_range=[0,1], name='ts',
+                          x_axis_label='Time (s)', y_axis_label='FRET efficiency')  #  todo: add tooltips=[('$index')]
+        ts_efret.rect('time', 0.5, height=1.0, width='rect_width', fill_color={'field': 'labels_pct',
                                                            'transform': self.col_mapper},
                 source=self.source, **rect_opts)
         ts_efret.line('time', 'E_FRET', color='#1f78b4', source=self.source, **line_opts)
         ts_efret.line('time', 'E_FRET_sd', color='#a6cee3', source=self.source, **line_opts)
+        ts_efret.toolbar = self.ts_toolbar
         efret_panel = Panel(child=ts_efret, title='E_FRET & sd')
 
         # correlation coeff series
-        ts_corr = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,pan', plot_width=1075, plot_height=275,
-                          active_drag='xbox_select', x_range=ts.x_range)  # todo: add tooltips=[('$index')]
-        ts_corr.rect('time', 0.0, height=2.0, fill_color={'field': 'labels_pct',
+        ts_corr = figure(tools=tool_list, plot_width=1075, plot_height=275,
+                         active_drag=self.xbox_select, x_range=ts.x_range,
+                         x_axis_label='Time (s)', y_axis_label='Corr. coef.')  # todo: add tooltips=[('$index')]
+        ts_corr.toolbar = self.ts_toolbar
+        ts_corr.rect('time', 0.0, height=2.0, width='rect_width', fill_color={'field': 'labels_pct',
                                                           'transform': self.col_mapper},
                       source=self.source, **rect_opts)
         ts_corr.line('time', 'correlation_coefficient', color='#b2df8a', source=self.source, **line_opts)
         corr_panel = Panel(child=ts_corr, title='Correlation coefficient')
 
         # i_sum series
-        ts_i_sum = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,pan', plot_width=1075, plot_height=275,
-                          active_drag='xbox_select', x_range=ts.x_range)
-        ts_i_sum.rect('time', 'i_sum_mid', height='i_sum_height', fill_color={'field': 'labels_pct',
+        ts_i_sum = figure(tools=tool_list, plot_width=1075, plot_height=275,
+                          active_drag=self.xbox_select, x_range=ts.x_range,
+                          x_axis_label='Time (s)', y_axis_label='Intensity')
+        ts_i_sum.rect('time', 'i_sum_mid', width='rect_width', height='i_sum_height', fill_color={'field': 'labels_pct',
                                                                               'transform': self.col_mapper},
                       source=self.source, **rect_opts)
         ts_i_sum.line('time', 'i_sum', color='#1f78b4', source=self.source, **line_opts)
+        ts_i_sum.toolbar = self.ts_toolbar
         i_sum_panel = Panel(child=ts_i_sum, title='I sum')
 
         # manual and predicted timeseries
-        ts_manual = figure(tools='xbox_select,save,xwheel_zoom,xwheel_pan,pan', plot_width=1075, plot_height=275,
-                    active_drag='xbox_select', x_range=ts.x_range)
-        ts_manual.rect('time', 'rect_mid_up', height='rect_height_half', fill_color={'field': 'labels_pct',
+        # old tools: 'xbox_select,save,xwheel_zoom,xwheel_pan,pan'
+        ts_manual = figure(tools=tool_list, plot_width=1075, plot_height=275,
+                           active_drag=self.xbox_select, x_range=ts.x_range,
+                           x_axis_label='Time (s)', y_axis_label='Intensity')
+        ts_manual.rect('time', 'rect_mid_up', width='rect_width', height='rect_height_half', fill_color={'field': 'labels_pct',
                                                                          'transform': self.col_mapper},
                 source=self.source, **rect_opts)
-        ts_manual.rect('time', 'rect_mid_down', height='rect_height_half', fill_color={'field': 'prediction_pct',
+        ts_manual.rect('time', 'rect_mid_down', width='rect_width', height='rect_height_half', fill_color={'field': 'prediction_pct',
                                                                            'transform': self.col_mapper},
                 source=self.source, **rect_opts)
         ts_manual.line('time', 'i_don', color='#4daf4a', source=self.source, **line_opts)
         ts_manual.line('time', 'i_acc', color='#e41a1c', source=self.source, **line_opts)
+        ts_manual.toolbar = self.ts_toolbar
         pred_vs_manual_panel = Panel(child=widgetbox(column(ts_manual,revert_labels_button)), title='Predicted')
 
         # Additional settings panel

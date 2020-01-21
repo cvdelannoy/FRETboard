@@ -25,7 +25,7 @@
     {{ plot_script | indent(8) }}
     <script>
         document.addEventListener('keydown', (e) => {
-            console.log('key pressed: ' + e.keyCode);
+            {#console.log('key pressed: ' + e.keyCode);#}
             if (isFinite(e.key)){ // Integer pressed: state change variable
                 let e_int = parseInt(e.key);
                 if (e_int <= window.Bokeh.documents[0]._all_models_by_name._dict['num_states_slider'].value){

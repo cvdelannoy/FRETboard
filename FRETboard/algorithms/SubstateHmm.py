@@ -210,7 +210,7 @@ class Classifier(object):
 
     def get_substate_object(self, vec, state_name):
         vec_clean = vec[:, np.invert(np.any(np.isnan(vec), axis=0))]
-        nb_clust = min(10, vec_clean.shape[0])
+        nb_clust = min(10, vec_clean.shape[1])
         trans_prob = 1.0 / nb_clust
         labels = GaussianMixture(n_components=nb_clust).fit_predict(vec_clean.T)
         hmm_out = pg.HiddenMarkovModel()
@@ -292,10 +292,14 @@ class Classifier(object):
 
         :param idx: index [str] in self.data.data_clean for which to predict labels
         :returns:
-        pred_list: list of numpy arrays of length len(idx) containing predicted labels
+        pred_list: list of numpy arrays of length len(idx) containing predicted labelsimpo
         logprob_list: list of floats of length len(idx) containing posterior log-probabilities
         """
-        data = np.stack(self.data.data_clean.loc[idx, self.feature_list].to_numpy(), axis=-1)
+        try:
+            data = np.stack(self.data.data_clean.loc[idx, self.feature_list].to_numpy(), axis=-1)
+        except:
+            cp=1
+            raise
         trace_state_list = self.trained.predict(data, algorithm='map')  # todo segfaults with viterbi??
         logprob = self.trained.log_probability(data)
         state_list = np.vectorize(self.gui_state_dict.__getitem__)(trace_state_list)
@@ -385,7 +389,7 @@ class Classifier(object):
          str2num_state_dict_txt,
          misc_txt) = file_contents.split('\nSTART_NEW_SECTION\n')
         if mod_check != 'SubstateHmm':
-            error_msg = '\nERROR: loaded model parameters are not for a boundary-aware HMM!'
+            error_msg = '\nERROR: loaded model parameters are not for a substate HMM!'
             if self.gui:
                 self.gui.notify(error_msg)
                 return

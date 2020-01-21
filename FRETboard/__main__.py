@@ -14,7 +14,7 @@ def main(args=None):
     args = parser.parse_args(args)
     gui_obj = Gui(args.nb_states, [])
     gui_obj.start_threads()
-    gui_obj.start_ioloop()
+    gui_obj.start_ioloop(port=args.port)
 
 if __name__ == '__main__':
     main()
