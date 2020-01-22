@@ -295,11 +295,7 @@ class Classifier(object):
         pred_list: list of numpy arrays of length len(idx) containing predicted labelsimpo
         logprob_list: list of floats of length len(idx) containing posterior log-probabilities
         """
-        try:
-            data = np.stack(self.data.data_clean.loc[idx, self.feature_list].to_numpy(), axis=-1)
-        except:
-            cp=1
-            raise
+        data = np.stack(self.data.data_clean.loc[idx, self.feature_list].to_numpy(), axis=-1)
         trace_state_list = self.trained.predict(data, algorithm='map')  # todo segfaults with viterbi??
         logprob = self.trained.log_probability(data)
         state_list = np.vectorize(self.gui_state_dict.__getitem__)(trace_state_list)

@@ -347,6 +347,7 @@ possible, and the error message below
             try:
                 pred_success = self.pred_fun()
                 if not pred_success:
+                    self.prediction_in_progress = False
                     Event().wait(timeout=0.01)
             except Exception as e:
                 self.prediction_in_progress = False
@@ -533,12 +534,11 @@ possible, and the error message below
                     Event().wait(0.01)
             elif not len(self.data.data.loc[new, 'prediction']) and self.params_changed:
                 # case 2: example never predicted before, params changed thus prediction halted --> fill in with zeros for now
-                self.data.set_value(new, 'prediction', np.zeros(self.data.data.loc[new, 'i_don'].shape[0]))
+                self.data.set_value(new, 'prediction', np.zeros(self.data.data.loc[new, 'i_don'].shape[0], dtype=np.int64))
                 self.data.data.loc[new, 'is_predicted'] = True
             self.data.set_value(new, 'labels', self.data.data.loc[new, 'prediction'].copy())
             self.data.set_value(new, 'edge_labels', self.get_edge_labels(self.data.data.loc[new, 'labels']))
             self.data.set_value(new, 'is_labeled', True)
-        # todo risk of deadlock if junk is manually selected!
         if self.data.data.loc[new, 'marked_junk']:
             self.notify(f'Warning: {new} was marked junk!')
         elif self.data.data.loc[new, 'predicted_junk']:
