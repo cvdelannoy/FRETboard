@@ -1,9 +1,46 @@
+import matplotlib
+matplotlib.use('Agg')
+
 from datetime import datetime
 import pandas as pd
 import numpy as np
 from sklearn.cluster import DBSCAN
 import warnings
+import seaborn as sns
+import matplotlib.pyplot as plt
 
+
+def multi_joint_plot(col_x, col_y, col_k, df, scatter_alpha=.5, palette='Blues'):
+    """
+    seaborn joint plot for multiple data sets plotted separately
+    adapted from: https://stackoverflow.com/questions/35920885/how-to-overlay-a-seaborn-jointplot-with-a-marginal-distribution-histogram-fr
+    """
+
+    def colored_scatter(x, y, c):
+        def scatter(*args, **kwargs):
+            args = (x, y)
+            kwargs['c'] = c
+            kwargs['alpha'] = scatter_alpha
+            kwargs['s'] = 1
+            plt.scatter(*args, **kwargs)
+        return scatter
+
+    g = sns.JointGrid(x=col_x, y=col_y, data=df)
+    unique_labels = df.loc[:, col_k].unique()
+    unique_labels.sort()
+    colors = sns.color_palette(palette, len(unique_labels))
+    legends = []
+    for ui, ul in enumerate(unique_labels):
+        legends.append(ul)
+        df_group = df.loc[df.loc[:, col_k] == ul, :]
+        color = colors[ui]
+        g.plot_joint(colored_scatter(df_group[col_x], df_group[col_y], color))
+        sns.distplot(df_group[col_x].values, ax=g.ax_marg_x, color=color, hist=False)
+        sns.distplot(df_group[col_y].values,ax=g.ax_marg_y, color=color, vertical=True, hist=False)
+    # # Do also global Hist
+    # sns.distplot(df[col_x].values, ax=g.ax_marg_x, color='grey')
+    # sns.distplot(df[col_y].values.ravel(), ax=g.ax_marg_y, color='grey', vertical=True)
+    plt.legend(legends)
 
 def print_timestamp():
     dt = datetime.now().strftime('%y-%m-%d_%H:%M:%S')

@@ -17,7 +17,7 @@ from bokeh.models import ColumnDataSource
 from bokeh.embed import components
 from jinja2 import Template
 from tabulate import tabulate
-from FRETboard.helper_functions import print_timestamp
+from FRETboard.helper_functions import print_timestamp, multi_joint_plot
 
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 
@@ -44,11 +44,26 @@ class FretReport(object):
     def event_df(self):
         seq_mat = self.condensed_seq_df.values
         seq_mat = np.array(list(itertools.chain.from_iterable(seq_mat)))
-        event_df = pd.DataFrame({'state': seq_mat[:, 0],
+        event_df = pd.DataFrame({'state': [int(i) for i in seq_mat[:, 0]],
                                  'state_pct': seq_mat[:, 0] / seq_mat[:, 0].max(),
                                  'E_FRET': seq_mat[:, 2],
                                  'duration': seq_mat[:, 1].astype(int)})
         return event_df
+
+    @cached_property
+    def outlier_free_event_df(self):
+        df_list = []
+        for st, df in self.event_df.groupby('state'):
+            if st == 0: continue
+            ef_sd3 = df.E_FRET.std() * 3
+            ef_lb, ef_hb = df.E_FRET.mean() - ef_sd3, df.E_FRET.mean() + ef_sd3
+            ef_bool = np.logical_and(df.E_FRET > ef_lb, df.E_FRET < ef_hb)
+            dur_sd3 = df.duration.std() * 3
+            dur_lb, dur_hb = df.duration.mean() - dur_sd3, df.duration.mean() + dur_sd3
+            dur_bool = np.logical_and(df.duration > dur_lb, df.duration < dur_hb)
+            keep_bool = np.logical_and(ef_bool, dur_bool)
+            df_list.append(df.loc[keep_bool, :])
+        return pd.concat(df_list)
 
     @cached_property
     def transition_df(self):
@@ -130,8 +145,10 @@ class FretReport(object):
                 seq_condensed[-1][2].append(i)
             else:
                 seq_condensed[-1][2] = np.nanmedian(seq_condensed[-1][2])
+                if np.isnan(seq_condensed[-1][2]): seq_condensed.pop()
                 seq_condensed.append([s, 1, [i]])
         seq_condensed[-1][2] = np.nanmedian(seq_condensed[-1][2])
+        if np.isnan(seq_condensed[-1][2]): seq_condensed.pop()
         return seq_condensed
 
     def construct_html_report(self):
@@ -142,10 +159,8 @@ class FretReport(object):
         # kinetic_table = self.get_stats_tables()
         with open(f'{__location__}/templates/report_template.html', 'r') as fh:
             template = Template(fh.read())
-        esh, esd = components(ed_scatter)
         # thh, thd = components(tdp_hex)
-        return template.render(ed_scatter_script=esh, ed_scatter_div=esd,
-                               # tdp_hex_script=thh,
+        return template.render(ed_scatter=ed_scatter,
                                transition_density_plot=tdp,
                                efret_hist=efret_hist,
                                data_efret_stats=self.data_efret_stats,
@@ -172,15 +187,20 @@ class FretReport(object):
         return out_str
 
     def draw_Efret_duration_plot(self):
-        cds = ColumnDataSource(ColumnDataSource.from_df(self.event_df))
-        ed_scatter = figure(plot_width=500, plot_height=500, title='')
-        ed_scatter.background_fill_color = '#a6a6a6'
-        ed_scatter.grid.visible = False
-        ed_scatter.xaxis.axis_label = 'duration (# measurements)'
-        ed_scatter.yaxis.axis_label = 'E FRET'
-        ed_scatter.scatter(x='duration', y='E_FRET', color={'field': 'state_pct', 'transform': self.gui.col_mapper},
-                           source=cds)
-        return ed_scatter
+        multi_joint_plot('duration', 'E_FRET', 'state', df=self.outlier_free_event_df)
+        f = io.StringIO()
+        plt.savefig(f, format='svg')
+        return f.getvalue()
+
+        # cds = ColumnDataSource(ColumnDataSource.from_df(self.event_df))
+        # ed_scatter = figure(plot_width=500, plot_height=500, title='')
+        # ed_scatter.background_fill_color = '#a6a6a6'
+        # ed_scatter.grid.visible = False
+        # ed_scatter.xaxis.axis_label = 'duration (# measurements)'
+        # ed_scatter.yaxis.axis_label = 'E FRET'
+        # ed_scatter.scatter(x='duration', y='E_FRET', color={'field': 'state_pct', 'transform': self.gui.col_mapper},
+        #                    source=cds)
+        # return ed_scatter
 
     def draw_transition_density_plot(self):
         fig = plt.figure()

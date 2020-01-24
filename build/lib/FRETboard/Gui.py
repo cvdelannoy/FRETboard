@@ -108,37 +108,43 @@ class Gui(object):
         self.predict_error_count = 0
 
 
-        # widgets
+        # --- Widgets ---
+
+        # 1. Load
         self.algo_select = Select(title='Algorithm:', value=list(algo_dict)[0], options=list(algo_dict))
-        self.example_select = Select(title='Current example', value='None', options=['None'])
         self.num_states_slider = Slider(title='Number of states', value=nb_states, start=2, end=10, step=1,
                                         name='num_states_slider')
+        self.bg_checkbox = CheckboxGroup(labels=[''], active=[])
+
+        # 2. Train
         self.sel_state_slider = Slider(title='Change selection to state', value=1, start=1,
                                        end=self.num_states_slider.value, step=1, name='sel_state_slider')
         self.sel_state = Div(text='1', name='sel_state')
-        self.bg_checkbox = CheckboxGroup(labels=[''], active=[])
-        self.bg_button = Button(label='Apply')
-        self.bg_test_button = Button(label='Test')
-        self.eps_spinner = Spinner(value=9, step=1)
-        self.framerate_spinner = Spinner(value=10, step=1)
-        self.remove_last_checkbox = CheckboxGroup(labels=[''], active=[])
-        self.supervision_slider = Slider(title='Influence supervision', value=1.0, start=0.0, end=1.0, step=0.01)
-        self.buffer_slider = Slider(title='Buffer', value=3, start=0, end=20, step=1)
+
+        # 3. Save
+
+
+        # Graph area
+        self.example_select = Select(title='Current example', value='None', options=['None'])
         self.notification = PreText(text='', width=1000, height=15)
         self.acc_text = PreText(text='N/A')
         self.posterior_text = PreText(text='N/A')
         self.mc_text = PreText(text='0%')
         self.report_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
         self.datzip_holder = PreText(text='', css_classes=['hidden'])
-        # self.keystroke_holder = TextInput(value='test', name='keystroke_holder')  # hidden holder to generate js callbacks
-        # self.keystroke_holder = PreText(text='test', name='keystroke_holder')
-
         self.features_checkboxes = CheckboxGroup(labels=[''] * len(self.feature_list), active=[0, 1, 2, 3, 4])
         self.state_radio = RadioGroup(labels=[''] * len(self.feature_list), active=0)
 
+        # Settings
+        self.eps_spinner = Spinner(value=9, step=1)
+        self.bg_button = Button(label='Apply')
+        self.framerate_spinner = Spinner(value=10, step=1)
+        self.remove_last_checkbox = CheckboxGroup(labels=[''], active=[])
+        self.supervision_slider = Slider(title='Influence supervision', value=1.0, start=0.0, end=1.0, step=0.01)
+        self.buffer_slider = Slider(title='Buffer', value=3, start=0, end=20, step=1)
+
         # Classifier object
-        self.classifier_class = importlib.import_module(
-            'FRETboard.algorithms.' + algo_dict[self.algo_select.value]).Classifier
+        self.classifier_class = self.algo_select.value
         self.classifier = self.classifier_class(nb_states=nb_states, data=self.data, gui=self,
                                                 features=[feat for fi, feat in enumerate(self.feature_list)
                                                           if fi in self.features_checkboxes.active])
@@ -158,7 +164,6 @@ class Gui(object):
             data=dict(xs=[np.arange(0, 1, 0.01)] * self.num_states_slider.value,
                       ys=[np.zeros(100, dtype=float)] * self.num_states_slider.value,
                       color=self.curve_colors))
-        self.keystroke_source = ColumnDataSource(data=dict(value=[]))
         self.loaded_model_source = ColumnDataSource(data=dict(file_contents=[]))
         self.classifier_source = ColumnDataSource(data=dict(params=[]))
         self.html_source = ColumnDataSource(data=dict(html_text=[]))
@@ -180,6 +185,15 @@ class Gui(object):
         # self.example_select.options = self.data.data.index.tolist()
         # if self.cur_example_idx is None:
         #     self.update_example(None, None, self.example_select.options[0])
+
+    @property
+    def classifier_class(self):
+        return self._classifier_class
+
+    @classifier_class.setter
+    def classifier_class(self, class_name):
+        self._classifier_class = importlib.import_module('FRETboard.algorithms.' + algo_dict.get(class_name, class_name)).Classifier
+
 
     @property
     def nb_examples(self):
@@ -238,6 +252,12 @@ possible, and the error message below
     def train_trigger(self):
         self.notify('Start training...')
         self.doc.add_next_tick_callback(self.train)
+
+    def new_example_trigger(self):
+        self.doc.add_next_tick_callback(self.update_example_fun)
+
+    def update_example_fun(self):
+        self.example_select.value = self.cur_example_idx
 
     def redraw_trigger(self):
         if not self.redraw_activated:
@@ -300,6 +320,9 @@ possible, and the error message below
                         print_thres += 10
                     if not self.model_loaded and not self.training_in_progress:
                         self.train_trigger()
+                    elif self.cur_example_idx is None:
+                        self.doc.add_next_tick_callback(self._redraw_all)
+                        self.cur_example_idx = f'{fn_clean}_0.dat'
                 self.notify('Done')
                 # df_list = parse_trace_file(file_contents, fn, self.nb_threads, self.parallel_pool)
                 # self.data.add_df_list(df_list)
@@ -315,6 +338,9 @@ possible, and the error message below
                     # Already start training if no previous model exists and more than 100 traces are loaded
                     if not self.model_loaded and not self.training_in_progress:
                         self.train_trigger()
+                    elif self.cur_example_idx is None:
+                        self.cur_example_idx = fn
+                        self.new_example_trigger()
             self.new_cur += 1
 
             if self.new_tot.data['value'][0] == self.new_cur:
@@ -347,6 +373,7 @@ possible, and the error message below
             try:
                 pred_success = self.pred_fun()
                 if not pred_success:
+                    self.prediction_in_progress = False
                     Event().wait(timeout=0.01)
             except Exception as e:
                 self.prediction_in_progress = False
@@ -465,11 +492,13 @@ possible, and the error message below
             self.example_select.value = new_example_idx
 
     def load_params(self, attr, old, new):
+        self.params_changed = True
         raw_contents = self.loaded_model_source.data['file_contents'][0]
         # remove the prefix that JS adds
         _, b64_contents = raw_contents.split(",", 1)
         file_contents = base64.b64decode(b64_contents).decode('utf-8')
         # file_contents = base64.b64decode(b64_contents).decode('utf-8').split('\n')[1:-1]
+        self.algo_select.value = file_contents.split('\n')[0]
         self.classifier.load_params(file_contents)
         self.num_states_slider.value = self.classifier.nb_states
         if np.isnan(self.data.eps):
@@ -479,6 +508,7 @@ possible, and the error message below
             self.bg_checkbox.active = [0]
         self.model_loaded = True
         self.notify('Model loaded')
+        self.params_changed = False
         if self.data.data.shape[0] != 0:
             self.data.data.is_labeled = False
             self.redraw_trigger()
@@ -533,12 +563,11 @@ possible, and the error message below
                     Event().wait(0.01)
             elif not len(self.data.data.loc[new, 'prediction']) and self.params_changed:
                 # case 2: example never predicted before, params changed thus prediction halted --> fill in with zeros for now
-                self.data.set_value(new, 'prediction', np.zeros(self.data.data.loc[new, 'i_don'].shape[0]))
+                self.data.set_value(new, 'prediction', np.zeros(self.data.data.loc[new, 'i_don'].shape[0], dtype=np.int64))
                 self.data.data.loc[new, 'is_predicted'] = True
             self.data.set_value(new, 'labels', self.data.data.loc[new, 'prediction'].copy())
             self.data.set_value(new, 'edge_labels', self.get_edge_labels(self.data.data.loc[new, 'labels']))
             self.data.set_value(new, 'is_labeled', True)
-        # todo risk of deadlock if junk is manually selected!
         if self.data.data.loc[new, 'marked_junk']:
             self.notify(f'Warning: {new} was marked junk!')
         elif self.data.data.loc[new, 'predicted_junk']:
@@ -706,8 +735,9 @@ possible, and the error message below
     def update_algo(self, attr, old, new):
         if old == new:
             return
-        self.classifier_class = importlib.import_module('FRETboard.algorithms.'+algo_dict[new]).Classifier
+        algo = algo_dict.get(new, new)
         self.params_changed = True
+        self.classifier_class = algo
         self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, data=self.data, gui=self,
                                                 features=self.feature_list)
         if len(self.data.data):
@@ -800,7 +830,7 @@ possible, and the error message below
             valid_idx = list(self.data.data.index[valid_bool])
             if self.cur_example_idx not in valid_idx:
                 new_example_idx = np.random.choice(valid_idx)
-                self.update_example = new_example_idx
+                self.example_select.value = new_example_idx
         else:
             classes_not_found = ', '.join([str(ts + 1) for ts in new])
             self.notify(f'No valid (unclassified) traces to display for classes {classes_not_found}')

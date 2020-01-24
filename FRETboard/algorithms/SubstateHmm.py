@@ -204,7 +204,7 @@ class Classifier(object):
             estates_list = list()
             for i in range(self.buffer):
                 estates_list.append(pg.State(distfun(*edge), name=f'e{edge[0]}{edge[1]}_{i}'))
-                pg_gui_state_dict[f'{sn}_{i}'] = edge[0] if i < left_buffer else edge[1]
+                pg_gui_state_dict[f'{sn}_{i}'] = int(edge[0]) if i < left_buffer else int(edge[1])
             edge_states[sn] = [estates_list, (f's{edge[0]}', f's{edge[1]}')]
         return states, edge_states, pg_gui_state_dict
 
@@ -292,7 +292,7 @@ class Classifier(object):
 
         :param idx: index [str] in self.data.data_clean for which to predict labels
         :returns:
-        pred_list: list of numpy arrays of length len(idx) containing predicted labelsimpo
+        pred_list: list of numpy arrays of length len(idx) containing predicted labels
         logprob_list: list of floats of length len(idx) containing posterior log-probabilities
         """
         data = np.stack(self.data.data_clean.loc[idx, self.feature_list].to_numpy(), axis=-1)
