@@ -193,7 +193,7 @@ class Classifier(object):
                 trans_df.loc[f's{tra[0]}', f's{tra[1]}'] = transition_dict[tra] / tt if tt != 0 else 0.0
         return trans_df, pstart_dict, pend_dict
 
-    def predict(self, idx):
+    def predict(self, idx, hmm=None):
         """
         Predict labels for given indices.
 
@@ -202,7 +202,8 @@ class Classifier(object):
         pred_list: list of numpy arrays of length len(idx) containing predicted labels
         logprob_list: list of floats of length len(idx) containing posterior log-probabilities
         """
-        logprob, trace_state_list = self.trained.viterbi(
+        if hmm is None: hmm = self.trained
+        logprob, trace_state_list = hmm.viterbi(
             np.stack(self.data.data_clean.loc[idx, self.feature_list].to_numpy(), axis=-1))
         state_list = np.vectorize(self.gui_state_dict.__getitem__)([ts[0] for ts in trace_state_list[1:-1]])
         return state_list, logprob
@@ -229,6 +230,43 @@ class Classifier(object):
         return np.stack([np.stack(list(tup), axis=-1) for tup in df.to_numpy()], 0)
 
     # --- parameters and performance measures ---
+    def get_data_tm(self):
+        """
+        Calculate bootstrapped confidence intervals on data-derived transition matrix values
+        :return:
+        """
+        # actual value
+        seqs = self.data.data_clean.prediction.to_list()
+        actual_tm = self.tm_from_seq(seqs)
+
+        # CIs
+        tm_array = []
+        if len(self.data.data_clean) > 100:
+            idx_list = np.random.choice(self.data.data_clean.index, 100)
+        else:
+            idx_list = self.data.data_clean.index
+        for _ in range(10):
+            hmm = self.get_trained_hmm(supervision_influence=self.gui.supervision_slider.value, bootstrap=True)
+            seqs = [self.predict(idx, hmm)[0] for idx in idx_list]
+            tm_array.append(self.tm_from_seq(seqs))
+        tm_mat = np.stack(tm_array, axis=-1)
+        sd_mat = np.std(tm_mat, axis=-1)
+        mu_mat = np.mean(tm_mat, axis=-1)
+        ci_mat = np.tile(np.expand_dims(mu_mat, -1), (1, 1, 2))
+        ci_mat[:, :, 0] -= sd_mat * 2
+        ci_mat[:, :, 1] += sd_mat * 2
+        return actual_tm, ci_mat
+
+    def tm_from_seq(self, seq_list):
+        # concatenate seqs with stop symbol in between
+        # seq = np.concatenate([seq + [99] for seq in seq_list])
+        tm_out = np.zeros([self.nb_states, self.nb_states], dtype=int)
+        # inventory of transitions
+        for seq in seq_list:
+            for tr in zip(seq[:-1], seq[1:]):
+                tm_out[tr[0], tr[1]] += 1
+        return tm_out / np.expand_dims(tm_out.sum(axis=1), -1)
+
     @property
     def confidence_intervals(self):
         """

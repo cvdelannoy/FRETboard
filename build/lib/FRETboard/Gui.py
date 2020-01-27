@@ -142,6 +142,7 @@ class Gui(object):
         self.remove_last_checkbox = CheckboxGroup(labels=[''], active=[])
         self.supervision_slider = Slider(title='Influence supervision', value=1.0, start=0.0, end=1.0, step=0.01)
         self.buffer_slider = Slider(title='Buffer', value=3, start=0, end=20, step=1)
+        self.bootstrap_size_spinner = Spinner(value=1000, step=1)
 
         # Classifier object
         self.classifier_class = self.algo_select.value
@@ -579,7 +580,7 @@ possible, and the error message below
         self.redraw_activated = False
         self.invalidate_cached_properties()
         if not self.data.data.loc[self.cur_example_idx, 'is_labeled']:
-            if not self.data.data.loc[self.cur_example_idx, 'is_predicted']: Event().wait(0.01)
+            while not self.data.data.loc[self.cur_example_idx, 'is_predicted']: Event().wait(0.01)
             self.data.data.at[self.cur_example_idx, 'labels'] = self.data.data.loc[self.cur_example_idx, 'prediction']
             self.data.data.loc[self.cur_example_idx, 'is_labeled'] = True
         nb_samples = self.i_don.size
@@ -591,20 +592,24 @@ possible, and the error message below
         rect_height = np.abs(all_ts.max()) + np.abs(all_ts.min())
         rect_height_half = rect_height / 2
         rect_width = (self.time[1] - self.time[0]) * 1.01
-        self.source.data = dict(i_don=self.i_don, i_acc=self.i_acc, time=self.time,
-                                E_FRET=self.E_FRET, correlation_coefficient=self.correlation_coefficient, i_sum=self.i_sum,
-                                E_FRET_sd=self.E_FRET_sd,
-                                rect_height=np.repeat(rect_height, nb_samples),
-                                rect_height_half=np.repeat(rect_height_half, nb_samples),
-                                rect_mid=np.repeat(rect_mid, nb_samples),
-                                rect_mid_up=np.repeat(rect_mid_up, nb_samples),
-                                rect_mid_down=np.repeat(rect_mid_down, nb_samples),
-                                rect_width=np.repeat(rect_width, nb_samples),
-                                i_sum_height=np.repeat(self.i_sum.max(), nb_samples),
-                                i_sum_mid=np.repeat(self.i_sum.mean(), nb_samples),
-                                labels=self.data.data.loc[self.cur_example_idx, 'labels'],
-                                labels_pct=self.data.data.loc[self.cur_example_idx, 'labels'] / (self.num_states_slider.value - 1),
-                                prediction_pct=self.data.data.loc[self.cur_example_idx, 'prediction'] / (self.num_states_slider.value - 1))
+        try:
+            self.source.data = dict(i_don=self.i_don, i_acc=self.i_acc, time=self.time,
+                                    E_FRET=self.E_FRET, correlation_coefficient=self.correlation_coefficient, i_sum=self.i_sum,
+                                    E_FRET_sd=self.E_FRET_sd,
+                                    rect_height=np.repeat(rect_height, nb_samples),
+                                    rect_height_half=np.repeat(rect_height_half, nb_samples),
+                                    rect_mid=np.repeat(rect_mid, nb_samples),
+                                    rect_mid_up=np.repeat(rect_mid_up, nb_samples),
+                                    rect_mid_down=np.repeat(rect_mid_down, nb_samples),
+                                    rect_width=np.repeat(rect_width, nb_samples),
+                                    i_sum_height=np.repeat(self.i_sum.max(), nb_samples),
+                                    i_sum_mid=np.repeat(self.i_sum.mean(), nb_samples),
+                                    labels=self.data.data.loc[self.cur_example_idx, 'labels'],
+                                    labels_pct=self.data.data.loc[self.cur_example_idx, 'labels'] / (self.num_states_slider.value - 1),
+                                    prediction_pct=self.data.data.loc[self.cur_example_idx, 'prediction'] / (self.num_states_slider.value - 1))
+        except:
+            cp=1
+            raise
         self.x_range.start = 0; self.x_range.end = self.time.max()
         self.y_range.start = all_ts.min(); self.y_range.end = all_ts.max()
         self.update_accuracy_hist()
@@ -962,6 +967,7 @@ possible, and the error message below
             column(
                 row(
                     Div(text='DBSCAN filter epsilon: ', height=15, width=200), widgetbox(self.eps_spinner, width=75),
+                    Div(text='CI bootstrap iterations: ', height=15, width=200), widgetbox(self.bootstrap_size_spinner, width=100),
                     widgetbox(self.bg_button, width=65), width=500),
                 row(
                     Div(text='Frame rate .trace files (Hz): ', height=15, width=200), widgetbox(self.framerate_spinner, width=75),

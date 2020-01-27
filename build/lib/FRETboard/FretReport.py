@@ -30,14 +30,14 @@ class FretReport(object):
 
     @cached_property
     def out_labels(self):
-        return self.data.data.apply(
+        return self.data.data_clean.apply(
             lambda x: x.labels if len(x.labels) is not 0 else x.prediction, axis=1)
 
     @cached_property
     def condensed_seq_df(self):
-        seq_df = pd.DataFrame({'E_FRET': self.data.data.E_FRET,
+        seq_df = pd.DataFrame({'E_FRET': self.data.data_clean.E_FRET,
                                'out_labels': self.out_labels},
-                              index=self.data.data.index)
+                              index=self.data.data_clean.index)
         return seq_df.apply(lambda x: self.condense_sequence(x), axis=1)
 
     @cached_property
@@ -93,7 +93,7 @@ class FretReport(object):
     @cached_property
     def efret_vec(self):
         'efret values returned as one long numpy vector'
-        return np.concatenate([np.stack(list(tup), axis=-1) for tup in self.data.data.E_FRET.to_numpy()], 0)
+        return np.concatenate([np.stack(list(tup), axis=-1) for tup in self.data.data_clean.E_FRET.to_numpy()], 0)
 
     @cached_property
     def data_states_mu(self):
@@ -114,17 +114,29 @@ class FretReport(object):
 
     @cached_property
     def data_tm(self):
-        frame_rate = 1 / np.concatenate(self.data.data.time.apply(lambda x: x[1:] - x[:-1]).to_numpy()).mean()
-        states = np.arange(self.classifier.nb_states)
-        tm_df = pd.DataFrame(0, index=states, columns=states)
-        sb = self.transition_df.state_before
-        sa = self.transition_df.state_after
-        for s1, s2 in itertools.permutations(states, 2):
-            # tm_df.loc[s1, s2] = np.sum(np.logical_and(sb == s1, sa == s2)) / (np.sum(self.out_label_vec_not_last == s1)/10 )
-            tm_df.loc[s1,s2] = np.sum(np.logical_and(sb == s1, sa == s2)) / np.sum(self.out_label_vec_not_last == s1) * frame_rate
-        for s in states:
-            tm_df.loc[s,s] = -1* np.sum(tm_df.loc[s,:])
-        return tm_df.to_html()
+        tm_vec, ci_vecs = self.classifier.get_data_tm()
+
+        # translate prob to transition rate
+        frame_rate = 1 / np.concatenate(self.data.data_clean.time.apply(lambda x: x[1:] - x[:-1]).to_numpy()).mean()
+        for s in np.arange(self.classifier.nb_states):
+            tm_vec[s, s] -= 1
+            ci_vecs[s, s, :] -= 1
+        tm_vec *= frame_rate
+        ci_vecs *= frame_rate
+        return self.transition_np_to_html(tm_vec, ci_vecs)
+
+        # tm_df = pd.DataFrame(0, index=states, columns=states)
+        # sb = self.transition_df.state_before
+        # sa = self.transition_df.state_after
+        # for s1, s2 in itertools.permutations(states, 2):
+        #     # tm_df.loc[s1, s2] = np.sum(np.logical_and(sb == s1, sa == s2)) / (np.sum(self.out_label_vec_not_last == s1)/10 )
+        #     tm_df.loc[s1,s2] = np.sum(np.logical_and(sb == s1, sa == s2)) / np.sum(self.out_label_vec_not_last == s1) * frame_rate
+        # for s in states:
+        #     tm_df.loc[s,s] = -1* np.sum(tm_df.loc[s,:])
+        #     ci_vecs[s,s] -= 1
+        # tm_vec = tm_df.to_numpy()
+        # return self.transition_np_to_html(tm_vec, ci_vecs)
+        # return tm_df.to_html()
 
     # @ cached_property
     # def k_off(self):
@@ -174,7 +186,7 @@ class FretReport(object):
     # --- plotting functions ---
 
     def model_params(self):
-        nb_labeled = self.data.data.is_labeled.sum()
+        nb_labeled = self.data.data_clean.is_labeled.sum()
         pct_labeled = nb_labeled / len(self.data.data) * 100
         out_str = f"""
         Algorithm: {self.gui.algo_select.value} <br/>
@@ -190,6 +202,7 @@ class FretReport(object):
         multi_joint_plot('duration', 'E_FRET', 'state', df=self.outlier_free_event_df)
         f = io.StringIO()
         plt.savefig(f, format='svg')
+        plt.clf()
         return f.getvalue()
 
         # cds = ColumnDataSource(ColumnDataSource.from_df(self.event_df))
@@ -228,6 +241,7 @@ class FretReport(object):
 
         f = io.StringIO()
         plt.savefig(f, format='svg')
+        plt.clf()
         return f.getvalue()
 
     def get_stats_tables(self):
@@ -256,36 +270,28 @@ class FretReport(object):
 
         f = io.StringIO()
         plt.savefig(f, format='svg')
+        plt.clf()
         return f.getvalue()
 
 
     def get_param_tables(self):
+
         # Transitions table
-        nb_states = self.classifier.nb_states
-        state_list = [str(nb+1) for nb in range(self.classifier.nb_states)]
-        state_list_bold = [f'<b>{s}</b>' for s in state_list]
         ci_vecs = self.classifier.confidence_intervals
         tm_trained = self.classifier.get_tm(self.classifier.trained).to_numpy()
+        tm_obj = self.transition_np_to_html(tm_trained, ci_vecs)
+
+        nb_states = self.classifier.nb_states
+        state_list = [str(nb + 1) for nb in range(self.classifier.nb_states)]
+        state_list_bold = [f'<b>{s}</b>' for s in state_list]
         transition_list = [''.join(it) for it in itertools.permutations(state_list, 2)]
         msk = np.invert(np.eye(nb_states, dtype=bool))
         csv_df = pd.DataFrame({'rate': tm_trained[msk],
                               'low_bound': ci_vecs[:,:,0][msk],
                               'high_bound': ci_vecs[:,:,1][msk]}, index=transition_list)
         csv_str = csv_df.to_csv().replace('\n', '\\n')
-        tm1 = np.char.array(tm_trained.round(3).astype(str))
-        tm_newline = np.tile(np.char.array('<br/>'), (nb_states, nb_states))
-        tm_sm = np.tile(np.char.array('<small>'), (nb_states, nb_states))
-        tm_sme = np.tile(np.char.array('</small>'), (nb_states, nb_states))
-        tm2 = np.char.array(ci_vecs[:, :, 0].round(3).astype(str))
-        tm_sep = np.tile(np.char.array(' - '), (nb_states, nb_states))
-        tm3 = np.char.array(ci_vecs[:, :, 1].round(3).astype(str))
-        tm_str = tm1 + tm_newline + tm_sm + tm2 + tm_sep + tm3 + tm_sme
-        tm_obj = tabulate(tm_str, tablefmt='html',
-                          headers=state_list, showindex=state_list_bold,
-                          numalign='center', stralign='center')
 
         # Emissions table
-        nb_features = len(self.classifier.feature_list)
         mu_vecs = [np.array(self.classifier.get_states_mu(feature)).round(3) for feature in self.classifier.feature_list]
         cv_vecs = [np.array(self.classifier.get_states_sd(feature)).round(3) for feature in self.classifier.feature_list]
 
@@ -299,5 +305,19 @@ class FretReport(object):
         # todo: accuracy/posterior probability estimates: hist + text
         # todo: gauss curves per model
 
-    # def make_k_table(self):
-    #     state_name_list = ['State ' + str(sn + 1) for sn in range(self.classifier.nb_states)]
+    def transition_np_to_html(self, tm_trained, ci_vecs):
+        nb_states = self.classifier.nb_states
+        state_list = [str(nb + 1) for nb in range(self.classifier.nb_states)]
+        state_list_bold = [f'<b>{s}</b>' for s in state_list]
+        tm1 = np.char.array(tm_trained.round(3).astype(str))
+        tm_newline = np.tile(np.char.array('<br/>'), (nb_states, nb_states))
+        tm_sm = np.tile(np.char.array('<small>'), (nb_states, nb_states))
+        tm_sme = np.tile(np.char.array('</small>'), (nb_states, nb_states))
+        tm2 = np.char.array(ci_vecs[:, :, 0].round(3).astype(str))
+        tm_sep = np.tile(np.char.array(' - '), (nb_states, nb_states))
+        tm3 = np.char.array(ci_vecs[:, :, 1].round(3).astype(str))
+        tm_str = tm1 + tm_newline + tm_sm + tm2 + tm_sep + tm3 + tm_sme
+        tm_obj = tabulate(tm_str, tablefmt='html',
+                          headers=state_list, showindex=state_list_bold,
+                          numalign='center', stralign='center')
+        return tm_obj
