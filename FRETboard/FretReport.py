@@ -112,8 +112,7 @@ class FretReport(object):
                          numalign='center', stralign='center')
         return table
 
-    @cached_property
-    def data_tm(self):
+    def get_data_tm(self):
         tm_vec, ci_vecs = self.classifier.get_data_tm()
 
         # translate prob to transition rate
@@ -123,7 +122,15 @@ class FretReport(object):
             ci_vecs[s, s, :] -= 1
         tm_vec *= frame_rate
         ci_vecs *= frame_rate
-        return self.transition_np_to_html(tm_vec, ci_vecs)
+
+        # make df for csv file
+        state_list = [str(nb + 1) for nb in range(self.classifier.nb_states)]
+        transition_list = [''.join(it) for it in itertools.permutations(state_list, 2)]
+        msk = np.invert(np.eye(self.classifier.nb_states, dtype=bool))
+        csv_df = pd.DataFrame({'rate': tm_vec[msk],
+                               'low_bound': ci_vecs[:, :, 0][msk],
+                               'high_bound': ci_vecs[:, :, 1][msk]}, index=transition_list)
+        return self.transition_np_to_html(tm_vec, ci_vecs), csv_df.to_csv().replace('\n', '\\n')
 
         # tm_df = pd.DataFrame(0, index=states, columns=states)
         # sb = self.transition_df.state_before
@@ -168,6 +175,9 @@ class FretReport(object):
         tdp = self.draw_transition_density_plot()
         efret_hist = self.draw_efret_histograms()
         tm_table, em_table, tm_str = self.get_param_tables()
+
+        data_tm, data_tm_csv = self.get_data_tm()
+
         # kinetic_table = self.get_stats_tables()
         with open(f'{__location__}/templates/report_template.html', 'r') as fh:
             template = Template(fh.read())
@@ -176,11 +186,12 @@ class FretReport(object):
                                transition_density_plot=tdp,
                                efret_hist=efret_hist,
                                data_efret_stats=self.data_efret_stats,
-                               data_tm_div=self.data_tm,
+                               data_tm_div=data_tm,
                                tm_table_div=tm_table,
                                em_table_div=em_table,
                                date=print_timestamp(),
                                transition_csv=tm_str,
+                               data_tm_csv=data_tm_csv,
                                model_params=self.model_params())
 
     # --- plotting functions ---

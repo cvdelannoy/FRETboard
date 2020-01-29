@@ -44,6 +44,26 @@ Note: these statistics are derived from the actual dataset, not the model
 
 <h4>transition rate matrix</h4>
 <div class="container"> {{ data_tm_div }}</div>
+<input type="button" id="dwn-data-tm-btn" value="Download csv"/>
+<script>
+        function download(filename, text) {
+            var element = document.createElement('a');
+            element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+            element.setAttribute('download', filename);
+            element.style.display = 'none';
+            document.body.appendChild(element);
+            element.click();
+            document.body.removeChild(element);
+            }
+        // Start file download.
+        document.getElementById("dwn-data-tm-btn").addEventListener("click", function(){
+        // Generate download of hello.txt file with some content
+        var text = "{{ data_tm_csv }}";
+        var filename = "FRETboard_data_transition_rates.csv";
+        download(filename, text);
+        }, false);
+</script>
+
 
 <h3>Emissions</h3>
 Mean (mu) and standard deviation (sd) per state and feature.

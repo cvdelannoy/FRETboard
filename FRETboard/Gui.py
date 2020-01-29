@@ -142,7 +142,7 @@ class Gui(object):
         self.remove_last_checkbox = CheckboxGroup(labels=[''], active=[])
         self.supervision_slider = Slider(title='Influence supervision', value=1.0, start=0.0, end=1.0, step=0.01)
         self.buffer_slider = Slider(title='Buffer', value=3, start=0, end=20, step=1)
-        self.bootstrap_size_spinner = Spinner(value=1000, step=1)
+        self.bootstrap_size_spinner = Spinner(value=10, step=1)
 
         # Classifier object
         self.classifier_class = self.algo_select.value
@@ -963,11 +963,10 @@ possible, and the error message below
         pred_vs_manual_panel = Panel(child=widgetbox(column(ts_manual,revert_labels_button)), title='Predicted')
 
         # Additional settings panel
-        settings_panel = Panel(child=widgetbox(
+        settings_panel = Panel(child=widgetbox(row(
             column(
                 row(
                     Div(text='DBSCAN filter epsilon: ', height=15, width=200), widgetbox(self.eps_spinner, width=75),
-                    Div(text='CI bootstrap iterations: ', height=15, width=200), widgetbox(self.bootstrap_size_spinner, width=100),
                     widgetbox(self.bg_button, width=65), width=500),
                 row(
                     Div(text='Frame rate .trace files (Hz): ', height=15, width=200), widgetbox(self.framerate_spinner, width=75),
@@ -977,7 +976,11 @@ possible, and the error message below
                 row(Div(text='Remove last event before analysis: ', height=15, width=250), self.remove_last_checkbox,
                     width=500),
                 width=500),
-            ), title='Settings')
+            column(width=75),
+            column(row(Div(text='CI bootstrap iterations: ', height=15, width=200), widgetbox(self.bootstrap_size_spinner, width=100)),
+                   Div(text='note: model is retrained every iteration, keep low for slow models!'),
+                width=500)
+            , width=1075)), title='Settings')
         tabs = Tabs(tabs=[ts_panel, efret_panel, corr_panel, i_sum_panel, pred_vs_manual_panel, settings_panel])
 
         # accuracy histogram

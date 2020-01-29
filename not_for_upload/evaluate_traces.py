@@ -1,6 +1,7 @@
 import argparse
 import os, fnmatch, warnings
-
+from matplotlib.colors import LinearSegmentedColormap
+from copy import copy
 from os.path import basename, splitext, abspath
 from shutil import rmtree
 import pathlib
@@ -11,9 +12,11 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from functools import reduce
 import seaborn as sns
+from itertools import permutations
 
 mpl.rcParams['figure.dpi'] = 400
 
+colmap = LinearSegmentedColormap.from_list('custom_blues', ['#FFFFFF', '#084594'])
 
 def parse_input_path(location, pattern=None):
     """
@@ -86,7 +89,7 @@ def fretboard_load_fun(fn):
     return df
 
 
-def plot_trace(data_dicts, nb_classes):
+def plot_trace(data_dicts, nb_classes, time):
     """
     Plot traces, provided as one dict per plot
     :return:
@@ -107,22 +110,26 @@ def plot_trace(data_dicts, nb_classes):
         else:
             plot_dict[pid] = plt.subplot2grid((nb_plots, 1), (pid, 0), sharex=plot_dict[0])
         plot_dict[pid].set(ylabel=cdd['ylabel'], xlabel=cdd['xlabel'])
-        plot_dict[pid].set_xlim(0, length_series)
+        plot_dict[pid].set_xlim(0, time.max())
         for n in range(cdd['data'].shape[1]):
-            plot_dict[pid].plot(cdd['data'][:, n], linewidth=0.5, color=line_cols[n % len(line_cols)])
+            plot_dict[pid].plot(time, cdd['data'][:, n], linewidth=0.5, color=line_cols[n % len(line_cols)])
         if cdd.get('label') is not None:
             if cdd['label'].ndim < 2:
                 cdd['label'] = np.expand_dims(cdd['label'], -1)
             nb_colbars = cdd['label'].shape[1]
             for n in range(nb_colbars):
                 if n == 0:
-                    cb_vrange = [axc * 0.1 for axc in plot_dict[pid].get_ylim()]
+                    bw = (plot_dict[pid].get_ylim()[1] - plot_dict[pid].get_ylim()[0]) * 0.1
+                    spacing = bw * 0.1
+                    cb_vrange = [cdd['data'].min() - bw, cdd['data'].min()]
+                    # cb_vrange = [axc * 0.1 for axc in plot_dict[pid].get_ylim()]
                     colbar_width = cb_vrange[1] - cb_vrange[0]
                 else:
-                    cb_top = cb_vrange[n]
-                    cb_vrange = [cb_top, cb_top + colbar_width]
-                plot_dict[pid].pcolorfast((0, length_series), cb_vrange, cdd['label'][:, n].reshape(1,-1),
-                                          vmin=0, vmax=nb_classes, cmap='RdYlGn', alpha=0.5)
+                    cb_bottom = cb_vrange[0]
+                    cb_vrange = [cb_bottom - spacing, cb_bottom - colbar_width - spacing]
+                # plot_dict[pid].pcolorfast(np.vstack((cdd['label'][:, n].reshape(-1), time)).T, vmin=1, vmax=nb_classes, cmap=colmap, alpha=1)
+                plot_dict[pid].pcolorfast((0, time.max()), cb_vrange, cdd['label'][:, n].reshape(1,-1),
+                                          vmin=1, vmax=nb_classes, cmap=colmap, alpha=1)
     plt.tight_layout()
     return plt
 
@@ -162,12 +169,16 @@ trace_dir_dict = {cat: parse_output_dir(trace_dir + cat, clean=True) for cat in 
 
 tracestats_df = pd.DataFrame(index=fb_files, columns=['nb_events', 'nb_events_predicted', 'mean_coverage'])
 eventstats_list = []
-transition_df = pd.DataFrame(columns=['nb_samples', 'nb_transitions'])
+eventstats_pred_list = []
+target_states_w_ground = copy(args.target_states)
+if 1 not in target_states_w_ground: target_states_w_ground += [1]
+transition_df = pd.DataFrame(0, columns=['nb_samples', 'nb_transitions'], index=[f'{ts[0]}{ts[1]}' for ts in permutations(target_states_w_ground, 2)])
 framerate_list = []
 confusion_list = []
 
 loader_fun = dict(matlab=matlab_load_fun, fretboard=fretboard_load_fun)[args.manual_type]
 
+nb_classes = len(args.target_states) + 1
 acc_list = []
 total_pts = 0
 correct_pts = 0
@@ -226,6 +237,7 @@ for fb in fb_files:
         condensed_df = condensed_df.loc[np.in1d(condensed_df.label, args.target_states)]
         condensed_pred_df = condense_df(dat_df, 'predicted')
         condensed_pred_df.loc[np.invert(np.in1d(condensed_pred_df.label, args.target_states)), 'label'] = 1
+        condensed_pred_df.loc[:, 'category'] = cat
 
         # Compare actual events vs predicted events
         verified_predicted_events = []
@@ -239,8 +251,9 @@ for fb in fb_files:
             condensed_df.loc[ti, 'predicted'] = int(pred_event.label)
             condensed_df.loc[ti, 'pred_duration'] = pred_event.duration
 
-            # Collect classifier performance measures. Taking into account that 1 predicted event cannot be counted
-            #   doubly if covering two actual events!
+            # Collect classifier performance measures. Taking into account:
+            # - 1 predicted event cannot be counted doubly if covering two actual events
+            # - An event detected to be more than twice as long as
             if pred_idx in verified_predicted_events:
                 confusion_df.loc[(cat, tup.label), 'fn'] += 1
                 continue
@@ -255,6 +268,7 @@ for fb in fb_files:
             if ti in verified_predicted_events: continue
             if tup.label != 1: confusion_df.loc[(cat, tup.label), 'fp'] += 1
 
+        eventstats_pred_list.append(condensed_pred_df)
         if len(condensed_df):
             condensed_df.loc[:, 'coverage'] = (condensed_df.pred_duration) / condensed_df.duration * 100.0
             eventstats_list.append(condensed_df)
@@ -272,9 +286,8 @@ for fb in fb_files:
             'data': dat_df.loc[:, ['i_don', 'i_acc']].to_numpy(),
             'label': dat_df.loc[:, ['predicted', 'manual']].to_numpy()
         }
-        nb_classes = pd.unique(dat_df.loc[:, 'predicted']).size
-        plot_obj = plot_trace(plot_dict, nb_classes)
-        plot_obj.savefig(f'{trace_dir_dict[cat]}{splitext(basename(fb))[0]}.png')
+        plot_obj = plot_trace(plot_dict, nb_classes, dat_df.loc[:, 'time'])
+        plot_obj.savefig(f'{trace_dir_dict[cat]}{splitext(basename(fb))[0]}.svg')
         plt.close()
     # except:
     #     continue
@@ -289,10 +302,9 @@ sns.scatterplot(x='recall', y='precision', style='state', hue='category', data=c
 plt.xlim(0, 1)
 plt.ylim(0, 1)
 plt.gca().set_aspect('equal', adjustable='box')
-lgd = plt.gca().legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+lgd = plt.gca().legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.) # plt.gca().get_legend().remove()
 plt.savefig(f'{summary_dir}/precision_recall.svg', bbox_extra_artists=(lgd, ), bbox_inches='tight')
 plt.clf()
-
 # plot transition rates
 if args.tr_files:
     if any(np.array(framerate_list) - framerate_list[0] > 0.1):
@@ -300,13 +312,15 @@ if args.tr_files:
 
     # Ground truth from data
     framerate = np.mean(framerate_list)
-    transition_df.loc[:, 'rate'] = transition_df.nb_transitions / transition_df.nb_samples * framerate
+    transition_df.loc[:, 'rate'] = 0
+    tb = transition_df.nb_transitions != 0
+    transition_df.loc[tb, 'rate'] = transition_df.loc[tb, 'nb_transitions'] / transition_df.loc[tb, 'nb_samples'] * framerate
 
     # Loaded from FRETboard
     tr_df_list = []
     for trf in args.tr_files:
         trf_base = basename(trf)
-        cat_list = [cat for cat in args.categories if cat in trf_base]
+        cat_list = [cat for cat in args.categories if cat in trf]
         if len(cat_list) > 1: raise ValueError(f'Multiple categories match to transition rate file {trf_base}')
         elif len(cat_list) == 0: continue
         cat = cat_list[0]
@@ -342,8 +356,34 @@ if args.tr_files:
     plt.savefig(f'{summary_dir}/transition_rate.svg', bbox_extra_artists=(lgd, ), bbox_inches='tight')
     plt.clf()
 
-# plot event coverage
+# plot correct E_FRET histograms
 eventstats_df = pd.concat(eventstats_list)
+eventstats_pred_df = pd.concat(eventstats_pred_list)
+eventstats_pred_df = copy(eventstats_pred_df.loc[np.in1d(eventstats_pred_df.label, args.target_states), :])
+for cat in args.categories:
+    # for ts in args.target_states:
+    #     col = colmap(ts / max(args.target_states))
+    #     epdf = eventstats_pred_df.loc[np.logical_and(eventstats_pred_df.label == ts, eventstats_pred_df.category == cat), 'E_FRET']
+    #     edf = eventstats_df.loc[np.logical_and(eventstats_df.label == ts, eventstats_df.category == cat), 'E_FRET']
+    #     plt.hist(epdf, hatch='//', histtype='step', facecolor=None, edgecolor=col, bins=100, range=[0,1])
+    #     plt.hist(edf, hatch='\\\\', histtype='step', facecolor=None, edgecolor=col, bins=100, range=[0,1])
+    #     plt.xlabel('$E_{FRET}$')
+    #     plt.ylabel('count')
+    #     plt.tight_layout()
+    #     plt.savefig(f'{summary_dir}/event_counts_{cat}_{ts}.svg')
+    #     plt.clf()
+    for ts in args.target_states:
+        epdf = eventstats_pred_df.loc[np.logical_and(eventstats_pred_df.label == ts, eventstats_pred_df.category == cat), 'E_FRET']
+        edf = eventstats_df.loc[np.logical_and(eventstats_df.label == ts, eventstats_df.category == cat), 'E_FRET']
+        col = colmap(ts / max(args.target_states))
+        sns.kdeplot(epdf, color=col, legend=False)
+        sns.kdeplot(edf, color=col, linestyle='--', legend=False)
+    plt.xlabel('$E_{FRET}$')
+    plt.ylabel('count')
+    plt.savefig(f'{summary_dir}/event_counts_kde_{cat}.svg')
+    plt.clf()
+
+# plot event coverage
 eventstats_df.loc[:, 'coverage'] = eventstats_df.pred_duration / eventstats_df.duration * 100.0
 eventstats_df.sort_values(['category'], inplace=True)
 sns.violinplot(x='category', y='coverage', data=eventstats_df.loc[eventstats_df.label == eventstats_df.predicted])

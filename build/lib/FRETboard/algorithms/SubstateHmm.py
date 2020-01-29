@@ -321,13 +321,17 @@ class Classifier(object):
 
         # CIs
         tm_array = []
-        if len(self.data.data_clean) > 100:
-            idx_list = np.random.choice(self.data.data_clean.index, 100)
+        # if len(self.data.data_clean) > 100:
+        #     idx_list = np.random.choice(self.data.data_clean.index, 100)
+        # else:
+        #     idx_list = self.data.data_clean.index
+        if self.gui:
+            nb_iters = self.gui.bootstrap_size_spinner.value
         else:
-            idx_list = self.data.data_clean.index
-        for _ in range(10):
+            nb_iters = 10
+        for _ in range(nb_iters):
             hmm = self.get_trained_hmm(supervision_influence=self.gui.supervision_slider.value, bootstrap=True)
-            seqs = [self.predict(idx, hmm)[0] for idx in idx_list]
+            seqs = [self.predict(idx, hmm)[0] for idx in self.data.data_clean.index]
             tm_array.append(self.tm_from_seq(seqs))
         tm_mat = np.stack(tm_array, axis=-1)
         sd_mat = np.std(tm_mat, axis=-1)
@@ -355,7 +359,7 @@ class Classifier(object):
         if self.gui:
             nb_iters = self.gui.bootstrap_size_spinner.value
         else:
-            nb_iters=1000
+            nb_iters=10
         for _ in range(nb_iters):
             hmm = self.get_trained_hmm(supervision_influence=self.gui.supervision_slider.value, bootstrap=True)
             tm_array.append(self.get_tm(hmm).to_numpy())
