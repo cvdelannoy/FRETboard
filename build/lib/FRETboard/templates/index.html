@@ -31,6 +31,9 @@
                 if (e_int <= window.Bokeh.documents[0]._all_models_by_name._dict['num_states_slider'].value){
                     window.Bokeh.documents[0]._all_models_by_name._dict['sel_state_slider'].value = e_int;}
                 }
+            else { // non-integer pressed: send server side to process
+                window.Bokeh.documents[0]._all_models_by_name._dict['keystroke_holder'].text = e.key;
+            }
         });
     </script>
     {% endblock %}

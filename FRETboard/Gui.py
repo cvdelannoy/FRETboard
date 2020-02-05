@@ -117,10 +117,10 @@ class Gui(object):
         self.bg_checkbox = CheckboxGroup(labels=[''], active=[])
 
         # 2. Train
-        self.sel_state_slider = Slider(title='Change selection to state', value=1, start=1,
+        self.sel_state_slider = Slider(title='Change selection to state  (num keys)', value=1, start=1,
                                        end=self.num_states_slider.value, step=1, name='sel_state_slider')
         self.sel_state = Div(text='1', name='sel_state')
-
+        self.del_trace_button = Button(label='Delete (Q)', button_type='danger', name='delete_button')
         # 3. Save
 
 
@@ -132,6 +132,7 @@ class Gui(object):
         self.mc_text = PreText(text='0%')
         self.report_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
         self.datzip_holder = PreText(text='', css_classes=['hidden'])
+        self.keystroke_holder = PreText(text='', css_classes=['hidden'], name='keystroke_holder')
         self.features_checkboxes = CheckboxGroup(labels=[''] * len(self.feature_list), active=[0, 1, 2, 3, 4])
         self.state_radio = RadioGroup(labels=[''] * len(self.feature_list), active=0)
 
@@ -489,7 +490,8 @@ possible, and the error message below
             if not any(valid_bool):
                 self.notify('No new traces with states of interest left')
                 return
-            new_example_idx = np.random.choice(self.data.data.loc[sidx].loc[valid_bool].index)
+            # new_example_idx = np.random.choice(self.data.data.loc[sidx].loc[valid_bool].index)
+            new_example_idx = self.data.data.loc[valid_bool, 'logprob'].idxmin()
             self.example_select.value = new_example_idx
 
     def load_params(self, attr, old, new):
@@ -801,13 +803,16 @@ possible, and the error message below
             return
         tfh = tempfile.TemporaryDirectory()
         for fn, tup in self.data.data_clean.iterrows():
-            sm_test = tup.labels if len(tup.labels) else tup.prediction
-            sm_bool = [True for sm in self.saveme_checkboxes.active if sm in sm_test]
-            if not any(sm_bool): continue
-            labels = tup.labels + 1 if len(tup.labels) != 0 else [None] * len(tup.time)
-            out_df = pd.DataFrame(dict(time=tup.time, i_don=tup.i_don, i_acc=tup.i_acc,
-                                       label=labels, predicted=tup.prediction + 1))
-            out_df.to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
+            try:
+                sm_test = tup.labels if len(tup.labels) else tup.prediction
+                sm_bool = [True for sm in self.saveme_checkboxes.active if sm in sm_test]
+                if not any(sm_bool): continue
+                labels = tup.labels + 1 if len(tup.labels) != 0 else [None] * len(tup.time)
+                out_df = pd.DataFrame(dict(time=tup.time, i_don=tup.i_don, i_acc=tup.i_acc,
+                                           label=labels, predicted=tup.prediction + 1))
+                out_df.to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
+            except:
+                pass
         zip_dir = tempfile.TemporaryDirectory()
         zip_fn = shutil.make_archive(f'{zip_dir.name}/dat_files', 'zip', tfh.name)
         with open(zip_fn, 'rb') as f:
@@ -840,6 +845,14 @@ possible, and the error message below
             classes_not_found = ', '.join([str(ts + 1) for ts in new])
             self.notify(f'No valid (unclassified) traces to display for classes {classes_not_found}')
 
+    def process_keystroke(self, attr, old, new):
+        if not len(new): return
+        self.keystroke_holder.text = ''
+        if new == 'q': self.del_trace()
+        elif new == 'w': self.train_trigger()
+        elif new == 'e': self.new_example()
+
+
     def make_document(self, doc):
         # --- Define widgets ---
         ff_title = Div(text=f"""<font size=15><b>FRETboard</b></font><br>v.{self.version}<hr>""",
@@ -857,8 +870,8 @@ possible, and the error message below
 
 
         # --- 2. Teach ---
-        del_trace_button = Button(label='Delete', button_type='danger')
-        del_trace_button.on_click(self.del_trace)
+
+        self.del_trace_button.on_click(self.del_trace)
 
         showme_states = [str(n + 1) for n in range(self.num_states_slider.value)]
         showme_idx = list(range(self.num_states_slider.value))
@@ -869,8 +882,8 @@ possible, and the error message below
                             self.showme_checkboxes,
                             height=80, width=300)
 
-        train_button = Button(label='Train', button_type='warning')
-        new_example_button = Button(label='New trace', button_type='success')
+        train_button = Button(label='Train (W)', button_type='warning')
+        new_example_button = Button(label='New trace (E)', button_type='success')
 
         # --- 3. Save ---
         save_model_button = Button(label='Model')
@@ -976,9 +989,10 @@ possible, and the error message below
                 row(Div(text='Remove last event before analysis: ', height=15, width=250), self.remove_last_checkbox,
                     width=500),
                 width=500),
-            column(width=75),
+            column(Div(text=' ', height=15, width=250), width=75),
             column(row(Div(text='CI bootstrap iterations: ', height=15, width=200), widgetbox(self.bootstrap_size_spinner, width=100)),
                    Div(text='note: model is retrained every iteration, keep low for slow models!'),
+                   self.keystroke_holder,
                 width=500)
             , width=1075)), title='Settings')
         tabs = Tabs(tabs=[ts_panel, efret_panel, corr_panel, i_sum_panel, pred_vs_manual_panel, settings_panel])
@@ -1033,11 +1047,12 @@ possible, and the error message below
         self.features_checkboxes.on_change('active', self.update_feature_list)
         self.buffer_slider.on_change('value', self.update_buffer)
 
-        # hidden holders to generate saves
+        # hidden holders
         self.report_holder.js_on_change('text', CustomJS(args=dict(file_source=self.html_source),
                                                          code=download_report_js))
         self.datzip_holder.js_on_change('text', CustomJS(args=dict(file_source=self.datzip_source),
                                                          code=download_datzip_js))
+        self.keystroke_holder.on_change('text', self.process_keystroke)
 
         # --- Build layout ---
         state_block = row(state_curves,
@@ -1058,7 +1073,7 @@ possible, and the error message below
                          #     self.sel_state, width=300, height=15),
                          self.sel_state_slider,
                          showme_col,
-                         row(widgetbox(del_trace_button, width=100), widgetbox(train_button, width=100), widgetbox(new_example_button, width=100)),
+                         row(widgetbox(self.del_trace_button, width=100), widgetbox(train_button, width=100), widgetbox(new_example_button, width=100)),
                          Div(text="<font size=4>3. Save</font>", width=280, height=15),
                          saveme_col,
                          row(widgetbox(report_button, width=100), widgetbox(save_data_button, width=100), widgetbox(save_model_button, width=100)),
