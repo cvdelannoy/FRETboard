@@ -15,6 +15,7 @@ from threading import Thread, Event
 import asyncio
 from time import sleep
 from joblib import Parallel
+from sklearn import linear_model
 
 from cached_property import cached_property
 from bokeh.server.server import Server
@@ -31,7 +32,7 @@ from tornado.ioloop import IOLoop
 from tornado import gen
 
 from FRETboard.io_functions import parse_trace_file
-from FRETboard.helper_functions import print_timestamp
+from FRETboard.helper_functions import print_timestamp, series_to_array
 from FRETboard.FretReport import FretReport
 from FRETboard.MainTable import MainTable
 
@@ -89,7 +90,7 @@ class Gui(object):
         self.cur_example_idx = None
         self.nb_threads = 8
         self.feature_list = ['E_FRET', 'E_FRET_sd', 'i_sum', 'i_sum_sd', 'correlation_coefficient', 'i_don', 'i_acc']
-        self.data = MainTable(data, np.nan)
+        self.data = MainTable(data, np.nan, 0.0, 0.0, 1.0)
 
         # Buffer stores and triggers (for concurrency)
         self.notification_buffer = ''
@@ -144,6 +145,14 @@ class Gui(object):
         self.supervision_slider = Slider(title='Influence supervision', value=1.0, start=0.0, end=1.0, step=0.01)
         self.buffer_slider = Slider(title='Buffer', value=3, start=0, end=20, step=1)
         self.bootstrap_size_spinner = Spinner(value=10, step=1)
+        self.alex_checkbox = CheckboxGroup(labels=[''], active=[])
+        self.gamma_factor_spinner = Spinner(value=1.0, step=0.001)
+        self.l_spinner = Spinner(value=0.0, step=0.001)
+        self.d_spinner = Spinner(value=0.0, step=0.001)
+        self.d_only_state_spinner = Spinner(value=1, step=1)
+        self.alex_corr_button = Button(label='Apply')
+        self.alex_estimate_button = Button(label='Estimate parameters')
+
 
         # Classifier object
         self.classifier_class = self.algo_select.value
@@ -335,7 +344,8 @@ possible, and the error message below
                 file_contents = base64.b64decode(b64_contents).decode('utf-8')
                 file_contents = np.column_stack([np.fromstring(n, sep=' ') for n in file_contents.split('\n') if len(n)])
                 if len(file_contents):
-                    self.data.add_tuple(file_contents, fn)
+                    self.data.add_tuple(file_contents, fn,
+                                        gamma=self.gamma_factor_spinner.value, l=self.l_spinner.value, d=self.d_spinner.value)
                     self.append_fn(fn)
                     # Already start training if no previous model exists and more than 100 traces are loaded
                     if not self.model_loaded and not self.training_in_progress:
@@ -357,8 +367,13 @@ possible, and the error message below
         :return:
         """
         while self.main_thread.is_alive():
-            eps_series = self.data.data.eps
-            sb_indices = eps_series.index[np.nan_to_num(eps_series) != np.nan_to_num(self.data.eps)]
+            if not len(self.data.data): continue
+            idx_list = self.data.data.index
+            eps_bool = np.nan_to_num(self.data.data.loc[idx_list, 'eps']) != np.nan_to_num(self.data.eps)
+            l_bool = self.data.data.loc[idx_list, 'l'] != self.data.l
+            d_bool = self.data.data.loc[idx_list, 'd'] != self.data.d
+            gamma_bool = self.data.data.loc[idx_list, 'gamma'] != self.data.gamma
+            sb_indices = idx_list[np.logical_or.reduce((eps_bool, l_bool, d_bool, gamma_bool))]
             if not len(sb_indices):
                 Event().wait(0.01)
                 continue
@@ -679,9 +694,17 @@ possible, and the error message below
             Event().wait(0.01)
         if not len(self.bg_checkbox.active):
             self.data.eps = np.nan
-            self.eps_change_in_progress = False
         else:
             self.data.eps = self.eps_spinner.value
+        self.eps_change_in_progress = False
+
+    def update_crosstalk(self):
+        self.eps_change_in_progress = True
+        while self.prediction_in_progress:
+            Event().wait(0.01)
+        self.data.l = self.l_spinner.value
+        self.data.d = self.d_spinner.value
+        self.data.gamma = self.gamma_factor_spinner.value
         self.eps_change_in_progress = False
 
     def update_accuracy_hist(self):
@@ -852,6 +875,44 @@ possible, and the error message below
         elif new == 'w': self.train_trigger()
         elif new == 'e': self.new_example()
 
+    def estimate_crosstalk_params(self):
+
+        labeled_data = self.data.data.loc[self.data.data.labels.apply(lambda x: len(x) != 0), :]
+
+        # leakage
+        l_df = labeled_data.apply(lambda x: x.i_acc_raw[x.labels == self.d_only_state_spinner.value - 1] /
+                                       x.i_don_raw[x.labels == self.d_only_state_spinner.value - 1], axis=1)
+        l = series_to_array(l_df).mean()
+
+        # direct excitation
+        d_df = labeled_data.apply(lambda x: (x.i_acc_raw - l * x.i_don_raw) / x.f_acc_acc_raw, axis=1)
+        d_array = series_to_array(d_df)
+        d_array = d_array[np.invert(np.isinf(d_array))]
+        d = d_array.mean()
+
+        # gamma
+        d_idx = self.data.data_clean.index
+        f_fret = self.data.data.loc[d_idx].apply(lambda x: x.i_acc_raw - l * x.i_don_raw - d * x.f_acc_acc_raw, axis=1)
+        gamma_df = pd.DataFrame({'f_fret': f_fret,
+                                 'f_dem_dex': self.data.data.loc[d_idx, 'i_don_raw'],
+                                 'f_aem_aex': self.data.data.loc[d_idx, 'f_acc_acc_raw']})
+        gamma_df.loc[:, 'e_pr'] = gamma_df.apply(lambda x: x.f_fret / (x.f_fret + x.f_dem_dex), axis=1)
+        gamma_df.loc[:, 'f_sum'] = gamma_df.apply(lambda x: x.f_fret - x.f_dem_dex, axis=1)
+        gamma_df.loc[:, 'stoichiometry'] = gamma_df.apply(lambda x: x.f_sum  / (x.f_sum + x.f_aem_aex), axis=1)
+
+        s = series_to_array(gamma_df.stoichiometry)
+        e_pr = series_to_array(gamma_df.e_pr)
+        s_mean = s.mean(); s_sd = s.std(); e_mean = e_pr.mean(); e_sd = e_pr.std()
+        sb = np.logical_and(np.logical_and(s > s_mean - 2 * s_sd, s < s_mean + 2 * s_sd),
+                            np.logical_and(e_pr > e_mean - 2 * e_sd, e_pr < e_mean + 2 * e_sd))
+        lm = linear_model.LinearRegression().fit(X=e_pr[sb].reshape(-1, 1), y=s[sb].reshape(-1, 1))
+        gamma, beta = lm.coef_[0,0], lm.intercept_[0]
+
+        self.l_spinner.value = l
+        self.d_spinner.value = d
+        self.gamma_factor_spinner.value = gamma
+        self.update_crosstalk()
+
 
     def make_document(self, doc):
         # --- Define widgets ---
@@ -883,7 +944,7 @@ possible, and the error message below
                             height=80, width=300)
 
         train_button = Button(label='Train (W)', button_type='warning')
-        new_example_button = Button(label='New trace (E)', button_type='success')
+        new_example_button = Button(label='New (E)', button_type='success')
 
         # --- 3. Save ---
         save_model_button = Button(label='Model')
@@ -978,19 +1039,29 @@ possible, and the error message below
         # Additional settings panel
         settings_panel = Panel(child=widgetbox(row(
             column(
+                Div(text='<b>Data format options</b>', height=15, width=200),
+                row(Div(text='Load ALEX traces: ', height=15, width=200), self.alex_checkbox, width=500),
+                row(Div(text='Frame rate .trace files (Hz): ', height=15, width=200),widgetbox(self.framerate_spinner, width=75)),
+
+                Div(text='<b>Filtering options</b>', height=15, width=200),
+                row(Div(text='DBSCAN filter epsilon: ', height=15, width=200), widgetbox(self.eps_spinner, width=75), widgetbox(self.bg_button, width=65), width=500),
+                Div(text='<b>ALEX-based corrections</b>', height=15, width=200),
                 row(
-                    Div(text='DBSCAN filter epsilon: ', height=15, width=200), widgetbox(self.eps_spinner, width=75),
-                    widgetbox(self.bg_button, width=65), width=500),
-                row(
-                    Div(text='Frame rate .trace files (Hz): ', height=15, width=200), widgetbox(self.framerate_spinner, width=75),
-                ),
-                self.supervision_slider,
-                self.buffer_slider,
-                row(Div(text='Remove last event before analysis: ', height=15, width=250), self.remove_last_checkbox,
-                    width=500),
+                    Div(text='gamma: ', height=15, width=80), widgetbox(self.gamma_factor_spinner, width=75),
+                    Div(text='<i>l</i>: ', height=15, width=35), widgetbox(self.l_spinner, width=75),
+                    Div(text='<i>r</i>: ', height=15, width=35), widgetbox(self.d_spinner, width=75),
+                    widgetbox(self.alex_corr_button, height=15, width=30)),
+                row(Div(text='<i>D</i>-only state: ', height=15, width=80),
+                    widgetbox(self.d_only_state_spinner, width=75),
+                    self.alex_estimate_button),
                 width=500),
             column(Div(text=' ', height=15, width=250), width=75),
-            column(row(Div(text='CI bootstrap iterations: ', height=15, width=200), widgetbox(self.bootstrap_size_spinner, width=100)),
+            column(
+                Div(text='<b>Training options</b>', height=15, width=200),
+                self.supervision_slider,
+                self.buffer_slider,
+                row(Div(text='Remove last event before analysis: ', height=15, width=250), self.remove_last_checkbox, width=500),
+                row(Div(text='CI bootstrap iterations: ', height=15, width=200), widgetbox(self.bootstrap_size_spinner, width=100)),
                    Div(text='note: model is retrained every iteration, keep low for slow models!'),
                    self.keystroke_holder,
                 width=500)
@@ -1028,8 +1099,6 @@ possible, and the error message below
                              row(Div(text='Mean log-posterior: ', width=150, height=18), self.posterior_text, height=18),
                              row(Div(text='Manually classified (%): ', width=150, height=18), self.mc_text, height=18))
 
-        # todo: Average accuracy and posterior
-
         # --- Define update behavior ---
         self.algo_select.on_change('value', self.update_algo)
         self.source.selected.on_change('indices', self.update_classification)  # for manual selection on trace
@@ -1040,9 +1109,11 @@ possible, and the error message below
         new_example_button.on_click(self.new_example)
         self.bg_checkbox.on_change('active', lambda attr, old, new: self.update_eps())
         self.bg_button.on_click(self.update_eps)
+        self.alex_estimate_button.on_click(self.estimate_crosstalk_params)
         # self.bg_button.on_click(self.subtract_background)
         # self.bg_test_button.on_click(self.subtract_test)
         self.num_states_slider.on_change('value', self.update_num_states)
+        self.alex_corr_button.on_click(self.update_crosstalk)
         self.state_radio.on_change('active', lambda attr, old, new: self.update_state_curves())
         self.features_checkboxes.on_change('active', self.update_feature_list)
         self.buffer_slider.on_change('value', self.update_buffer)

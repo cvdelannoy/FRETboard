@@ -10,8 +10,11 @@ from FRETboard.helper_functions import subtract_background_fun, get_derived_feat
 
 class MainTable(object):
 
-    def __init__(self, data, eps):
+    def __init__(self, data, eps, l, d, gamma):
         self.eps = eps
+        self.l = l
+        self.d = d
+        self.gamma = gamma
         self.data = data
 
     @property
@@ -44,6 +47,8 @@ class MainTable(object):
             'time': [np.array([], dtype=np.int64)] * nb_files,
             'i_don_raw': [np.array([], dtype=np.int64)] * nb_files,
             'i_acc_raw': [np.array([], dtype=np.int64)] * nb_files,
+            'f_acc_don_raw': [np.array([], dtype=np.int64)] * nb_files,
+            'f_acc_acc_raw': [np.array([], dtype=np.int64)] * nb_files,
             'i_don': [np.array([], dtype=np.int64)] * nb_files,
             'i_acc': [np.array([], dtype=np.int64)] * nb_files,
             'i_sum': [np.array([], dtype=np.float64)] * nb_files,
@@ -56,6 +61,9 @@ class MainTable(object):
             'prediction': [np.array([], dtype=np.int64)] * nb_files},
             index=dat_files, dtype=object)
         df_out['eps'] = pd.Series([np.nan] * nb_files)
+        df_out['l'] = pd.Series([np.nan] * nb_files)
+        df_out['d'] = pd.Series([np.nan] * nb_files)
+        df_out['gamma'] = pd.Series([np.nan] * nb_files)
         df_out['logprob'] = pd.Series([np.nan] * nb_files, dtype=float)
         df_out['is_labeled'] = pd.Series([False] * nb_files, dtype=bool)
         df_out['is_predicted'] = pd.Series([False] * nb_files, dtype=bool)
@@ -70,7 +78,7 @@ class MainTable(object):
                 print('File {} could not be read, skipping'.format(dat_file))
                 df_out.drop([dat_file], inplace=True)
 
-    def add_tuple(self, fc, fn):
+    def add_tuple(self, fc, fn, gamma=1.0, l=0.0, d=0.0):
         """
         Add a new tuple to the data table
         :param fc: file contents, np array of size [3 x len(sequence)], rows are time (s), don acc
@@ -81,6 +89,12 @@ class MainTable(object):
         time = fc[0, :].astype(np.float64)
         i_don_raw = fc[1, :].astype(np.float64)
         i_acc_raw = fc[2, :].astype(np.float64)
+        if fc.shape[0] == 5:
+            f_acc_don_raw = fc[3, :].astype(np.float64)
+            f_acc_acc_raw = fc[4, :].astype(np.float64)
+        else:
+            f_acc_don_raw = np.array([])
+            f_acc_acc_raw = np.array([])
         if not np.isnan(self.eps):
             i_don = bg_filter_trace(i_don_raw, self.eps)
             i_acc = bg_filter_trace(i_acc_raw, self.eps)
@@ -88,17 +102,22 @@ class MainTable(object):
             i_don = i_don_raw.copy()
             i_acc = i_acc_raw.copy()
 
-        E_FRET, E_FRET_sd, i_sum, i_sum_sd, correlation_coefficient = get_derived_features(i_don, i_acc)
+        E_FRET, E_FRET_sd, i_sum, i_sum_sd, correlation_coefficient = get_derived_features(i_don, i_acc,
+                                                                                           f_acc_don_raw,
+                                                                                           f_acc_acc_raw,
+                                                                                           gamma,l,d)
 
         self._data.loc[fn] = (time,
                               i_don_raw, i_acc_raw,     # traces w/o background subtraction
+                              f_acc_don_raw, f_acc_acc_raw, # if ALEX, F_Aex traces
                               i_don, i_acc,             # traces with background subtraction
                               i_sum, i_sum_sd,          # summed intensity, rolling window sd of summed intensity
                               E_FRET, E_FRET_sd,        # FRET efficiency, rolling window sd of E_FRET
                               correlation_coefficient,  # rolling window correlation coefficient i_don vs i_acc
                               [], [],                   # manual labels [object], manual edge labels [object]
                               [],                       # predicted labels [object]
-                              self.eps,                      # DBSCAN filter epsilon value [int]
+                              self.eps,                 # DBSCAN filter epsilon value [int]
+                              self.l, self.d, self.gamma, # crosstalk corrections
                               np.nan,                   # logprob of prediction [float]
                               False, False,             # is_labeled [bool], is_predicted [bool]
                               False, False)             # marked_junk [bool], predicted_junk [bool]
@@ -145,7 +164,7 @@ class MainTable(object):
     #             self._data.update(df)
 
     def subtract_background(self, idx):
-        self._data.loc[idx] = parallel_subtract(self._data.loc[idx], self.eps)
+        self._data.loc[idx] = parallel_subtract(self._data.loc[idx], self.eps, self.d, self.l, self.gamma)
 
     # --- derived properties ---
     @property
