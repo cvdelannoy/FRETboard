@@ -71,21 +71,21 @@ def rolling_corr_coef(don, acc,  window):
     return np.array([np.corrcoef(a, b)[0, 1] for a, b in zip(rolling_window(acc, window), rolling_window(don, window))])
 
 
-def parallel_subtract(data, eps):
+def parallel_subtract(data, eps, d, l, gamma):
     """
     subtract background from data presented as pd Series or pd dataframe object.
 
     """
     if type(data) == pd.Series:
-        data = subtract_background_fun(data, eps)
+        data = subtract_background_fun(data, eps, d, l, gamma)
         return data
     for tidx, tup in data.iterrows():
-        tup_mod = subtract_background_fun(tup, eps)
+        tup_mod = subtract_background_fun(tup, eps, d, l, gamma)
         data.loc[tidx] = tup_mod.values
     return data
 
 
-def subtract_background_fun(tup, eps):
+def subtract_background_fun(tup, eps, d, l, gamma):
     """
     Cluster points in i_don and i_acc using DBSCAN, recalculate derived features. Expects pd Series object!
     :param tup: pd Series object
@@ -95,9 +95,11 @@ def subtract_background_fun(tup, eps):
     for nt in (('i_don_raw', 'i_don'), ('i_acc_raw', 'i_acc')):
         tup.at[nt[1]] = bg_filter_trace(tup.loc[nt[0]], eps)
     for feat, vec in zip(['E_FRET', 'E_FRET_sd', 'i_sum', 'i_sum_sd', 'correlation_coefficient'],
-                         get_derived_features(tup.loc['i_don'], tup.loc['i_acc'])):
+                         get_derived_features(tup.loc['i_don'], tup.loc['i_acc'],
+                                              tup.loc['f_acc_don_raw'], tup.loc['f_acc_acc_raw'],
+                                              l=l, d=d, gamma=gamma)):
         tup.at[feat] = vec
-    tup.at['eps'] = eps
+    tup.at['eps'], tup.at['d'], tup.at['l'], tup.at['gamma'] = eps, d, l, gamma
     return tup
 
 def remove_outliers(mat):
@@ -117,6 +119,13 @@ def remove_last_event(seq):
             return seq
         seq[-i] = 0
 
+def series_to_array(df):
+    """
+    convert pd series containing np arrays into 1 numpy array
+    """
+    return np.concatenate([dv for dv in df.values if len(dv)])
+
+
 def bg_filter_trace(tr, eps):
     if np.isnan(eps):
         return tr
@@ -130,13 +139,18 @@ def bg_filter_trace(tr, eps):
     return tr - np.min(med_list)
 
 
-def get_derived_features(i_don, i_acc):
+def get_derived_features(i_don, i_acc, f_acc_don_raw, f_acc_acc_raw, gamma=1.0, l=0.0, d=0.0):
     window = 5
     ss = (window - 1) // 2  # sequence shortening
-    i_sum = np.sum((i_don, i_acc), axis=0)
+    cross_correct = 0
+    if len(f_acc_don_raw) and len(f_acc_acc_raw):
+        cross_correct = l * f_acc_acc_raw + d * f_acc_don_raw
+    i_sum = np.sum(( gamma * i_don, i_acc - cross_correct), axis=0)
+    f_fret = i_acc - cross_correct
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        E_FRET = np.divide(i_acc, i_sum)
+        E_FRET = f_fret / (gamma * i_don + f_fret)
+        # E_FRET = np.divide(i_acc - cross_correct, i_sum)
     E_FRET[i_sum == 0] = np.nan  # set to nan where i_don and i_acc after background correction cancel out
 
     correlation_coefficient = np.full_like(E_FRET, np.nan)
