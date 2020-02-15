@@ -40,6 +40,8 @@ __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file
 line_opts = dict(line_width=1)
 rect_opts = dict(alpha=1, line_alpha=0)
 with open(f'{__location__}/algorithms.yml', 'r') as fh: algo_dict = yaml.safe_load(fh)
+algo_dict['custom'] = 'custom'
+algo_inv_dict = {algo_dict[k]: k for k in algo_dict}
 white_blue_colors = ['#f7fbff', '#deebf7', '#c6dbef', '#9ecae1', '#6baed6', '#4292c6', '#2171b5', '#084594']
 # pastel_colors = ["#75968f", "#a5bab7", "#c9d9d3", "#e2e2e2", "#dfccce", "#ddb7b1", "#cc7878", "#933b41", "#550b1d"]
 # col_mapper = LinearColorMapper(palette=white_blue_colors, low=0, high=1)
@@ -501,13 +503,17 @@ possible, and the error message below
                                                                     True if len(x) == 0 or any(
                                                                         np.in1d(self.showme_checkboxes.active, x))
                                                                     else False)
-            valid_bool = np.logical_and(sm_check, np.invert(self.data.data.loc[sidx, 'is_labeled']))
-            if not any(valid_bool):
+            valid_idx = self.data.data.index[np.logical_and(sm_check, np.invert(self.data.data.loc[sidx, 'is_labeled']))]
+            if not len(valid_idx):
                 self.notify('No new traces with states of interest left')
                 return
             # new_example_idx = np.random.choice(self.data.data.loc[sidx].loc[valid_bool].index)
-            new_example_idx = self.data.data.loc[valid_bool, 'logprob'].idxmin()
-            self.example_select.value = new_example_idx
+            new_example_idx = self.data.data.loc[valid_idx, 'logprob'].idxmin()
+            try:
+                self.example_select.value = new_example_idx
+            except:
+                cp=1
+                raise
 
     def load_params(self, attr, old, new):
         self.params_changed = True
@@ -516,7 +522,7 @@ possible, and the error message below
         _, b64_contents = raw_contents.split(",", 1)
         file_contents = base64.b64decode(b64_contents).decode('utf-8')
         # file_contents = base64.b64decode(b64_contents).decode('utf-8').split('\n')[1:-1]
-        self.algo_select.value = file_contents.split('\n')[0]
+        self.algo_select.value = algo_inv_dict.get(file_contents.split('\n')[0], 'custom')
         self.classifier.load_params(file_contents)
         self.num_states_slider.value = self.classifier.nb_states
         if np.isnan(self.data.eps):
@@ -826,7 +832,7 @@ possible, and the error message below
             return
         tfh = tempfile.TemporaryDirectory()
         for fn, tup in self.data.data_clean.iterrows():
-            try:
+            # try:
                 sm_test = tup.labels if len(tup.labels) else tup.prediction
                 sm_bool = [True for sm in self.saveme_checkboxes.active if sm in sm_test]
                 if not any(sm_bool): continue
@@ -834,8 +840,9 @@ possible, and the error message below
                 out_df = pd.DataFrame(dict(time=tup.time, i_don=tup.i_don, i_acc=tup.i_acc,
                                            label=labels, predicted=tup.prediction + 1))
                 out_df.to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
-            except:
-                pass
+            # except:
+            #     cp=1
+            #     pass
         zip_dir = tempfile.TemporaryDirectory()
         zip_fn = shutil.make_archive(f'{zip_dir.name}/dat_files', 'zip', tfh.name)
         with open(zip_fn, 'rb') as f:

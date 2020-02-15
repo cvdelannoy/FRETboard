@@ -95,7 +95,7 @@ def plot_trace(data_dicts, nb_classes, time):
     :return:
     """
     line_cols=['green', 'red', 'brown', 'black']
-    fig = plt.figure(figsize=(15, 5))
+    fig = plt.figure(figsize=(20, 5))
     if type(data_dicts) == dict:
         data_dicts = [data_dicts]
     nb_plots = len(data_dicts)
@@ -183,6 +183,7 @@ acc_list = []
 total_pts = 0
 correct_pts = 0
 max_state = 0
+plt.rcParams.update({'font.size': 30})  # large text for trace plots
 for fb in fb_files:
     # try:
         cat = [cat for cat in args.categories if cat in fb]
@@ -292,18 +293,22 @@ for fb in fb_files:
     # except:
     #     continue
 
+plt.rcParams.update({'font.size': 15})  # smaller text for summary plots
+
 # Plot precision/recall
 confusion_df = reduce(lambda x, y: x.add(y, fill_value=0), confusion_list)
 confusion_df.loc[:, 'precision'] = confusion_df.tp / (confusion_df.tp + confusion_df.fp)
 confusion_df.loc[:, 'recall'] = confusion_df.tp / (confusion_df.tp + confusion_df.fn)
 confusion_df = confusion_df.rename_axis(['category', 'state']).reset_index()
 confusion_df.sort_values(['category', 'state'], inplace=True)
-sns.scatterplot(x='recall', y='precision', style='state', hue='category', data=confusion_df)
+pr = sns.scatterplot(x='recall', y='precision', style='state', hue='category', data=confusion_df)
+pr.legend_.remove()
 plt.xlim(0, 1)
 plt.ylim(0, 1)
 plt.gca().set_aspect('equal', adjustable='box')
-lgd = plt.gca().legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.) # plt.gca().get_legend().remove()
-plt.savefig(f'{summary_dir}/precision_recall.svg', bbox_extra_artists=(lgd, ), bbox_inches='tight')
+# lgd = plt.gca().legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.) # plt.gca().get_legend().remove()
+# plt.savefig(f'{summary_dir}/precision_recall.svg', bbox_extra_artists=(lgd, ), bbox_inches='tight')
+plt.savefig(f'{summary_dir}/precision_recall.svg', bbox_inches='tight')
 plt.clf()
 # plot transition rates
 if args.tr_files:
@@ -351,9 +356,10 @@ if args.tr_files:
     transition_piv_df = transition_df.pivot(index='transition', columns='category', values='rate')
     colnames = list(transition_piv_df.columns)
     colnames.remove('actual'); colnames += ['actual']
-    transition_piv_df[colnames].plot(kind='bar', yerr=yerr)
-    lgd = plt.gca().legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
-    plt.savefig(f'{summary_dir}/transition_rate.svg', bbox_extra_artists=(lgd, ), bbox_inches='tight')
+    transition_piv_df[colnames].plot(kind='bar', yerr=yerr, legend=False)
+    # lgd = plt.gca().legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+    # plt.savefig(f'{summary_dir}/transition_rate.svg', bbox_extra_artists=(lgd, ), bbox_inches='tight')
+    plt.savefig(f'{summary_dir}/transition_rate.svg', bbox_inches='tight')
     plt.clf()
 
 # plot correct E_FRET histograms
@@ -390,8 +396,19 @@ sns.violinplot(x='category', y='coverage', data=eventstats_df.loc[eventstats_df.
 ax = plt.gcf().axes[0]
 ax.xaxis.label.set_visible(False)
 plt.ylabel('Event coverage (%)')
-plt.savefig(f'{summary_dir}/coverage_violin.svg')
+plt.savefig(f'{summary_dir}/coverage_violin_full.svg')
 eventstats_df.to_csv(f'{summary_dir}/eventstats.tsv', sep='\t')
+plt.clf()
+
+# event coverage with equalized axes
+sns.violinplot(x='category', y='coverage', data=eventstats_df.loc[eventstats_df.label == eventstats_df.predicted])
+ax = plt.gcf().axes[0]
+ax.xaxis.label.set_visible(False)
+# ax.yaxis.label.set_visible(False)
+plt.ylabel('Event coverage (%)')
+ax.set(xticklabels=[])
+ax.set(ylim=(0, 300))
+plt.savefig(f'{summary_dir}/coverage_violin.svg')
 plt.clf()
 
 # plot accuracy per individual trace
