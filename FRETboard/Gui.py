@@ -140,7 +140,7 @@ class Gui(object):
         self.state_radio = RadioGroup(labels=[''] * len(self.feature_list), active=0)
 
         # Settings
-        self.eps_spinner = Spinner(value=9, step=1)
+        self.eps_spinner = Spinner(value=15, step=1)
         self.bg_button = Button(label='Apply')
         self.framerate_spinner = Spinner(value=10, step=1)
         self.remove_last_checkbox = CheckboxGroup(labels=[''], active=[])
@@ -188,6 +188,7 @@ class Gui(object):
 
         # temp dirs
         self.data_load_dir = tempfile.TemporaryDirectory()
+        self.predict_dir = tempfile.TemporaryDirectory()
 
 
     @property

@@ -235,8 +235,9 @@ class FretReport(object):
 
         if 'E_FRET' in self.classifier.feature_list:
             mu_list = self.classifier.get_states_mu('E_FRET')
-            sd_list = self.classifier.get_states_sd('E_FRET')
+            # sd_list = self.classifier.get_states_sd('E_FRET')
             for m in mu_list:
+                if np.isnan(m): continue
                 plt.axvline(m, color='black', ls='--')
                 plt.axhline(m, color='black', ls='--')
             # for mi, mm in enumerate(mu_list[:-1]):
@@ -305,7 +306,6 @@ class FretReport(object):
         # Emissions table
         mu_vecs = [np.array(self.classifier.get_states_mu(feature)).round(3) for feature in self.classifier.feature_list]
         cv_vecs = [np.array(self.classifier.get_states_sd(feature)).round(3) for feature in self.classifier.feature_list]
-
         em_cols = [f'mu {fn}' for fn in self.classifier.feature_list] + \
                   [f'sd {fn}' for fn in self.classifier.feature_list]
         em_dict = {cn: mc.tolist() for cn, mc in zip(em_cols, np.concatenate((mu_vecs, cv_vecs)))}

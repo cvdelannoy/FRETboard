@@ -373,7 +373,7 @@ class Classifier(object):
 
     def get_states_mu(self, feature):
         fidx = np.argwhere(feature == np.array(self.feature_list))[0,0]
-        mu_dict = {}
+        mu_dict = {n: np.nan for n in range(self.nb_states)}
         for state in self.trained.states:
             if state.is_silent(): continue
             if state.distribution.name == 'MultivariateGaussianDistribution':
@@ -387,7 +387,7 @@ class Classifier(object):
 
     def get_states_sd(self, feature):
         fidx = np.argwhere(feature == np.array(self.feature_list))[0, 0]
-        sd_dict = {}
+        sd_dict = {n: np.nan for n in range(self.nb_states)}
         for state in self.trained.states:
             if state.is_silent(): continue
             if state.distribution.name == 'MultivariateGaussianDistribution':
@@ -406,12 +406,12 @@ class Classifier(object):
         dense_tm = hmm.dense_transition_matrix()
         for s0, s1 in [(i1, i2) for i1 in range(self.nb_states) for i2 in range(self.nb_states)]:
             if s0 == s1:
-                si0 = state_idx_dict[f's{s0}_end']; si1 = state_idx_dict[f's{s1}_start']
+                si0 = state_idx_dict.get(f's{s0}_end', None); si1 = state_idx_dict.get(f's{s1}_start', None)
             else:
-                si0 = state_idx_dict[f's{s0}_end']; si1 = state_idx_dict[f'e{s0}{s1}_0']
+                si0 = state_idx_dict.get(f's{s0}_end', None); si1 = state_idx_dict.get(f'e{s0}{s1}_0', None)
+            if any((si0 is None, si1 is None)): continue  # transition does not exist in model
             df.loc[s0, s1] = dense_tm[si0, si1]
         df = df / df.sum(1).T  # correct for start/end transitions
-        # todo: switching to transition rates i.o. probs here, for kinSoft challenge
         mean_durations = self.data.data_clean.time.apply(lambda x: (x[-1] - x[0]) / len(x))
         duration_frame = np.mean(mean_durations)
         df[np.eye(self.nb_states, dtype=bool)] -= 1
