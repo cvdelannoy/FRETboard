@@ -135,7 +135,7 @@ class Classifier(object):
             hmm.add_model(s)
             hmm.add_transition(hmm.start, s.start, pstart_dict[s_name], pseudocount=0)
             hmm.add_transition(s.end, hmm.end, pend_dict[s_name], pseudocount=0)
-            hmm.add_transition(s.end, s.start, tm_dict[(s_name, s_name)], pseudocount=0) # todo you are here
+            hmm.add_transition(s.end, s.start, tm_dict[(s_name, s_name)], pseudocount=0)
 
         # Make connections between states using edge states
         for es_name in edge_states:
@@ -212,20 +212,20 @@ class Classifier(object):
         vec_clean = vec[:, np.invert(np.any(np.isnan(vec), axis=0))]
         nb_clust = min(10, vec_clean.shape[1])
         trans_prob = 1.0 / nb_clust
-        labels = GaussianMixture(n_components=nb_clust).fit_predict(vec_clean.T)
+        # labels = GaussianMixture(n_components=nb_clust).fit_predict(vec_clean.T)
+        gm = GaussianMixture(n_components=nb_clust).fit(vec_clean.T)
         hmm_out = pg.HiddenMarkovModel()
         hmm_out.name = state_name
         hmm_out.start.name = f'{state_name}_start'
         hmm_out.end.name = f'{state_name}_end'
         added_state_names = []
         for n in range(nb_clust):
-            if np.sum(labels == n ) < 1: continue
             sn = f'{state_name}_{str(n)}'
             added_state_names.append(sn)
-            st = pg.State(self.get_dist(vec_clean[:, labels == n]), name=sn)
+            st = pg.State(pg.MultivariateGaussianDistribution(gm.means_[n,:], gm.covariances_[n, :, :]), name=sn)
             hmm_out.add_state(st)
-            hmm_out.add_transition(hmm_out.start, st, trans_prob, pseudocount=9999999)
-            hmm_out.add_transition(st, hmm_out.end, trans_prob, pseudocount=9999999)
+            hmm_out.add_transition(hmm_out.start, st, gm.weights_[n], pseudocount=9999999)
+            hmm_out.add_transition(st, hmm_out.end, 1.0, pseudocount=9999999)
         return hmm_out, added_state_names
 
 
@@ -373,15 +373,29 @@ class Classifier(object):
 
     def get_states_mu(self, feature):
         fidx = np.argwhere(feature == np.array(self.feature_list))[0,0]
-        mu_dict = {self.pg_gui_state_dict.get(state.name, 0): state.distribution.distributions[fidx].parameters[0]
-                   for state in self.trained.states if not state.is_silent()}
+        mu_dict = {}
+        for state in self.trained.states:
+            if state.is_silent(): continue
+            if state.distribution.name == 'MultivariateGaussianDistribution':
+                mu_dict[self.pg_gui_state_dict.get(state.name, 0)] = state.distribution.parameters[0][fidx]
+            elif state.distribution.name == 'IndependentComponentsDistribution':
+                mu_dict[self.pg_gui_state_dict.get(state.name, 0)] = state.distribution.distributions[fidx].parameters[0]
+        # mu_dict = {self.pg_gui_state_dict.get(state.name, 0): state.distribution.distributions[fidx].parameters[0]
+        #            for state in self.trained.states if not state.is_silent()}
         mu_list = [mu_dict[mk] for mk in sorted(list(mu_dict))]
         return mu_list
 
     def get_states_sd(self, feature):
         fidx = np.argwhere(feature == np.array(self.feature_list))[0, 0]
-        sd_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[1]
-                   for state in self.trained.states if not state.is_silent()}
+        sd_dict = {}
+        for state in self.trained.states:
+            if state.is_silent(): continue
+            if state.distribution.name == 'MultivariateGaussianDistribution':
+                sd_dict[self.pg_gui_state_dict.get(state.name, 0)] = state.distribution.parameters[1][fidx][fidx]
+            elif state.distribution.name == 'IndependentComponentsDistribution':
+                sd_dict[self.pg_gui_state_dict.get(state.name, 0)] = state.distribution.distributions[fidx].parameters[1]
+        # sd_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[1]
+        #            for state in self.trained.states if not state.is_silent()}
         sd_list = [sd_dict[mk] for mk in sorted(list(sd_dict))]
         return sd_list
 

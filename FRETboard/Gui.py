@@ -512,12 +512,11 @@ possible, and the error message below
                 self.notify('No new traces with states of interest left')
                 return
             # new_example_idx = np.random.choice(self.data.data.loc[sidx].loc[valid_bool].index)
+            if np.all(np.isnan(self.data.data.loc[valid_idx, 'logprob'])):
+                self.notify('No valid unpredicted traces left. Try to train before choosing next example.')
+                return
             new_example_idx = self.data.data.loc[valid_idx, 'logprob'].idxmin()
-            try:
-                self.example_select.value = new_example_idx
-            except:
-                cp=1
-                raise
+            self.example_select.value = new_example_idx
 
     def load_params(self, attr, old, new):
         self.params_changed = True
