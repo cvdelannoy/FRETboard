@@ -214,6 +214,7 @@ class Classifier(object):
         trans_prob = 1.0 / nb_clust
         # labels = GaussianMixture(n_components=nb_clust).fit_predict(vec_clean.T)
         gm = GaussianMixture(n_components=nb_clust).fit(vec_clean.T)
+        gm.covariances_ += np.eye(gm.covariances_.shape[1]) * 1E-9
         hmm_out = pg.HiddenMarkovModel()
         hmm_out.name = state_name
         hmm_out.start.name = f'{state_name}_start'
