@@ -9,11 +9,9 @@ import yaml
 import importlib
 import traceback
 from multiprocessing import Process
-# from tornado import gen
 import threading
 from threading import Thread, Event
-import asyncio
-from time import sleep
+import pickle
 from joblib import Parallel
 from sklearn import linear_model
 
@@ -31,10 +29,13 @@ from bokeh.models.widgets.panels import Panel, Tabs
 from tornado.ioloop import IOLoop
 from tornado import gen
 
-from FRETboard.io_functions import parse_trace_file
-from FRETboard.helper_functions import print_timestamp, series_to_array
+from FRETboard.SafeH5 import SafeH5
+from FRETboard.Predictor import Predictor
+from FRETboard.helper_functions import print_timestamp, series_to_array, installThreadExcepthook, get_tuple
 from FRETboard.FretReport import FretReport
-from FRETboard.MainTable import MainTable
+from FRETboard.MainTable_parallel import MainTable
+
+from FRETboard.helper_functions import get_tuple, colnames_alex, colnames
 
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 line_opts = dict(line_width=1)
@@ -55,61 +56,15 @@ with open(f'{__location__}/js_widgets/download_report.js', 'r') as fh: download_
 with open(f'{__location__}/js_widgets/download_model.js', 'r') as fh: download_csv_js = fh.read()
 
 
-def installThreadExcepthook():
-    """
-    Workaround for sys.excepthook thread bug
-    From
-http://spyced.blogspot.com/2007/06/workaround-for-sysexcepthook-bug.html
-
-(https://sourceforge.net/tracker/?func=detail&atid=105470&aid=1230540&group_id=5470).
-    Call once from __main__ before creating any threads.
-    If using psyco, call psyco.cannotcompile(threading.Thread.run)
-    since this replaces a new-style class method.
-    """
-    init_old = threading.Thread.__init__
-
-    def init(self, *args, **kwargs):
-        init_old(self, *args, **kwargs)
-        run_old = self.run
-
-        def run_with_except_hook(*args, **kw):
-            try:
-                run_old(*args, **kw)
-            except (KeyboardInterrupt, SystemExit):
-                raise
-            except:
-                sys.excepthook(*sys.exc_info())
-
-        self.run = run_with_except_hook
-
-    threading.Thread.__init__ = init
-
 class Gui(object):
     def __init__(self, nb_states=3, data=[]):
         installThreadExcepthook()
-        # sys.excepthook = self.error_logging
         self.version = '0.0.3'
-        self.cur_example_idx = None
+        self.cur_trace_idx = None
         self.nb_threads = 8
         self.feature_list = ['E_FRET', 'E_FRET_sd', 'i_sum', 'i_sum_sd', 'correlation_coefficient', 'i_don', 'i_acc']
-        self.data = MainTable(data, np.nan, 0.0, 0.0, 1.0)
-
-        # Buffer stores and triggers (for concurrency)
-        self.notification_buffer = ''
-        self.model_buffer = ''
-        self.classifier_source_buffer = None
-        self.fn_buffer = []
-        self.new_data_buffer = []
-        self.params_changed = False
-        self.loading_in_progress = False
-        self.training_in_progress = False
-        self.prediction_in_progress = False
-        self.eps_change_in_progress = False
-        self.redraw_activated = False
-        self.buffer_updated = False
-        self.user_notified_of_training = False
-        self.predict_error_count = 0
-
+        self.h5_dir = tempfile.mkdtemp()
+        self.data = MainTable(0.1, np.nan, 0.0, 0.0, 1.0, 0, self.h5_dir, os.getpid()) # todo real param readout
 
         # --- Widgets ---
 
@@ -182,14 +137,19 @@ class Gui(object):
         self.html_source = ColumnDataSource(data=dict(html_text=[]))
         self.datzip_source = ColumnDataSource(data=dict(datzip=[]))
         self.scroll_state_source = ColumnDataSource(data=dict(new_state=[False]))
-        self.model_loaded = False
+
         self.new_tot = ColumnDataSource(data=dict(value=[0]))
         self.new_cur = 0
 
-        # temp dirs
-        self.data_load_dir = tempfile.TemporaryDirectory()
-        self.predict_dir = tempfile.TemporaryDirectory()
+        self.model_loaded = False
+        self.train_trigger_activated = False
+        self.total_redraw_activated = False
+        self.partial_redraw_activated = False
+        self.fn_buffer = []
 
+    @property
+    def alex(self):
+        return len(self.alex_checkbox.active) == 1
 
     @property
     def classifier(self):
@@ -198,11 +158,6 @@ class Gui(object):
     @classifier.setter
     def classifier(self, classifier):
         self._classifier = classifier
-        # if classifier.data.shape[0] == 0:
-        #     return
-        # self.example_select.options = self.data.data.index.tolist()
-        # if self.cur_example_idx is None:
-        #     self.update_example(None, None, self.example_select.options[0])
 
     @property
     def classifier_class(self):
@@ -212,10 +167,9 @@ class Gui(object):
     def classifier_class(self, class_name):
         self._classifier_class = importlib.import_module('FRETboard.algorithms.' + algo_dict.get(class_name, class_name)).Classifier
 
-
     @property
     def nb_examples(self):
-        return self.data.data.shape[0]
+        return self.data.index_table.shape[0]
 
     @property
     def curve_colors(self):
@@ -224,34 +178,6 @@ class Gui(object):
     @property
     def col_mapper(self):
         return LinearColorMapper(palette=colors, low=0, high=0.99)
-
-    @cached_property
-    def E_FRET(self):
-        return self.data.data.loc[self.cur_example_idx].E_FRET
-
-    @cached_property
-    def E_FRET_sd(self):
-        return self.data.data.loc[self.cur_example_idx].E_FRET_sd
-
-    @cached_property
-    def correlation_coefficient(self):
-        return self.data.data.loc[self.cur_example_idx].correlation_coefficient
-
-    @cached_property
-    def i_don(self):
-        return self.data.data.loc[self.cur_example_idx].i_don
-
-    @cached_property
-    def i_acc(self):
-        return self.data.data.loc[self.cur_example_idx].i_acc
-
-    @cached_property
-    def time(self):
-        return self.data.data.loc[self.cur_example_idx].time
-
-    @cached_property
-    def i_sum(self):
-        return self.data.data.loc[self.cur_example_idx].i_sum
 
     # --- trigger functions ---
     # Required to enable communication between threads
@@ -268,255 +194,76 @@ possible, and the error message below
 {tb_str}''')
 
     def train_trigger(self):
-        self.notify('Start training...')
-        self.doc.add_next_tick_callback(self.train)
+        if not self.train_trigger_activated:
+            self.notify('Start training...')
+            self.train_trigger_activated = True
+            self.doc.add_next_tick_callback(self.train)
 
     def new_example_trigger(self):
         self.doc.add_next_tick_callback(self.update_example_fun)
 
     def update_example_fun(self):
-        self.example_select.value = self.cur_example_idx
+        self.example_select.value = self.cur_trace_idx
 
     def redraw_trigger(self):
-        if not self.redraw_activated:
-            self.redraw_activated = True
+        if not self.total_redraw_activated:
+            self.total_redraw_activated = True
             self.doc.add_next_tick_callback(self._redraw_all)
 
     def redraw_info_trigger(self):
         self.doc.add_next_tick_callback(self._redraw_info)
 
-    def append_fn(self, fn):
-        self.fn_buffer.append(fn)
+    def append_fn(self, fn_list):
+        self.fn_buffer.extend(fn_list)
         self.doc.add_next_tick_callback(self.push_fn)
 
     def push_fn(self):
-        self.example_select.options = self.example_select.options + [self.fn_buffer.pop()]
+        self.example_select.options = self.example_select.options + self.fn_buffer
+        self.fn_buffer = []
 
     def push_notification(self):
         self.notification.text = self.notification_buffer + self.notification.text
 
     # --- asynchronous functions ---
-    def update_data(self):
-        """
-        Update MainTable with new provided examples
-        """
-        while self.main_thread.is_alive():
-            if not len(self.new_data_buffer):
-                Event().wait(0.01)
-                continue
-            self.loading_in_progress = True
-            if self.new_cur == 0:
-                self.notify('Loading data in background...')
-            raw_contents, fn = self.new_data_buffer.pop()
-            _, b64_contents = raw_contents.split(",", 1)  # remove the prefix that JS adds
-            file_contents = base64.b64decode(b64_contents)
-            if '.traces' in fn:
-
-                self.notify(f'processing {fn}...')
-
-                nb_colors = 2
-                nb_frames, _, nb_traces = np.frombuffer(file_contents, dtype=np.int16, count=3)
-                nb_samples = nb_traces // nb_colors
-                traces_vec = np.frombuffer(file_contents, dtype=np.int16)
-                traces_vec = traces_vec[3:]
-                nb_points_expected = nb_colors * nb_samples * nb_frames
-                traces_vec = traces_vec[:nb_points_expected]
-                file_contents = traces_vec.reshape((nb_colors, nb_samples, nb_frames), order='F')
-                fn_clean = os.path.splitext(fn)[0]
-
-                fn_list = [f'{fn_clean}_{it}.dat' for it in range(nb_samples)]
-                print_thres = 10
-                sampling_freq = 1.0 / self.framerate_spinner.value
-                for fi, f in enumerate(np.hsplit(file_contents, file_contents.shape[1])):
-                    f = f.squeeze()
-                    time = np.arange(f.shape[1]) * sampling_freq
-                    self.data.add_tuple(np.row_stack((time, f)), fn_list[fi])
-                    self.append_fn(fn_list[fi])
-                    pct_done = int(fi / nb_samples * 100)
-                    if pct_done > print_thres:
-                        self.notify(f'{fi} ({pct_done} %) traces from {fn_clean} loaded')
-                        print_thres += 10
-                    if not self.model_loaded and not self.training_in_progress:
-                        self.train_trigger()
-                    elif self.cur_example_idx is None:
-                        self.doc.add_next_tick_callback(self._redraw_all)
-                        self.cur_example_idx = f'{fn_clean}_0.dat'
-                self.notify('Done')
-                # df_list = parse_trace_file(file_contents, fn, self.nb_threads, self.parallel_pool)
-                # self.data.add_df_list(df_list)
-
-            # Process .dat files
-            elif '.dat' in fn:
-                # self.doc.add_next_tick_callback(self.update_notification(f'{print_timestamp()}Adding to list'))
-                file_contents = base64.b64decode(b64_contents).decode('utf-8')
-                file_contents = np.column_stack([np.fromstring(n, sep=' ') for n in file_contents.split('\n') if len(n)])
-                if len(file_contents):
-                    self.data.add_tuple(file_contents, fn,
-                                        gamma=self.gamma_factor_spinner.value, l=self.l_spinner.value, d=self.d_spinner.value)
-                    self.append_fn(fn)
-                    # Already start training if no previous model exists and more than 100 traces are loaded
-                    if not self.model_loaded and not self.training_in_progress:
-                        self.train_trigger()
-                    elif self.cur_example_idx is None:
-                        self.cur_example_idx = fn
-                        self.new_example_trigger()
-            self.new_cur += 1
-
-            if self.new_tot.data['value'][0] == self.new_cur:
-                self.new_cur = 0
-                self.notify(f'All data loaded')
-                self.loading_in_progress = False
-
-    def subtract_background(self):
-        """
-        Subtract background continuously, when:
-        - Data is available for bg subtraction
-        :return:
-        """
-        while self.main_thread.is_alive():
-            if not len(self.data.data): continue
-            idx_list = self.data.data.index
-            eps_bool = np.nan_to_num(self.data.data.loc[idx_list, 'eps']) != np.nan_to_num(self.data.eps)
-            l_bool = self.data.data.loc[idx_list, 'l'] != self.data.l
-            d_bool = self.data.data.loc[idx_list, 'd'] != self.data.d
-            gamma_bool = self.data.data.loc[idx_list, 'gamma'] != self.data.gamma
-            sb_indices = idx_list[np.logical_or.reduce((eps_bool, l_bool, d_bool, gamma_bool))]
-            if not len(sb_indices):
-                Event().wait(0.01)
-                continue
-            if self.cur_example_idx in sb_indices:
-                idx = self.cur_example_idx
-            else:
-                idx = sb_indices[0]
-            self.data.subtract_background(idx)
-            if idx == self.cur_example_idx:
-                self.redraw_trigger()
-
-    def predict(self):
-        while self.main_thread.is_alive():
-            try:
-                pred_success = self.pred_fun()
-                if not pred_success:
-                    self.prediction_in_progress = False
-                    Event().wait(timeout=0.01)
-            except Exception as e:
-                self.prediction_in_progress = False
-                self.notify_exception(e, traceback.format_exc(), 'prediction')
-                self.predict_error_count += 1
-                if self.predict_error_count > 10:
-                    return
-                continue
-
-    def pred_fun(self):
-        """
-        predict valid examples continuously, when:
-        - Model is loaded
-        - Not in training
-        - to-be predicted examples are present:
-            - Is not marked as junk (in self.data_clean)
-            - Has proper background subtraction applied to it (in self.data_clean)
-            - has not been predicted yet: is_predicted is False
-        """
-        if not self.model_loaded:
-            return False
-        if self.params_changed or self.eps_change_in_progress:
-            if not self.user_notified_of_training:
-                self.notify('Parameters or classification changed, pausing prediction...')
-                self.user_notified_of_training = True
-            return False
-        if self.training_in_progress:
-            return False
-        if self.cur_example_idx is None:
-            return False
-        self.prediction_in_progress = True
-        is_predicted_series = self.data.data_clean.is_predicted.copy().astype(bool)
-        if not len(is_predicted_series):
-            return False
-        not_predicted_indices = is_predicted_series.index[np.invert(is_predicted_series)]
-        if not len(not_predicted_indices):
-            self.prediction_in_progress = False
-            return False
-        if self.cur_example_idx in not_predicted_indices:
-            idx = self.cur_example_idx
-        else:
-            idx = not_predicted_indices[0]
-        pred_list, logprob = self.classifier.predict(idx)
-        if len(self.remove_last_checkbox.active):
-            event_found = False
-            for i in range(len(pred_list)):
-                if pred_list[-i] != 0:
-                    event_found = True
-                elif event_found:
-                    break
-                pred_list[-i] = 0
-        self.data.data.at[idx, 'prediction'] = np.array(pred_list)
-        self.data.data.loc[idx, 'logprob'] = logprob
-        self.data.data.loc[idx, 'is_predicted'] = True
-        if idx == self.cur_example_idx:
-            if not len(self.data.data.at[self.cur_example_idx, 'labels']):
-                self.data.data.at[self.cur_example_idx, 'labels'] = np.array(pred_list)
-            self.redraw_trigger()
-        else:
-            self.redraw_info_trigger()
-        self.prediction_in_progress = False
-        return True
-
-    def get_buffer_state_matrix(self):
-        ns = self.num_states_slider.value
-        bsm = np.zeros((ns, ns), dtype=int)
-        ns_buffered = ns + ns * (ns - 1) // 2
-        state_array = np.arange(ns, ns_buffered)
-        bsm[np.triu_indices(3, 1)] = state_array
-        bsm[np.tril_indices(3, -1)] = state_array
-        return bsm
-
-    def invalidate_cached_properties(self):
-        for k in ['E_FRET', 'correlation_coefficient', 'i_sum', 'tp', 'ts', 'ts_don', 'ts_acc', 'i_don', 'i_acc', 'time',
-                  'accuracy_hist', 'E_FRET_sd']:
-            if k in self.__dict__:
-                del self.__dict__[k]
 
     def train(self):
         try:
-            # Ensure training does not clash with prediction
-            self.training_in_progress = True
-            while self.prediction_in_progress:
-                Event().wait(0.01)
-            if self.buffer_updated:
-                for idx in self.data.data.loc[self.data.data.is_labeled].index:
-                    self.data.set_value(idx, 'edge_labels', self.get_edge_labels(self.data.data.loc[idx, 'labels']))
-            self.classifier.train(supervision_influence=self.supervision_slider.value)
-            self.data.data.is_predicted = False
+            data_dict = self.data.get_trace_dict(alex=False)
+            self.classifier.train(data_dict=data_dict, supervision_influence=self.supervision_slider.value)
             self.model_loaded = True
-            self.params_changed = False
-            self.training_in_progress = False
-            if self.cur_example_idx is None:
-                self.example_select.value = self.data.data_clean.index[0]
-            else:
-                self.redraw_trigger()
             self.classifier_source.data = dict(params=[self.classifier.get_params()])
+            with open(f'{self.h5_dir}/{self.classifier.timestamp}.mod', 'wb') as fh:
+                pickle.dump(self.classifier, fh, pickle.HIGHEST_PROTOCOL)
             self.notify('Finished training')
+            if self.cur_trace_idx is not None: self.redraw_trigger()
+
         except Exception as e:
             self.notify_exception(e, traceback.format_exc(), 'training')
 
+    def update_example_list(self):
+        to_add = [idx for idx in self.data.index_table.index if idx not in self.example_select.options]
+        if len(to_add):
+            self.append_fn(to_add)
+
     def new_example(self):
-        if all(self.data.data.is_labeled):
+        if all(self.data.manual_table.is_labeled):
             self.notify('All examples have already been manually classified')
         else:
-            sidx = self.data.data.index.copy()
-            sm_check = self.data.data.loc[sidx, 'prediction'].apply(lambda x:
-                                                                    True if len(x) == 0 or any(
-                                                                        np.in1d(self.showme_checkboxes.active, x))
-                                                                    else False)
-            valid_idx = self.data.data.index[np.logical_and(sm_check, np.invert(self.data.data.loc[sidx, 'is_labeled']))]
+            # Collect indices of eligible samples
+            valid_bool = np.logical_and.reduce((
+                self.data.index_table.mod_timestamp == self.classifier.timestamp,
+                self.data.index_table.data_timestamp == self.data.data_timestamp,
+                ~self.data.manual_table.is_labeled,  # todo potential problem: unequal df sizes
+                ~self.data.manual_table.is_junk
+                ))
+            valid_idx = self.data.index_table.index[valid_bool]
             if not len(valid_idx):
                 self.notify('No new traces with states of interest left')
                 return
-            # new_example_idx = np.random.choice(self.data.data.loc[sidx].loc[valid_bool].index)
-            if np.all(np.isnan(self.data.data.loc[valid_idx, 'logprob'])):
+            if np.all(np.isnan(self.data.index_table.loc[valid_idx, 'logprob'])):
                 self.notify('No valid unpredicted traces left. Try to train before choosing next example.')
                 return
-            new_example_idx = self.data.data.loc[valid_idx, 'logprob'].idxmin()
+            new_example_idx = self.data.index_table.loc[valid_idx, 'logprob'].idxmin()
             self.example_select.value = new_example_idx
 
     def load_params(self, attr, old, new):
@@ -534,21 +281,21 @@ possible, and the error message below
         else:
             self.eps_spinner.value = self.data.eps
             self.bg_checkbox.active = [0]
+        self.l_spinner.value, self.d_spinner.value, self.gamma_factor_spinner.value = self.data.l, self.data.d, self.data.gamma
+
         self.model_loaded = True
         self.notify('Model loaded')
         self.params_changed = False
-        if self.data.data.shape[0] != 0:
-            self.data.data.is_labeled = False
+        if self.data.index_table.shape[0] != 0:
+            self.data.manual_table.is_labeled = False
             self.redraw_trigger()
-            # self._redraw_all()
 
     def buffer_data(self, attr, old, new):
-        self.new_data_buffer.append((self.new_source.data['file_contents'][0], self.new_source.data['file_name'][0]))
-
+        self.data.add_tuple(self.new_source.data['file_contents'][0], self.new_source.data['file_name'][0])
 
     def get_edge_labels(self, labels):
         """
-        Encode transitions between differing states as 1 and other data points as 0
+        Encode transitions between differing states X and Y as strings of shape 'eXY'
         """
         edge_labels = np.zeros(labels.size, dtype='<U3')
         overhang_right = (self.buffer_slider.value - 1) // 2
@@ -570,7 +317,7 @@ possible, and the error message below
 
     def update_buffer(self, attr, old, new):
         if old == new: return
-        self.buffer_updated = True
+        self.buffer_updated = True  # todo redo current buffer labels or take out?
 
     def update_example(self, attr, old, new):
         """
@@ -578,66 +325,48 @@ possible, and the error message below
         """
         if old == new:
             return
-        self.cur_example_idx = new
+        self.cur_trace_idx = new
         if old == 'None':
             new_list = self.example_select.options
             new_list.remove('None')
             self.example_select.options = new_list
-        if not self.data.data.loc[new, 'is_labeled']:
-            if not len(self.data.data.loc[new, 'prediction']) and not self.params_changed:
-                # case 1: example never predicted before, and prediction is still in progress --> wait, next prediction will be of self.cur_example_idx
-                self.notify('Predicting current example...')
-                while not self.data.data.loc[new, 'is_predicted']:
-                    Event().wait(0.01)
-            elif not len(self.data.data.loc[new, 'prediction']) and self.params_changed:
-                # case 2: example never predicted before, params changed thus prediction halted --> fill in with zeros for now
-                self.data.set_value(new, 'prediction', np.zeros(self.data.data.loc[new, 'i_don'].shape[0], dtype=np.int64))
-                self.data.data.loc[new, 'is_predicted'] = True
-            self.data.set_value(new, 'labels', self.data.data.loc[new, 'prediction'].copy())
-            self.data.set_value(new, 'edge_labels', self.get_edge_labels(self.data.data.loc[new, 'labels']))
-            self.data.set_value(new, 'is_labeled', True)
-        if self.data.data.loc[new, 'marked_junk']:
-            self.notify(f'Warning: {new} was marked junk!')
-        elif self.data.data.loc[new, 'predicted_junk']:
-            self.notify(f'Warning: {new} is predicted junk!')
+        self.current_example = self.data.get_trace(new, await_labels=True)
+        self.data.manual_table.loc[new, 'is_labeled'] = True
+
+        # warnings
+        if self.data.manual_table.loc[new, 'is_junk']: self.notify(f'Warning: {new} was marked junk!')
         self.redraw_trigger()
-        # self._redraw_all()
 
     def _redraw_all(self):
-        self.redraw_activated = False
-        self.invalidate_cached_properties()
-        if not self.data.data.loc[self.cur_example_idx, 'is_labeled']:
-            while not self.data.data.loc[self.cur_example_idx, 'is_predicted']: Event().wait(0.01)
-            self.data.data.at[self.cur_example_idx, 'labels'] = self.data.data.loc[self.cur_example_idx, 'prediction']
-            self.data.data.loc[self.cur_example_idx, 'is_labeled'] = True
-        nb_samples = self.i_don.size
-        all_ts = np.concatenate((self.i_don, self.i_acc))  # todo: i_acc shape != i_don shape???
+        self.total_redraw_activated = False
+        if not self.data.index_table.loc[self.cur_trace_idx, 'mod_timestamp'] == self.classifier.timestamp:
+            pass # todo predict if not done so yet
+            # self.data.cur.at[self.cur_trace_idx, 'labels'] = self.data.data.loc[self.cur_trace_idx, 'prediction']
+            # self.data.index_table.loc[self.cur_trace_idx, 'is_labeled'] = True
+        nb_samples = len(self.current_example)
+        all_ts = self.current_example.loc[:, ('f_dex_dem', 'f_dex_aem')].to_numpy()
         ts_range = all_ts.max() - all_ts.min()
         rect_mid = (all_ts.max() + all_ts.min()) / 2
         rect_mid_up = all_ts.min() + ts_range * 0.75
         rect_mid_down = all_ts.min() + ts_range * 0.25
         rect_height = np.abs(all_ts.max()) + np.abs(all_ts.min())
         rect_height_half = rect_height / 2
-        rect_width = (self.time[1] - self.time[0]) * 1.01
-        try:
-            self.source.data = dict(i_don=self.i_don, i_acc=self.i_acc, time=self.time,
-                                    E_FRET=self.E_FRET, correlation_coefficient=self.correlation_coefficient, i_sum=self.i_sum,
-                                    E_FRET_sd=self.E_FRET_sd,
-                                    rect_height=np.repeat(rect_height, nb_samples),
-                                    rect_height_half=np.repeat(rect_height_half, nb_samples),
-                                    rect_mid=np.repeat(rect_mid, nb_samples),
-                                    rect_mid_up=np.repeat(rect_mid_up, nb_samples),
-                                    rect_mid_down=np.repeat(rect_mid_down, nb_samples),
-                                    rect_width=np.repeat(rect_width, nb_samples),
-                                    i_sum_height=np.repeat(self.i_sum.max(), nb_samples),
-                                    i_sum_mid=np.repeat(self.i_sum.mean(), nb_samples),
-                                    labels=self.data.data.loc[self.cur_example_idx, 'labels'],
-                                    labels_pct=self.data.data.loc[self.cur_example_idx, 'labels'] / (self.num_states_slider.value - 1),
-                                    prediction_pct=self.data.data.loc[self.cur_example_idx, 'prediction'] / (self.num_states_slider.value - 1))
-        except:
-            cp=1
-            raise
-        self.x_range.start = 0; self.x_range.end = self.time.max()
+        rect_width = np.abs(np.subtract(*self.current_example.loc[:1, 'time'])) * 1.01
+        self.source.data = dict(i_don=self.current_example.f_dex_dem, i_acc=self.current_example.f_dex_aem, time=self.current_example.time,
+                                E_FRET=self.current_example.E_FRET, correlation_coefficient=self.current_example.correlation_coefficient, i_sum=self.current_example.i_sum,
+                                E_FRET_sd=self.current_example.E_FRET_sd,
+                                rect_height=np.repeat(rect_height, nb_samples),
+                                rect_height_half=np.repeat(rect_height_half, nb_samples),
+                                rect_mid=np.repeat(rect_mid, nb_samples),
+                                rect_mid_up=np.repeat(rect_mid_up, nb_samples),
+                                rect_mid_down=np.repeat(rect_mid_down, nb_samples),
+                                rect_width=np.repeat(rect_width, nb_samples),
+                                i_sum_height=np.repeat(self.current_example.i_sum.max(), nb_samples),
+                                i_sum_mid=np.repeat(self.current_example.i_sum.mean(), nb_samples),
+                                labels=self.data.label_dict[self.cur_trace_idx],
+                                labels_pct=self.data.label_dict[self.cur_trace_idx] / (self.num_states_slider.value - 1),
+                                prediction_pct=self.current_example.predicted / (self.num_states_slider.value - 1))
+        self.x_range.start = self.current_example.time.min(); self.x_range.end = self.current_example.time.max()
         self.y_range.start = all_ts.min(); self.y_range.end = all_ts.max()
         self.update_accuracy_hist()
         self.update_logprob_hist()
@@ -649,12 +378,10 @@ possible, and the error message below
         self.update_logprob_hist()
         self.update_state_curves()
         self.update_stats_text()
+        self.partial_redraw_activated = False
 
     def generate_report(self):
-        if self.loading_in_progress:
-            self.notify('Please wait for data loading to finish before generating a report')
-            return
-        if not np.all(self.data.data_clean.is_predicted):
+        if not np.all(self.data.index_table.mod_timestamp == self.classifier.timestamp):
             self.notify('Please wait for prediction to finish before generating a report')
             return
         self.notify('Generating report, this may take a while...')
@@ -674,66 +401,72 @@ possible, and the error message below
             patch = {'labels': [(i, self.sel_state_slider.value - 1) for i in new],
                      'labels_pct': [(i, (self.sel_state_slider.value - 1) * 1.0 / (self.num_states_slider.value - 1))
                                     for i in new]}
-            # patch = {'labels': [(i, int(self.sel_state.text) - 1) for i in new],
-            #          'labels_pct': [(i, (int(self.sel_state.text) - 1) * 1.0 / (self.num_states_slider.value - 1)) for i in new]}
-            if not self.data.data.loc[self.cur_example_idx, 'is_labeled']:
-                self.data.data.at[self.cur_example_idx, 'labels'] = self.source.data['labels']
-                self.data.data.loc[self.cur_example_idx, 'is_labeled'] = True
             self.source.patch(patch)
+
             self.update_accuracy_hist()
             self.update_stats_text()
 
             # update data in main table
-            self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
-            self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
+            self.data.label_dict[self.cur_trace_idx][new] = self.sel_state_slider.value
+            # todo edge label update
+            # self.data.set_value(self.cur_trace_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
 
     def revert_manual_labels(self):
-        patch = {'labels': [(i, v) for i, v in enumerate(self.data.data.loc[self.cur_example_idx, 'prediction']) ],
-                 'labels_pct': [(i, v) for i, v in enumerate(self.data.data.loc[self.cur_example_idx, 'prediction'] * 1.0 / (self.num_states_slider.value - 1))]}
+        patch = {'labels': [(i, v) for i, v in enumerate(self.current_example.predicted)],
+                 'labels_pct': [(i, v) for i, v in enumerate(self.current_example.predicted * 1.0 / (self.num_states_slider.value - 1))]}
         self.source.patch(patch)
+        self.data.label_dict[self.cur_trace_idx] = self.current_example.predicted.to_numpy(copy=True)
+
+        # update data in main table
         self.update_accuracy_hist()
         self.update_stats_text()
 
-        # update data in main table
-        self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
-        self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
-
     def update_eps(self):
-        self.eps_change_in_progress = True
-        while self.prediction_in_progress:
-            Event().wait(0.01)
+        old_eps = self.data.eps
         if not len(self.bg_checkbox.active):
             self.data.eps = np.nan
         else:
             self.data.eps = self.eps_spinner.value
-        self.eps_change_in_progress = False
+        if old_eps != self.data.eps:
+            self.refilter_current_example()
+            self.redraw_trigger()
 
     def update_crosstalk(self):
-        self.eps_change_in_progress = True
-        while self.prediction_in_progress:
-            Event().wait(0.01)
-        self.data.l = self.l_spinner.value
-        self.data.d = self.d_spinner.value
-        self.data.gamma = self.gamma_factor_spinner.value
-        self.eps_change_in_progress = False
+        if (self.data.l != self.l_spinner.value
+                or self.data.d != self.d_spinner.value
+                or self.data.gamma != self.gamma_factor_spinner.value):
+            self.data.l = self.l_spinner.value
+            self.data.d = self.d_spinner.value
+            self.data.gamma = self.gamma_factor_spinner.value
+            self.refilter_current_example()
+            self.redraw_trigger()
+
+    def refilter_current_example(self):
+        if self.alex:
+            cur_array = self.current_example.loc[:, ('time', 'f_dex_dem_raw', 'f_dex_aem_raw', 'f_aex_dem_raw', 'f_aex_dem_raw')]
+        else:
+            cur_array = self.current_example.loc[:, ('time', 'f_dex_dem_raw', 'f_dex_aem_raw')].to_numpy(copy=True).T
+        out_array = get_tuple(cur_array, self.data.eps, self.data.l, self.data.d, self.data.gamma)
+        self.current_example.loc[:, colnames_alex if self.alex else colnames] = out_array.T
+        # self.current_example = pd.DataFrame(out_array.T, columns=colnames_alex if self.alex else colnames)
 
     def update_accuracy_hist(self):
         acc_counts = np.histogram(self.data.accuracy[0], bins=np.linspace(5, 100, num=20))[0]
         self.accuracy_source.data['accuracy_counts'] = acc_counts
 
     def update_logprob_hist(self):
-        counts, edges = np.histogram(self.data.data.logprob.loc[self.data.data.logprob.notna()], bins=20)
+        counts, edges = np.histogram(self.data.index_table.loc[self.data.index_table.logprob.notna(), 'logprob'], bins=20)
         self.logprob_source.data = {'logprob_counts': counts, 'lb': edges[:-1], 'rb': edges[1:]}
 
     def update_stats_text(self):
-        pct_labeled = round(self.data.data_clean.is_labeled.sum() /
-                            max(self.data.data_clean.is_labeled.size, 1) * 100.0, 1)
+        pct_labeled = round(self.data.manual_table.is_labeled.sum() /
+                            max(self.data.manual_table.is_labeled.size, 1) * 100.0, 1)
         if pct_labeled == 0:
             acc = 'N/A'
             post = 'N/A'
         else:
             acc = round(self.data.accuracy[1], 1)
-            post = round(self.data.data_clean.logprob.mean(), 1)
+            post = round(self.data.index_table.logprob.mean(), 1)
         self.acc_text.text = f'{acc}'
         self.posterior_text.text = f'{post}'
         self.mc_text.text = f'{pct_labeled}'
@@ -744,10 +477,8 @@ possible, and the error message below
         self.params_changed = True
         while self.prediction_in_progress: Event().wait(0.01)
         self.classifier.feature_list = [feat for fi, feat in enumerate(self.feature_list) if fi in new]
-        if len(self.data.data):
-            self.data.data.is_predicted = False
             # self.train_trigger()
-            # self.update_example(None, None, self.cur_example_idx)
+            # self.update_example(None, None, self.cur_trace_idx)
 
     def update_state_curves(self):
         feature = self.feature_list[self.state_radio.active]
@@ -782,7 +513,7 @@ possible, and the error message below
                                                 features=self.feature_list)
         if len(self.data.data):
             # self.train_trigger()
-            self.update_example(None, None, self.cur_example_idx)
+            self.update_example(None, None, self.cur_trace_idx)
 
     def update_num_states(self, attr, old, new):
         if new != self.classifier.nb_states:
@@ -806,7 +537,7 @@ possible, and the error message below
             if len(self.data.data):
                 self.data.data.is_labeled = False
                 self.data.data.labels = [[]] * len(self.data.data)
-                blank_labels = [(i, 0) for i in range(len(self.data.data.loc[self.cur_example_idx, 'i_don']))]
+                blank_labels = [(i, 0) for i in range(len(self.data.data.loc[self.cur_trace_idx, 'i_don']))]
                 patch = {'labels': blank_labels,
                          'labels_pct': blank_labels}
                 self.source.patch(patch)
@@ -814,7 +545,7 @@ possible, and the error message below
             # self.train_trigger()
 
             # # retraining is too heavy for longer traces, setting current example to lowest state instead
-            # blank_labels = [(i, 0) for i in range(len(self.data.data.loc[self.cur_example_idx, 'i_don']))]
+            # blank_labels = [(i, 0) for i in range(len(self.data.data.loc[self.cur_trace_idx, 'i_don']))]
             # patch = {'labels': blank_labels,
             #          'labels_pct': blank_labels}
             # self.source.patch(patch)
@@ -823,9 +554,9 @@ possible, and the error message below
             # self.update_stats_text()
             #
             # # update data in main table
-            # self.data.set_value(self.cur_example_idx, 'labels', self.source.data['labels'])
-            # self.data.set_value(self.cur_example_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
-            # self.data.set_value(self.cur_example_idx, 'is_labeled', True)
+            # self.data.set_value(self.cur_trace_idx, 'labels', self.source.data['labels'])
+            # self.data.set_value(self.cur_trace_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
+            # self.data.set_value(self.cur_trace_idx, 'is_labeled', True)
 
     def export_data(self):
         self.fretReport = FretReport(self)
@@ -836,17 +567,13 @@ possible, and the error message below
             return
         tfh = tempfile.TemporaryDirectory()
         for fn, tup in self.data.data_clean.iterrows():
-            # try:
-                sm_test = tup.labels if len(tup.labels) else tup.prediction
-                sm_bool = [True for sm in self.saveme_checkboxes.active if sm in sm_test]
-                if not any(sm_bool): continue
-                labels = tup.labels + 1 if len(tup.labels) != 0 else [None] * len(tup.time)
-                out_df = pd.DataFrame(dict(time=tup.time, i_don=tup.i_don, i_acc=tup.i_acc,
-                                           label=labels, predicted=tup.prediction + 1))
-                out_df.to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
-            # except:
-            #     cp=1
-            #     pass
+            sm_test = tup.labels if len(tup.labels) else tup.prediction
+            sm_bool = [True for sm in self.saveme_checkboxes.active if sm in sm_test]
+            if not any(sm_bool): continue
+            labels = tup.labels + 1 if len(tup.labels) != 0 else [None] * len(tup.time)
+            out_df = pd.DataFrame(dict(time=tup.time, i_don=tup.i_don, i_acc=tup.i_acc,
+                                       label=labels, predicted=tup.prediction + 1))
+            out_df.to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
         zip_dir = tempfile.TemporaryDirectory()
         zip_fn = shutil.make_archive(f'{zip_dir.name}/dat_files', 'zip', tfh.name)
         with open(zip_fn, 'rb') as f:
@@ -856,15 +583,8 @@ possible, and the error message below
         self.datzip_holder.text += ' '
 
     def del_trace(self):
-        self.data.del_tuple(self.cur_example_idx)
+        self.data.del_tuple(self.cur_trace_idx)
         self.new_example()
-        # nonjunk_bool = np.logical_and(self.data.data.is_labeled, np.invert(self.data.data.is_junk))
-        # if any(nonjunk_bool):  # Cant predict without positive examples
-        #     df = self.data.data.loc[self.data.data.is_labeled]
-        #     x = np.stack(df.E_FRET.to_numpy())
-        #     predicted_junk = lsh_classify(x, self.data.data.is_junk, x, bits=32)
-        #     self.data.data.predicted_junk = np.logical_or(self.data.data.junk, predicted_junk)
-        #     # self.example_select.options.remove(self.cur_example_idx)
 
     def update_showme(self, attr, old, new):
         if old == new: return
@@ -872,7 +592,7 @@ possible, and the error message below
         valid_bool = self.data.data.apply(lambda x: any(i in new for i in x.prediction), axis=1)
         if any(valid_bool):
             valid_idx = list(self.data.data.index[valid_bool])
-            if self.cur_example_idx not in valid_idx:
+            if self.cur_trace_idx not in valid_idx:
                 new_example_idx = np.random.choice(valid_idx)
                 self.example_select.value = new_example_idx
         else:
@@ -923,7 +643,6 @@ possible, and the error message below
         self.d_spinner.value = d
         self.gamma_factor_spinner.value = gamma
         self.update_crosstalk()
-
 
     def make_document(self, doc):
         # --- Define widgets ---
@@ -1060,7 +779,7 @@ possible, and the error message below
                 row(
                     Div(text='gamma: ', height=15, width=80), widgetbox(self.gamma_factor_spinner, width=75),
                     Div(text='<i>l</i>: ', height=15, width=35), widgetbox(self.l_spinner, width=75),
-                    Div(text='<i>r</i>: ', height=15, width=35), widgetbox(self.d_spinner, width=75),
+                    Div(text='<i>d</i>: ', height=15, width=35), widgetbox(self.d_spinner, width=75),
                     widgetbox(self.alex_corr_button, height=15, width=30)),
                 row(Div(text='<i>D</i>-only state: ', height=15, width=80),
                     widgetbox(self.d_only_state_spinner, width=75),
@@ -1113,6 +832,7 @@ possible, and the error message below
         # --- Define update behavior ---
         self.algo_select.on_change('value', self.update_algo)
         self.source.selected.on_change('indices', self.update_classification)  # for manual selection on trace
+        # self.source.on_change('data', lambda attr,old, new: self.redraw_info_trigger())
         self.new_source.on_change('data', self.buffer_data)
         self.loaded_model_source.on_change('data', self.load_params)
         self.example_select.on_change('value', self.update_example)
@@ -1154,7 +874,7 @@ possible, and the error message below
                          # row(Div(text='Change selection to state: '),
                          #     self.sel_state, width=300, height=15),
                          self.sel_state_slider,
-                         showme_col,
+                         # showme_col,
                          row(widgetbox(self.del_trace_button, width=100), widgetbox(train_button, width=100), widgetbox(new_example_button, width=100)),
                          Div(text="<font size=4>3. Save</font>", width=280, height=15),
                          saveme_col,
@@ -1176,15 +896,32 @@ possible, and the error message below
     def create_gui(self):
         self.make_document(curdoc())
 
+    def start_predictor(self):
+        pred = Predictor(self.classifier, h5_dir=self.h5_dir, main_process=self.main_thread)
+        pred.run()
+
+    def loop_update(self):
+        while self.main_thread.is_alive():
+            self.data.update_index()
+            if len(self.data.index_table):
+                self.update_example_list()
+            if not self.model_loaded and len(self.data.index_table):
+                self.train_trigger()
+            if self.cur_trace_idx is None:
+                if np.any(self.data.index_table.mod_timestamp == self.classifier.timestamp):
+                    self.cur_trace_idx = self.data.index_table.index[self.data.index_table.mod_timestamp == self.classifier.timestamp][0]
+                    self.new_example_trigger()
+            else:
+                Event().wait(0.1)
+
     def start_threads(self):
-        # Start background threads for prediction and data loading
+        # Start background threads for prediction
         self.main_thread = threading.main_thread()
-        self.data_load_thread = Thread(target=self.update_data, name='data_loading')
-        self.predict_thread = Thread(target=self.predict, name='predict')
-        self.bg_subtraction_thread = Thread(target=self.subtract_background, name='Redo subtraction')
-        self.data_load_thread.start()
-        self.predict_thread.start()
-        self.bg_subtraction_thread.start()
+        self.loop_thread = Thread(target=self.loop_update, name='loop')
+        self.loop_thread.start()
+        for p in range(1):
+            pred_process = Process(target=self.start_predictor, name=f'predictor_{p}')
+            pred_process.start()
 
     def start_ioloop(self, port=0):
         apps = {'/': Application(FunctionHandler(self.make_document))}

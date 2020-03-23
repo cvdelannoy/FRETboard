@@ -113,7 +113,7 @@ class FretReport(object):
         return table
 
     def get_data_tm(self):
-        tm_vec, ci_vecs = self.classifier.get_data_tm()
+        tm_vec, ci_vecs = self.classifier.get_data_tm(self.data.get_trace_dict(alex=self.gui.alex))
 
         # translate prob to transition rate
         frame_rate = 1 / np.concatenate(self.data.data_clean.time.apply(lambda x: x[1:] - x[:-1]).to_numpy()).mean()
@@ -174,7 +174,7 @@ class FretReport(object):
         ed_scatter = self.draw_Efret_duration_plot()
         tdp = self.draw_transition_density_plot()
         efret_hist = self.draw_efret_histograms()
-        tm_table, em_table, tm_str = self.get_param_tables()
+        # tm_table, em_table, tm_str = self.get_param_tables()
 
         data_tm, data_tm_csv = self.get_data_tm()
 
@@ -187,10 +187,10 @@ class FretReport(object):
                                efret_hist=efret_hist,
                                data_efret_stats=self.data_efret_stats,
                                data_tm_div=data_tm,
-                               tm_table_div=tm_table,
-                               em_table_div=em_table,
+                               # tm_table_div=tm_table,
+                               # em_table_div=em_table,
                                date=print_timestamp(),
-                               transition_csv=tm_str,
+                               # transition_csv=tm_str,
                                data_tm_csv=data_tm_csv,
                                model_params=self.model_params())
 
@@ -289,7 +289,7 @@ class FretReport(object):
     def get_param_tables(self):
 
         # Transitions table
-        ci_vecs = self.classifier.confidence_intervals
+        ci_vecs = self.classifier.get_confidence_intervals(data_dict)
         tm_trained = self.classifier.get_tm(self.classifier.trained).to_numpy()
         tm_obj = self.transition_np_to_html(tm_trained, ci_vecs)
 

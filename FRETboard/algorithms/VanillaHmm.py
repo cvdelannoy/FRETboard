@@ -5,6 +5,7 @@ from pomegranate.kmeans import Kmeans
 from random import choices
 import itertools
 import yaml
+from FRETboard.helper_functions import numeric_timestamp
 from joblib import Parallel, delayed
 
 
@@ -27,11 +28,12 @@ class Classifier(object):
         :param buffer: int, size of buffer area around regular classes [required if gui not given]
         """
         self.trained = None
+        self.timestamp = numeric_timestamp()
         self.nb_threads = kwargs.get('nb_threads', 8)
         self.feature_list = kwargs['features']
 
         self.nb_states = nb_states
-        self.gui = kwargs.get('gui', None)
+        # self.gui = kwargs.get('gui', None)
         self.data = data
 
         self.state_names = None  # names assigned to states in same order as pomegranate model
@@ -40,46 +42,49 @@ class Classifier(object):
         self.str2num_state_dict = dict()
 
     # --- training ---
-    def train(self, supervision_influence=1.0):
+    def train(self, data_dict, supervision_influence=1.0):
         """
         Generate trained hmm and predict examples
         """
-        self.trained = self.get_trained_hmm(supervision_influence=supervision_influence)
+        self.supervision_influence = supervision_influence
+        self.trained = self.get_trained_hmm(data_dict)
+        self.timestamp = numeric_timestamp()
 
-    def get_trained_hmm(self, supervision_influence=1.0, bootstrap=False):
+    def get_trained_hmm(self, data_dict, bootstrap=False):
 
         # Make selection of tuples, if bootstrapping (otherwise use all data)
         if bootstrap:
-            nb_labeled = self.data.data_clean.is_labeled.sum()
-            nb_unlabeled = len(self.data.data_clean) - nb_labeled
-            labeled_seqs = choices(self.data.data_clean.index[self.data.data_clean.is_labeled], k=nb_labeled)
-            unlabeled_seqs = choices(self.data.data_clean.index[np.invert(self.data.data_clean.is_labeled)], k=nb_unlabeled)
+            nb_labeled = self.data.manual_table.is_labeled.sum()
+            nb_unlabeled = len(self.data.index_table) - nb_labeled
+            labeled_seqs = choices(self.data.index_table.index[self.data.manual_table.is_labeled], k=nb_labeled)
+            unlabeled_seqs = choices(self.data.inex_table.index[np.invert(self.data.manual_table.is_labeled)], k=nb_unlabeled)
             seq_idx = labeled_seqs + unlabeled_seqs
-        else:
-            seq_idx = self.data.data_clean.index
+            data_dict = {si: data_dict[si] for si in seq_idx}
+        # else:
+        #     seq_idx = list(data_dict)
 
         # Get initialized hmm (structure + initial parameters)
-        hmm = self.get_untrained_hmm(seq_idx)
+        hmm = self.get_untrained_hmm(data_dict)
 
         # Fit model on data
         # Case 1: supervised --> perform no training
-        if supervision_influence < 1.0:
-            if any(self.data.data_clean.is_labeled):
-                # Case 2: semi-supervised --> perform training with inertia on pre-determined labeled sequences
-                labels = list(self.data.data_clean.labels.to_numpy(copy=True))
-                nsi = 1.0 - supervision_influence
-                weights = [supervision_influence if len(lab) else nsi for lab in labels]
-                labels = [list(lab) if len(lab) else None for lab in labels]
-                hmm.fit(self.get_matrix(self.data.data_clean.loc[seq_idx, self.feature_list]),
+        if self.supervision_influence < 1.0:
+            if any(self.data.manual_table.is_labeled):
+                # Case 2: semi-supervised --> perform training with lambda as weights
+                labels = [list(data_dict[dd].labels) if self.data.manual_table.loc[dd, 'is_labeled'] else None for dd in data_dict]  # todo check if training goes alright
+                # labels = list(self.data.data_clean.labels.to_numpy(copy=True))
+                nsi = 1.0 - self.supervision_influence
+                weights = [nsi if lab is None else self.supervision_influence for lab in labels]
+                hmm.fit([data_dict[dd].loc[:, self.feature_list] for dd in data_dict],  # todo check dimensions: [nb_sequences, nb_samples_per_sequence, nb_features]
                         weights=weights, labels=labels, n_jobs=self.nb_threads,
                         use_pseudocount=True)
             else:
                 # Case 3: unsupervised --> just train
-                hmm.fit(self.get_matrix(self.data.data_clean.loc[seq_idx, self.feature_list]),
-                        inertia=0.0, n_jobs=self.nb_threads, use_pseudocount=True)
+                hmm.fit([data_dict[dd].loc[:, self.feature_list] for dd in data_dict],
+                        n_jobs=self.nb_threads, use_pseudocount=True)
         return hmm
 
-    def get_untrained_hmm(self, seq_idx):
+    def get_untrained_hmm(self, data_dict):
         """
         return an untrained pomegranate hmm object with parameters filled in
         - If all data is unlabeled: finds emission parameters using k-means, transmission and start p are equal
@@ -87,8 +92,8 @@ class Classifier(object):
         """
 
         # Get emission distributions & transition probs
-        dists, pg_gui_state_dict = self.get_states(seq_idx)
-        trans_df, pstart_dict, pend_dict = self.get_transitions(seq_idx)
+        dists, pg_gui_state_dict = self.get_states(data_dict)
+        trans_df, pstart_dict, pend_dict = self.get_transitions(data_dict)
         trans_df.replace(0, 0.000001, inplace=True)
         # for k in tm_dict: tm_dict[k] = max(tm_dict[k], 0.000001)  # reset 0-prob transitions to essentially 0, avoids nans on edges
         for k in pstart_dict: pstart_dict[k] = max(pstart_dict[k], 0.000001)
@@ -106,25 +111,26 @@ class Classifier(object):
         self.str2num_state_dict = {str(si): ni for si, ni in zip(state_names, list(self.gui_state_dict))}
         return hmm
 
-    def get_states(self, seq_idx):
+    def get_states(self, data_dict):
         """
         Return dicts of pomgranate states with initialized normal multivariate distributions
         """
-        data = self.data.data_clean.loc[seq_idx, :]
-        if not any(data.is_labeled):
+        if not any(self.data.manual_table.is_labeled):
             # Estimate emission distributions (same as pomegranate does usually)
-            data_vec = np.concatenate([np.stack(list(tup), axis=-1) for tup in data.loc[:, self.feature_list].to_numpy()], 0)
-            if data_vec.shape[0] > 20000:  # avoid endless waiting for k-means guess in large dataset
-                km_idx = np.random.choice(data_vec.shape[0], 10000, replace=False)
+            data_vec = np.concatenate([dat.loc[:, self.feature_list].to_numpy() for dat in data_dict.values()], 0)
+            if data_vec.shape[0] > 1000:  # avoid endless waiting for k-means guess in large dataset
+                km_idx = np.random.choice(data_vec.shape[0], 1000, replace=False)
             else:
                 km_idx = np.arange(data_vec.shape[0])
-            km = Kmeans(k=self.nb_states, n_init=1).fit(X=data_vec[km_idx, :], n_jobs=self.nb_threads)
+            km = Kmeans(k=self.nb_states, n_init=1).fit(X=data_vec[km_idx, :])
             y = km.predict(data_vec)
         else:
             # Estimate emission distributions from given class labels
-            data = data.loc[data.is_labeled, :]
-            y = np.concatenate([np.stack(list(tup), axis=-1) for tup in data.loc[:, 'labels'].to_numpy()], 0)
-            data_vec = np.concatenate([np.stack(list(tup), axis=-1) for tup in data.loc[:, self.feature_list].to_numpy()], 0)
+            labeled_indices = self.data.index_table.index[self.data.manual_table.is_labeled]
+            data_vec = np.concatenate([data_dict[idx].loc[:, self.feature_list].to_numpy()
+                                       for idx in data_dict if idx in labeled_indices], 0)
+            y = np.concatenate([data_dict[idx].loc[:, 'labels'].to_numpy()
+                                       for idx in data_dict if idx in labeled_indices], 0)
 
         # Create distributions
         pg_gui_state_dict = dict()
@@ -146,9 +152,9 @@ class Classifier(object):
                 dist_list.append(pg.NormalDistribution(0, 999999))
         return pg.IndependentComponentsDistribution(dist_list)
 
-    def get_transitions(self, seq_idx):
-        data = self.data.data_clean.loc[seq_idx, :]
-        labels_array = data.loc[data.is_labeled, 'labels'].to_numpy()
+    def get_transitions(self, data_dict):
+        labels_array = [data_dict[dd].loc['labels'].to_numpy()
+                        for dd in data_dict if self.data.manual_table.loc[dd, 'is_labeled']]
         nb_seqs = len(labels_array)
         state_names = [f's{s}' for s in range(self.nb_states)]
         trans_df = pd.DataFrame([], columns=state_names, index=state_names)
@@ -193,7 +199,7 @@ class Classifier(object):
                 trans_df.loc[f's{tra[0]}', f's{tra[1]}'] = transition_dict[tra] / tt if tt != 0 else 0.0
         return trans_df, pstart_dict, pend_dict
 
-    def predict(self, idx, hmm=None):
+    def predict(self, trace_df, hmm=None):
         """
         Predict labels for given indices.
 
@@ -203,8 +209,7 @@ class Classifier(object):
         logprob_list: list of floats of length len(idx) containing posterior log-probabilities
         """
         if hmm is None: hmm = self.trained
-        logprob, trace_state_list = hmm.viterbi(
-            np.stack(self.data.data_clean.loc[idx, self.feature_list].to_numpy(), axis=-1))
+        logprob, trace_state_list = hmm.viterbi(trace_df.loc[:, self.feature_list].to_numpy())
         state_list = np.vectorize(self.gui_state_dict.__getitem__)([ts[0] for ts in trace_state_list[1:-1]])
         return state_list, logprob
 
@@ -230,7 +235,7 @@ class Classifier(object):
         return np.stack([np.stack(list(tup), axis=-1) for tup in df.to_numpy()], 0)
 
     # --- parameters and performance measures ---
-    def get_data_tm(self):
+    def get_data_tm(self, data_dict):
         """
         Calculate bootstrapped confidence intervals on data-derived transition matrix values
         :return:
@@ -246,7 +251,7 @@ class Classifier(object):
         else:
             idx_list = self.data.data_clean.index
         for _ in range(10):
-            hmm = self.get_trained_hmm(supervision_influence=self.gui.supervision_slider.value, bootstrap=True)
+            hmm = self.get_trained_hmm(data_dict, bootstrap=True)
             seqs = [self.predict(idx, hmm)[0] for idx in idx_list]
             tm_array.append(self.tm_from_seq(seqs))
         tm_mat = np.stack(tm_array, axis=-1)
@@ -267,15 +272,14 @@ class Classifier(object):
                 tm_out[tr[0], tr[1]] += 1
         return tm_out / np.expand_dims(tm_out.sum(axis=1), -1)
 
-    @property
-    def confidence_intervals(self):
+    def get_confidence_intervals(self, data_dict):
         """
         Calculate bootstrapped confidence intervals on transition matrix values
         :return:
         """
         tm_array = []
         for _ in range(10):
-            hmm = self.get_trained_hmm(supervision_influence=self.gui.supervision_slider.value, bootstrap=True)
+            hmm = self.get_trained_hmm(data_dict=data_dict, bootstrap=True)
             tm_array.append(self.get_tm(hmm).to_numpy())
         tm_mat = np.stack(tm_array, axis=-1)
         sd_mat = np.std(tm_mat, axis=-1)
@@ -342,11 +346,11 @@ class Classifier(object):
          misc_txt) = file_contents.split('\nSTART_NEW_SECTION\n')
         if mod_check != 'VanillaHmm':
             error_msg = '\nERROR: loaded model parameters are not for a Vanilla HMM!'
-            if self.gui:
-                self.gui.notify(error_msg)
-                return
-            else:
-                raise ValueError(error_msg)
+            # if self.gui:
+            #     self.gui.notify(error_msg)
+            #     return
+            # else:
+            raise ValueError(error_msg)
         self.trained = pg.HiddenMarkovModel().from_yaml(model_txt)
         self.feature_list = feature_txt.split('\n')
         self.gui_state_dict = yaml.load(gui_state_dict_txt, Loader=yaml.FullLoader)

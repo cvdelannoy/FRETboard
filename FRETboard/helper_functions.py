@@ -8,7 +8,50 @@ from sklearn.cluster import DBSCAN
 import warnings
 import seaborn as sns
 import matplotlib.pyplot as plt
+import sys
+import threading
 
+colnames = ['time',
+            'f_dex_dem_raw', 'f_dex_aem_raw', 'f_dex_dem', 'f_dex_aem',
+            'E_FRET', 'E_FRET_sd', 'i_sum', 'i_sum_sd', 'correlation_coefficient']
+
+
+colnames_alex = ['time',
+                 'f_dex_dem_raw', 'f_dex_aem_raw', 'f_dex_dem', 'f_dex_aem',
+                 'f_aex_dem_raw', 'f_aex_aem_raw', 'f_aex_dem', 'f_aex_aem',
+                 'E_FRET', 'E_FRET_sd', 'i_sum', 'i_sum_sd', 'correlation_coefficient']
+
+colnames_w_labels = colnames + ['predicted']
+colnames_alex_w_labels = colnames_alex + ['predicted']
+
+def installThreadExcepthook():
+    """
+    Workaround for sys.excepthook thread bug
+    From
+http://spyced.blogspot.com/2007/06/workaround-for-sysexcepthook-bug.html
+
+(https://sourceforge.net/tracker/?func=detail&atid=105470&aid=1230540&group_id=5470).
+    Call once from __main__ before creating any threads.
+    If using psyco, call psyco.cannotcompile(threading.Thread.run)
+    since this replaces a new-style class method.
+    """
+    init_old = threading.Thread.__init__
+
+    def init(self, *args, **kwargs):
+        init_old(self, *args, **kwargs)
+        run_old = self.run
+
+        def run_with_except_hook(*args, **kw):
+            try:
+                run_old(*args, **kw)
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except:
+                sys.excepthook(*sys.exc_info())
+
+        self.run = run_with_except_hook
+
+    threading.Thread.__init__ = init
 
 def multi_joint_plot(col_x, col_y, col_k, df, scatter_alpha=.5, palette='Blues'):
     """
@@ -46,6 +89,8 @@ def print_timestamp():
     dt = datetime.now().strftime('%y-%m-%d_%H:%M:%S')
     return f'[{dt}]: '
 
+def numeric_timestamp():
+    return int(datetime.now().strftime('%H%M%S%f'))
 
 def rolling_window(a, window):
     shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
@@ -128,7 +173,7 @@ def series_to_array(df):
 
 def bg_filter_trace(tr, eps):
     if np.isnan(eps):
-        return tr
+        return np.copy(tr)
     min_clust = 10
     pc10 = np.percentile(tr, 20)
     tr_pc10 = tr[tr < pc10]
@@ -162,3 +207,45 @@ def get_derived_features(i_don, i_acc, f_acc_don_raw, f_acc_acc_raw, gamma=1.0, 
     i_sum_sd = np.full_like(E_FRET, np.nan)
     i_sum_sd[ss:-ss] = rolling_var(i_sum, window)
     return E_FRET, E_FRET_sd, i_sum, i_sum_sd, correlation_coefficient
+
+def get_tuple(fc, eps, l, d, gamma):
+    """
+    construct tuple from numpy file content array. Tuple measures [nb_features x len(trace)]
+    """
+    window = 5
+    ss = (window - 1) // 2  # sequence shortening
+
+    time = fc[0, :].astype(np.float64)
+    f_dex_dem_raw = fc[1, :].astype(np.float64)
+    f_dex_aem_raw = fc[2, :].astype(np.float64)
+    f_dex_dem = bg_filter_trace(f_dex_dem_raw, eps)
+    f_dex_aem = bg_filter_trace(f_dex_aem_raw, eps)
+    cross_correct = 0
+    if fc.shape[0] == 5:
+        f_aex_dem_raw = fc[3, :].astype(np.float64)
+        f_aex_aem_raw = fc[4, :].astype(np.float64)
+        f_aex_dem = bg_filter_trace(f_aex_dem_raw, eps)
+        f_aex_aem = bg_filter_trace(f_aex_aem_raw, eps)
+        cross_correct = l * f_dex_dem + d * f_aex_aem
+    f_fret = f_dex_aem - cross_correct
+    i_sum = gamma * f_dex_dem + f_fret
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        E_FRET = f_fret / i_sum
+    E_FRET[i_sum == 0] = np.nan  # set to nan where i_don and i_acc after background correction cancel out
+
+    correlation_coefficient = np.full_like(E_FRET, np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        correlation_coefficient[ss:-ss] = rolling_corr_coef(f_dex_dem, f_dex_aem, window)
+    E_FRET_sd = np.full_like(E_FRET, np.nan)
+    E_FRET_sd[ss:-ss] = rolling_var(E_FRET, window)
+    i_sum_sd = np.full_like(E_FRET, np.nan)
+    i_sum_sd[ss:-ss] = rolling_var(i_sum, window)
+    if fc.shape[0] == 5:
+        return np.vstack([time, f_dex_dem_raw, f_dex_aem_raw, f_dex_dem, f_dex_aem,
+                          f_aex_dem_raw, f_aex_aem_raw, f_aex_dem, f_aex_aem,
+                          E_FRET, E_FRET_sd, i_sum, i_sum_sd, correlation_coefficient])
+    else:
+        return np.vstack([time, f_dex_dem_raw, f_dex_aem_raw, f_dex_dem, f_dex_aem,
+                          E_FRET, E_FRET_sd, i_sum, i_sum_sd, correlation_coefficient])
