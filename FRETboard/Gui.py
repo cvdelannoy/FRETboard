@@ -228,7 +228,7 @@ possible, and the error message below
 
     def train(self):
         try:
-            data_dict = self.data.get_trace_dict(alex=False)
+            data_dict = self.data.get_trace_dict()
             self.classifier.train(data_dict=data_dict, supervision_influence=self.supervision_slider.value)
             self.model_loaded = True
             self.classifier_source.data = dict(params=[self.classifier.get_params()])
@@ -267,7 +267,6 @@ possible, and the error message below
             self.example_select.value = new_example_idx
 
     def load_params(self, attr, old, new):
-        self.params_changed = True
         raw_contents = self.loaded_model_source.data['file_contents'][0]
         # remove the prefix that JS adds
         _, b64_contents = raw_contents.split(",", 1)
@@ -285,7 +284,6 @@ possible, and the error message below
 
         self.model_loaded = True
         self.notify('Model loaded')
-        self.params_changed = False
         if self.data.index_table.shape[0] != 0:
             self.data.manual_table.is_labeled = False
             self.redraw_trigger()
@@ -331,6 +329,7 @@ possible, and the error message below
             new_list.remove('None')
             self.example_select.options = new_list
         self.current_example = self.data.get_trace(new, await_labels=True)
+        self.data.label_dict[new] = self.current_example.predicted.to_numpy(copy=True)
         self.data.manual_table.loc[new, 'is_labeled'] = True
 
         # warnings
@@ -396,7 +395,6 @@ possible, and the error message below
 
     def update_classification(self, attr, old, new):
         if len(new):
-            self.params_changed = True
             self.source.selected.indices = []
             patch = {'labels': [(i, self.sel_state_slider.value - 1) for i in new],
                      'labels_pct': [(i, (self.sel_state_slider.value - 1) * 1.0 / (self.num_states_slider.value - 1))
@@ -407,7 +405,7 @@ possible, and the error message below
             self.update_stats_text()
 
             # update data in main table
-            self.data.label_dict[self.cur_trace_idx][new] = self.sel_state_slider.value
+            self.data.label_dict[self.cur_trace_idx][new] = self.sel_state_slider.value - 1
             # todo edge label update
             # self.data.set_value(self.cur_trace_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
 
@@ -426,7 +424,7 @@ possible, and the error message below
         if not len(self.bg_checkbox.active):
             self.data.eps = np.nan
         else:
-            self.data.eps = self.eps_spinner.value
+            self.data.eps = float(self.eps_spinner.value)
         if old_eps != self.data.eps:
             self.refilter_current_example()
             self.redraw_trigger()
@@ -443,12 +441,11 @@ possible, and the error message below
 
     def refilter_current_example(self):
         if self.alex:
-            cur_array = self.current_example.loc[:, ('time', 'f_dex_dem_raw', 'f_dex_aem_raw', 'f_aex_dem_raw', 'f_aex_dem_raw')]
+            cur_array = self.current_example.loc[:, ('time', 'f_dex_dem_raw', 'f_dex_aem_raw', 'f_aex_dem_raw', 'f_aex_dem_raw')].to_numpy(copy=True).T
         else:
             cur_array = self.current_example.loc[:, ('time', 'f_dex_dem_raw', 'f_dex_aem_raw')].to_numpy(copy=True).T
         out_array = get_tuple(cur_array, self.data.eps, self.data.l, self.data.d, self.data.gamma)
         self.current_example.loc[:, colnames_alex if self.alex else colnames] = out_array.T
-        # self.current_example = pd.DataFrame(out_array.T, columns=colnames_alex if self.alex else colnames)
 
     def update_accuracy_hist(self):
         acc_counts = np.histogram(self.data.accuracy[0], bins=np.linspace(5, 100, num=20))[0]
@@ -474,16 +471,18 @@ possible, and the error message below
     def update_feature_list(self, attr, old, new):
         if len(new) == 0: return
         if old == new: return
-        self.params_changed = True
-        while self.prediction_in_progress: Event().wait(0.01)
         self.classifier.feature_list = [feat for fi, feat in enumerate(self.feature_list) if fi in new]
-            # self.train_trigger()
-            # self.update_example(None, None, self.cur_trace_idx)
+
+    def update_alex_checkbox(self, attr, old, new):
+        if len(self.alex_checkbox.active):
+            self.data.alex = 1
+        else:
+            self.data.alex = 0
 
     def update_state_curves(self):
         feature = self.feature_list[self.state_radio.active]
         if self.classifier.trained is None: return
-        if not feature in self.classifier.feature_list:
+        if feature not in self.classifier.feature_list:
             self.state_source.data = {
                 'xs': [np.arange(0, 1, 0.01)] * self.num_states_slider.value,
                 'ys': [np.zeros(100, dtype=float)] * self.num_states_slider.value,
@@ -507,73 +506,72 @@ possible, and the error message below
         if old == new:
             return
         algo = algo_dict.get(new, new)
-        self.params_changed = True
         self.classifier_class = algo
         self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, data=self.data, gui=self,
                                                 features=self.feature_list)
-        if len(self.data.data):
-            # self.train_trigger()
-            self.update_example(None, None, self.cur_trace_idx)
 
     def update_num_states(self, attr, old, new):
         if new != self.classifier.nb_states:
-            self.params_changed = True
-            while self.prediction_in_progress: Event().wait(0.01)
+
+            # update classifier
             self.classifier = self.classifier_class(nb_states=new, data=self.data, gui=self, features=self.feature_list)
 
             # Update widget: show-me checkboxes
             showme_idx = list(range(new))
             showme_states = [str(n) for n in range(1, new + 1)]
-            self.showme_checkboxes.labels = showme_states
-            self.showme_checkboxes.active = showme_idx
+            # self.showme_checkboxes.labels = showme_states
+            # self.showme_checkboxes.active = showme_idx
             self.saveme_checkboxes.labels = showme_states
             self.saveme_checkboxes.active = showme_idx
 
             # Update widget: selected state slider
             self.sel_state_slider.end = new
-            # if int(self.sel_state.text) > new: self.sel_state.text = str(new)
             if self.sel_state_slider.value > new: self.sel_state_slider.value = new
 
-            if len(self.data.data):
-                self.data.data.is_labeled = False
-                self.data.data.labels = [[]] * len(self.data.data)
-                blank_labels = [(i, 0) for i in range(len(self.data.data.loc[self.cur_trace_idx, 'i_don']))]
+            # Reset all manual labels
+            if len(self.data.manual_table):
+                self.data.manual_table.is_labeled = False
+                self.data.label_dict = dict()
+                self.data.label_dict[self.cur_trace_idx] = np.zeros(len(self.current_example))
+                blank_labels = [(i, 0) for i in range(len(self.current_example))]
                 patch = {'labels': blank_labels,
                          'labels_pct': blank_labels}
                 self.source.patch(patch)
 
-            # self.train_trigger()
-
-            # # retraining is too heavy for longer traces, setting current example to lowest state instead
-            # blank_labels = [(i, 0) for i in range(len(self.data.data.loc[self.cur_trace_idx, 'i_don']))]
-            # patch = {'labels': blank_labels,
-            #          'labels_pct': blank_labels}
-            # self.source.patch(patch)
-            # self.source.selected.indices = []
-            # self.update_accuracy_hist()
-            # self.update_stats_text()
-            #
-            # # update data in main table
-            # self.data.set_value(self.cur_trace_idx, 'labels', self.source.data['labels'])
-            # self.data.set_value(self.cur_trace_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
-            # self.data.set_value(self.cur_trace_idx, 'is_labeled', True)
-
     def export_data(self):
         self.fretReport = FretReport(self)
 
+    def prediction_complete(self):
+        timestamp_bool = np.logical_and(self.data.index_table.data_timestamp == self.data.data_timestamp,
+                                        self.data.index_table.mod_timestamp == self.classifier.timestamp)
+        return np.all(timestamp_bool)
+
     def generate_dats(self):
-        if (len(self.data.data) - self.data.is_junk.sum() != len(self.data.data_clean)):
+        if not self.prediction_complete():
             self.notify('Please wait for prediction to finish before downloading labeled data...')
             return
+        trace_dict = self.data.get_trace_dict()
         tfh = tempfile.TemporaryDirectory()
-        for fn, tup in self.data.data_clean.iterrows():
-            sm_test = tup.labels if len(tup.labels) else tup.prediction
+        for fn in trace_dict:
+            if fn in self.data.label_dict:
+                labels = self.data.label_dict[fn]
+                sm_test = self.data.label_dict[fn]
+            else:
+                labels = [None] * len(trace_dict[fn])  # todo check if labels require +1
+                sm_test = trace_dict[fn].predicted
             sm_bool = [True for sm in self.saveme_checkboxes.active if sm in sm_test]
             if not any(sm_bool): continue
-            labels = tup.labels + 1 if len(tup.labels) != 0 else [None] * len(tup.time)
-            out_df = pd.DataFrame(dict(time=tup.time, i_don=tup.i_don, i_acc=tup.i_acc,
-                                       label=labels, predicted=tup.prediction + 1))
-            out_df.to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
+            trace_dict[fn].loc[:, 'label'] = labels
+            trace_dict[fn].to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
+
+        # for fn, tup in self.data.data_clean.iterrows():
+        #     sm_test = tup.labels if len(tup.labels) else tup.prediction
+        #     sm_bool = [True for sm in self.saveme_checkboxes.active if sm in sm_test]
+        #     if not any(sm_bool): continue
+        #     labels = tup.labels + 1 if len(tup.labels) != 0 else [None] * len(tup.time)
+        #     out_df = pd.DataFrame(dict(time=tup.time, i_don=tup.i_don, i_acc=tup.i_acc,
+        #                                label=labels, predicted=tup.prediction + 1))
+        #     out_df.to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
         zip_dir = tempfile.TemporaryDirectory()
         zip_fn = shutil.make_archive(f'{zip_dir.name}/dat_files', 'zip', tfh.name)
         with open(zip_fn, 'rb') as f:
@@ -583,21 +581,24 @@ possible, and the error message below
         self.datzip_holder.text += ' '
 
     def del_trace(self):
-        self.data.del_tuple(self.cur_trace_idx)
+        # self.data.del_tuple(self.cur_trace_idx)
+        self.data.manual_table.loc[self.cur_trace_idx,  'is_junk'] = True
+        if self.cur_trace_idx in self.data.label_dict:
+            del self.data.label_dict[self.cur_trace_idx]
         self.new_example()
 
-    def update_showme(self, attr, old, new):
-        if old == new: return
-        if self.data.data.shape[0] == 0: return
-        valid_bool = self.data.data.apply(lambda x: any(i in new for i in x.prediction), axis=1)
-        if any(valid_bool):
-            valid_idx = list(self.data.data.index[valid_bool])
-            if self.cur_trace_idx not in valid_idx:
-                new_example_idx = np.random.choice(valid_idx)
-                self.example_select.value = new_example_idx
-        else:
-            classes_not_found = ', '.join([str(ts + 1) for ts in new])
-            self.notify(f'No valid (unclassified) traces to display for classes {classes_not_found}')
+    # def update_showme(self, attr, old, new):
+    #     if old == new: return
+    #     if not len(self.data.index_table): return
+    #     valid_bool = self.data.data.apply(lambda x: any(i in new for i in x.prediction), axis=1)
+    #     if any(valid_bool):
+    #         valid_idx = list(self.data.data.index[valid_bool])
+    #         if self.cur_trace_idx not in valid_idx:
+    #             new_example_idx = np.random.choice(valid_idx)
+    #             self.example_select.value = new_example_idx
+    #     else:
+    #         classes_not_found = ', '.join([str(ts + 1) for ts in new])
+    #         self.notify(f'No valid (unclassified) traces to display for classes {classes_not_found}')
 
     def process_keystroke(self, attr, old, new):
         if not len(new): return
@@ -607,37 +608,41 @@ possible, and the error message below
         elif new == 'e': self.new_example()
 
     def estimate_crosstalk_params(self):
+        if not self.data.alex:
+            self.notify('Cannot estimate l/d/gamma parameters without ALEX data!')
+            return
+        trace_dict = self.data.get_trace_dict(labeled_only=True)
 
-        labeled_data = self.data.data.loc[self.data.data.labels.apply(lambda x: len(x) != 0), :]
+        # Retrieve D-only state measurements
+        ldf_list = []
+        for idx in trace_dict:
+            ldf_list.append(trace_dict[idx].loc[self.data.label_dict[idx] == self.d_only_state_spinner.value - 1,
+                                ('f_aex_dem_raw', 'f_dex_dem_raw')])
+        ldf = pd.concat(ldf_list)
+        if not len(ldf):
+            self.notify('No points in labeled examples belonging to dedicated D-only state')
+            return
+        total_df = pd.concat(trace_dict.values())
 
         # leakage
-        l_df = labeled_data.apply(lambda x: x.i_acc_raw[x.labels == self.d_only_state_spinner.value - 1] /
-                                       x.i_don_raw[x.labels == self.d_only_state_spinner.value - 1], axis=1)
-        l = series_to_array(l_df).mean()
+        l = (ldf.f_aex_dem_raw / ldf.f_dex_dem_raw).mean()
 
         # direct excitation
-        d_df = labeled_data.apply(lambda x: (x.i_acc_raw - l * x.i_don_raw) / x.f_acc_acc_raw, axis=1)
-        d_array = series_to_array(d_df)
-        d_array = d_array[np.invert(np.isinf(d_array))]
-        d = d_array.mean()
+        d_array = (total_df.f_dex_aem_raw - l * total_df.f_dex_dem_raw) / total_df.f_aex_aem_raw
+        d = np.mean(d_array[~np.isinf(d_array)])
 
         # gamma
-        d_idx = self.data.data_clean.index
-        f_fret = self.data.data.loc[d_idx].apply(lambda x: x.i_acc_raw - l * x.i_don_raw - d * x.f_acc_acc_raw, axis=1)
-        gamma_df = pd.DataFrame({'f_fret': f_fret,
-                                 'f_dem_dex': self.data.data.loc[d_idx, 'i_don_raw'],
-                                 'f_aem_aex': self.data.data.loc[d_idx, 'f_acc_acc_raw']})
-        gamma_df.loc[:, 'e_pr'] = gamma_df.apply(lambda x: x.f_fret / (x.f_fret + x.f_dem_dex), axis=1)
-        gamma_df.loc[:, 'f_sum'] = gamma_df.apply(lambda x: x.f_fret - x.f_dem_dex, axis=1)
-        gamma_df.loc[:, 'stoichiometry'] = gamma_df.apply(lambda x: x.f_sum  / (x.f_sum + x.f_aem_aex), axis=1)
-
-        s = series_to_array(gamma_df.stoichiometry)
-        e_pr = series_to_array(gamma_df.e_pr)
-        s_mean = s.mean(); s_sd = s.std(); e_mean = e_pr.mean(); e_sd = e_pr.std()
-        sb = np.logical_and(np.logical_and(s > s_mean - 2 * s_sd, s < s_mean + 2 * s_sd),
+        total_df.loc[:, 'f_fret'] = total_df.f_dex_aem_raw - l * total_df.f_dex_dem_raw - d * total_df.f_aex_aem_raw
+        total_df.loc[:, 'f_sum'] = total_df.f_dex_dem_raw + total_df.f_fret
+        e_pr = (total_df.f_fret / (total_df.f_fret + total_df.f_dex_dem_raw)).to_numpy()
+        s_inv = ((total_df.f_sum + total_df.f_aex_aem_raw)/ total_df.f_sum).to_numpy()
+        s_mean = s_inv.mean(); s_sd = s_inv.std()
+        e_mean = e_pr.mean(); e_sd = e_pr.std()
+        sb = np.logical_and(np.logical_and(s_inv > s_mean - 2 * s_sd, s_inv < s_mean + 2 * s_sd),
                             np.logical_and(e_pr > e_mean - 2 * e_sd, e_pr < e_mean + 2 * e_sd))
-        lm = linear_model.LinearRegression().fit(X=e_pr[sb].reshape(-1, 1), y=s[sb].reshape(-1, 1))
-        gamma, beta = lm.coef_[0,0], lm.intercept_[0]
+        lm = linear_model.LinearRegression().fit(X=e_pr[sb].reshape(-1, 1), y=s_inv[sb].reshape(-1, 1))
+        omega, sigma = lm.coef_[0, 0], lm.intercept_[0]
+        gamma = (omega - 1) / (omega + sigma - 1)
 
         self.l_spinner.value = l
         self.d_spinner.value = d
@@ -667,11 +672,11 @@ possible, and the error message below
         showme_states = [str(n + 1) for n in range(self.num_states_slider.value)]
         showme_idx = list(range(self.num_states_slider.value))
 
-        self.showme_checkboxes = CheckboxButtonGroup(labels=showme_states, active=showme_idx)
-        self.showme_checkboxes.on_change('active', self.update_showme)
-        showme_col = column(Div(text='Show traces with states:', width=300, height=16),
-                            self.showme_checkboxes,
-                            height=80, width=300)
+        # self.showme_checkboxes = CheckboxButtonGroup(labels=showme_states, active=showme_idx)
+        # self.showme_checkboxes.on_change('active', self.update_showme)
+        # showme_col = column(Div(text='Show traces with states:', width=300, height=16),
+        #                     self.showme_checkboxes,
+        #                     height=80, width=300)
 
         train_button = Button(label='Train (W)', button_type='warning')
         new_example_button = Button(label='New (E)', button_type='success')
@@ -840,6 +845,7 @@ possible, and the error message below
         new_example_button.on_click(self.new_example)
         self.bg_checkbox.on_change('active', lambda attr, old, new: self.update_eps())
         self.bg_button.on_click(self.update_eps)
+        self.alex_checkbox.on_change('active', self.update_alex_checkbox)
         self.alex_estimate_button.on_click(self.estimate_crosstalk_params)
         # self.bg_button.on_click(self.subtract_background)
         # self.bg_test_button.on_click(self.subtract_test)

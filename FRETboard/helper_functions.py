@@ -184,6 +184,17 @@ def bg_filter_trace(tr, eps):
     return tr - np.min(med_list)
 
 
+def df_empty(columns, dtypes, index=None):
+    """
+    Create empty dataframe with set data types. from: https://stackoverflow.com/questions/36462257/create-empty-dataframe-in-pandas-specifying-column-types
+    """
+    assert len(columns) == len(dtypes)
+    df = pd.DataFrame(index=index)
+    for c,d in zip(columns, dtypes):
+        df[c] = pd.Series(dtype=d)
+    return df
+
+
 def get_derived_features(i_don, i_acc, f_acc_don_raw, f_acc_acc_raw, gamma=1.0, l=0.0, d=0.0):
     window = 5
     ss = (window - 1) // 2  # sequence shortening

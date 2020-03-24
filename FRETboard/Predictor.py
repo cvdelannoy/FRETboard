@@ -37,16 +37,18 @@ class Predictor(object):
             # predict
             state_seq_dict = {}
             for idx in pred_idx:
-                trace_df = self.get_trace(idx, alex=False)  # todo implement alex
+                trace_df = self.get_trace(idx)
                 state_seq_dict[idx], index_table.loc[idx, 'logprob'] = self.classifier.predict(trace_df)
             index_table.mod_timestamp = self.classifier.timestamp
 
             # Save new predictions
             with SafeH5(self.predict_store_fn) as fh:
                 for idx in state_seq_dict:
-                    fh[idx] = state_seq_dict[idx]  # todo check
+                    if idx in fh:
+                        fh[idx][:] = state_seq_dict[idx]
+                    else:
+                        fh[idx] = state_seq_dict[idx]
             with SafeHDFStore(self.traces_store_fn) as fh:
-
                 fh.remove('index_table', where='index in index_table.index') # todo check
                 fh.append('index_table', index_table, append=True, data_columns=True)
 
@@ -66,7 +68,8 @@ class Predictor(object):
                     break
         return
 
-    def get_trace(self, idx, alex):
+    def get_trace(self, idx):
         with SafeH5(self.traces_store_fn, 'r') as fh:
             tup = fh['/traces/'+idx][()]
-        return pd.DataFrame(data=tup.T, columns=colnames_alex if alex else colnames)
+        cn = colnames if tup.shape[0] == 10 else colnames_alex
+        return pd.DataFrame(data=tup.T, columns=cn)

@@ -6,7 +6,7 @@ from multiprocessing import Process
 from FRETboard.SafeH5 import SafeH5
 from FRETboard.SafeHDFStore import SafeHDFStore
 from FRETboard.FileParser import FileParser
-from FRETboard.helper_functions import numeric_timestamp, colnames_w_labels, colnames_alex_w_labels
+from FRETboard.helper_functions import numeric_timestamp, colnames_w_labels, colnames_alex_w_labels, df_empty
 
 
 class MainTable(object):
@@ -77,7 +77,7 @@ class MainTable(object):
             columns=[
                 'trace', 'eps', 'l', 'd', 'gamma', 'data_timestamp','logprob', 'mod_timestamp'
             ]).set_index('trace')
-        self.manual_table = pd.DataFrame(columns=['trace', 'is_labeled', 'is_junk']).set_index('trace')
+        self.manual_table = df_empty(columns=['trace', 'is_labeled', 'is_junk'], dtypes=[str, np.bool, np.bool]).set_index('trace')
         with SafeHDFStore(self.traces_store_fn, 'a') as fh:
             fh.put('index_table', value=self.index_table, format='table', append=True)
 
@@ -110,14 +110,15 @@ class MainTable(object):
                 pred = fh.get('/' + idx, dummy)[()]
             if len(pred):
                 break  # todo somehow signal that this example has to be classified fast
-            sleep(0.1)
-        if idx not in self.label_dict:
-            self.label_dict[idx] = pred
+            # sleep(0.1)
+        # if not self.manual_table.loc[idx, 'is_labeled']:
+        #     self.label_dict[idx] = pred
         return pd.DataFrame(data=np.vstack((tup, pred)).T, columns=colnames_alex_w_labels if self.alex else colnames_w_labels)
 
-    def get_trace_dict(self, alex):
+    def get_trace_dict(self, labeled_only=False):
         out_dict = {}
-        for idx in self.index_table.index:
+        idx_list = list(self.label_dict) if labeled_only else self.index_table.index
+        for idx in idx_list:
             out_dict[str(idx)] = self.get_trace(idx)
         return out_dict
 

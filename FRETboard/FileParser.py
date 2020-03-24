@@ -39,13 +39,13 @@ class FileParser(object):
                 for trace in trace_list:
                     to_parse_dict[trace] = fh[trace][()]
                     del fh[trace]
-            if not len(to_parse_dict): continue
-            self.nb_files = len(to_parse_dict)
-            for fn in to_parse_dict:
-                if fn.endswith('.traces'):
-                    self.parse_trace_file(fn, to_parse_dict[fn])
-                elif fn.endswith('.dat'):
-                    self.parse_dat_file(fn, to_parse_dict[fn])
+            if len(to_parse_dict):
+                self.nb_files = len(to_parse_dict)
+                for fn in to_parse_dict:
+                    if fn.endswith('.traces'):
+                        self.parse_trace_file(fn, to_parse_dict[fn])
+                    elif fn.endswith('.dat'):
+                        self.parse_dat_file(fn, to_parse_dict[fn])
 
             # Check for traces requiring update to data
             with SafeHDFStore(self.traces_store_fn, 'r') as fh:
@@ -63,16 +63,17 @@ class FileParser(object):
         out_dict = {}
         for ii, idx in enumerate(update_idx):
             with SafeH5(self.traces_store_fn, 'r') as fh:
-                trace_old = fh['/traces/' + idx]  # todo fn right?
-                if self.alex:
-                    trace_new = get_tuple(trace_old[(0, 1, 2, 5, 6), :], self.eps, self.l, self.d, self.gamma)  # todo indexing works here?
-                else:
-                    trace_new = get_tuple(trace_old[(0, 1, 2), :], self.eps, self.l, self.d, self.gamma)
-                out_dict[idx] = trace_new
+                trace_old = fh['/traces/' + idx][()]  # todo fn right?
+            if self.alex:
+                trace_new = get_tuple(trace_old[(0, 1, 2, 5, 6), :], self.eps, self.l, self.d, self.gamma)  # todo indexing works here?
+            else:
+                trace_new = get_tuple(trace_old[(0, 1, 2), :], self.eps, self.l, self.d, self.gamma)
+            out_dict[idx] = trace_new
             if ii >=chunk_limit:
                 self.write_away_traces(out_dict)
                 chunk_limit += self.chunk_size
                 out_dict = {}
+        if len(out_dict): self.write_away_traces(out_dict)
 
     def parse_dat_file(self, fn, fc):
         self.nb_files -= 1
@@ -128,6 +129,8 @@ class FileParser(object):
                       'logprob': np.nan, 'mod_timestamp': -1}).set_index('trace')
         with SafeH5(self.traces_store_fn, 'a') as fh:
             for tk in out_dict:
+                if 'traces/' + tk in fh:
+                    del fh['traces/' + tk]
                 fh['traces/' + tk] = out_dict[tk]
         with SafeHDFStore(self.traces_store_fn, 'a') as fh:
             fh.put('index_table', index_table, format='table', append=True, min_itemsize={'index': 50})
