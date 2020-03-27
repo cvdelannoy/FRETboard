@@ -96,7 +96,6 @@ class MainTable(object):
         # hdf5 file for transfer to predictor
         with SafeH5(self.predict_store_fn, 'w') as fh:
             pass
-        # todo start data input process
         fp_process = Process(target=FileParser, args=(self.toparse_fn, self.traces_store_fn, self.main_process),
                              name='file_parser')
         fp_process.start()
@@ -138,10 +137,10 @@ class MainTable(object):
         # invalidate accuracy cached property
         # self._invalidate_property('accuracy')
 
-    def push_index(self, idx, col, new):
-        with SafeHDFStore(self.traces_store_fn, 'a') as fh:
-            fh.loc[idx, col] = new
-            self.index_table.loc[idx, col] = new
+    # def push_index(self, idx, col, new):
+    #     with SafeHDFStore(self.traces_store_fn, 'a') as fh:
+    #         fh.loc[idx, col] = new
+    #         self.index_table.loc[idx, col] = new
 
     @property  # todo check if this is fast enough, otherwise cached_property
     def accuracy(self):

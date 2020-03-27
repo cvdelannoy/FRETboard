@@ -33,6 +33,7 @@ class Predictor(object):
             with SafeHDFStore(self.traces_store_fn) as fh:
                 index_table = fh.get('index_table')
             pred_idx = index_table.index[index_table.mod_timestamp != self.classifier.timestamp][:self.chunk_size]
+            if not len(pred_idx): continue
 
             # predict
             state_seq_dict = {}
@@ -53,19 +54,19 @@ class Predictor(object):
                 fh.append('index_table', index_table, append=True, data_columns=True)
 
     def check_mod_update(self):
-        while True:  # only load if 1 mod file in folder
-            mod_fn = [fn for fn in os.listdir(self.h5_dir) if fn.endswith('.mod')]
-            if len(mod_fn) <= 1: break
-
-        if len(mod_fn):
-            if mod_fn[0][3:] != self.classifier.timestamp:
-                while True:
-                    try:
-                        with open(f'{self.h5_dir}/{mod_fn[0]}', 'rb') as fh:
-                            self.classifier = pickle.load(fh)
-                    except:
-                        continue
-                    break
+        mod_list = [fn for fn in os.listdir(self.h5_dir) if fn.endswith('.mod')]
+        if not len(mod_list): return
+        mod_list.sort()
+        mod_fn = mod_list[-1]
+        mod_timestamp = int(mod_fn[:-4])
+        if mod_timestamp != self.classifier.timestamp:
+            while True:
+                try:
+                    with open(f'{self.h5_dir}/{mod_fn}', 'rb') as fh:
+                        self.classifier = pickle.load(fh)
+                except:
+                    continue
+                break
         return
 
     def get_trace(self, idx):

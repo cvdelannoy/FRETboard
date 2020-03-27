@@ -126,10 +126,10 @@ class Classifier(object):
             y = km.predict(data_vec)
         else:
             # Estimate emission distributions from given class labels
-            labeled_indices = self.data.index_table.index[self.data.manual_table.is_labeled]
+            labeled_indices = self.data.manual_table.query('is_labeled').index
             data_vec = np.concatenate([data_dict[idx].loc[:, self.feature_list].to_numpy()
                                        for idx in data_dict if idx in labeled_indices], 0)
-            y = np.concatenate([data_dict[idx].loc[:, 'labels'].to_numpy()
+            y = np.concatenate([self.data.label_dict[idx]
                                        for idx in data_dict if idx in labeled_indices], 0)
 
         # Create distributions
@@ -153,7 +153,7 @@ class Classifier(object):
         return pg.IndependentComponentsDistribution(dist_list)
 
     def get_transitions(self, data_dict):
-        labels_array = [data_dict[dd].loc['labels'].to_numpy()
+        labels_array = [self.data.label_dict[dd]
                         for dd in data_dict if self.data.manual_table.loc[dd, 'is_labeled']]
         nb_seqs = len(labels_array)
         state_names = [f's{s}' for s in range(self.nb_states)]
@@ -209,7 +209,8 @@ class Classifier(object):
         logprob_list: list of floats of length len(idx) containing posterior log-probabilities
         """
         if hmm is None: hmm = self.trained
-        logprob, trace_state_list = hmm.viterbi(trace_df.loc[:, self.feature_list].to_numpy())
+        logprob, trace_state_list = hmm.viterbi(np.split(trace_df.loc[:, self.feature_list].to_numpy(),
+                                                         len(trace_df), axis=0))
         state_list = np.vectorize(self.gui_state_dict.__getitem__)([ts[0] for ts in trace_state_list[1:-1]])
         return state_list, logprob
 

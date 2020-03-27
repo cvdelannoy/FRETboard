@@ -133,7 +133,9 @@ class FileParser(object):
                     del fh['traces/' + tk]
                 fh['traces/' + tk] = out_dict[tk]
         with SafeHDFStore(self.traces_store_fn, 'a') as fh:
-            fh.put('index_table', index_table, format='table', append=True, min_itemsize={'index': 50})
+            if 'index_table' in fh:
+                fh.remove('index_table', where='index in index_table.index')
+            fh.put('index_table', value=index_table, format='table', append=True, min_itemsize={'index': 50})
         with SafeH5(self.toparse_fn, 'r') as fh:
             self.update_filter_params(fh)
     #

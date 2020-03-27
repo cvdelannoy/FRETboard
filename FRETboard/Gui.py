@@ -62,7 +62,8 @@ class Gui(object):
         self.version = '0.0.3'
         self.cur_trace_idx = None
         self.nb_threads = 8
-        self.feature_list = ['E_FRET', 'E_FRET_sd', 'i_sum', 'i_sum_sd', 'correlation_coefficient', 'i_don', 'i_acc']
+        self.feature_list = ['E_FRET', 'E_FRET_sd', 'i_sum', 'i_sum_sd',
+                             'correlation_coefficient', 'f_dex_dem', 'f_dex_aem']
         self.h5_dir = tempfile.mkdtemp()
         self.data = MainTable(0.1, np.nan, 0.0, 0.0, 1.0, 0, self.h5_dir, os.getpid()) # todo real param readout
 
@@ -118,7 +119,7 @@ class Gui(object):
                                                           if fi in self.features_checkboxes.active])
 
         # ColumnDataSources
-        self.source = ColumnDataSource(data=dict(i_don=[], i_acc=[], E_FRET=[],
+        self.source = ColumnDataSource(data=dict(f_dex_dem=[], f_dex_aem=[], E_FRET=[],
                                                  correlation_coefficient=[], E_FRET_sd=[], i_sum=[], time=[],
                                                  rect_height=[], rect_height_half=[], rect_mid=[], rect_mid_up=[], rect_mid_down=[], rect_width=[],
                                                  i_sum_height=[], i_sum_mid=[],
@@ -211,7 +212,9 @@ possible, and the error message below
             self.doc.add_next_tick_callback(self._redraw_all)
 
     def redraw_info_trigger(self):
-        self.doc.add_next_tick_callback(self._redraw_info)
+        if not self.partial_redraw_activated:
+            self.partial_redraw_activated = True
+            self.doc.add_next_tick_callback(self._redraw_info)
 
     def append_fn(self, fn_list):
         self.fn_buffer.extend(fn_list)
@@ -235,13 +238,18 @@ possible, and the error message below
             with open(f'{self.h5_dir}/{self.classifier.timestamp}.mod', 'wb') as fh:
                 pickle.dump(self.classifier, fh, pickle.HIGHEST_PROTOCOL)
             self.notify('Finished training')
-            if self.cur_trace_idx is not None: self.redraw_trigger()
-
+            if self.cur_trace_idx is not None:
+                self.current_example.loc[:, 'predicted'], _ = self.classifier.predict(self.current_example)
+                self.redraw_trigger()
         except Exception as e:
             self.notify_exception(e, traceback.format_exc(), 'training')
+        finally:
+            self.train_trigger_activated = False
 
     def update_example_list(self):
-        to_add = [idx for idx in self.data.index_table.index if idx not in self.example_select.options]
+        to_add = [idx for idx in self.data.index_table.index
+                  if idx not in self.example_select.options
+                  and idx not in self.fn_buffer]
         if len(to_add):
             self.append_fn(to_add)
 
@@ -250,19 +258,24 @@ possible, and the error message below
             self.notify('All examples have already been manually classified')
         else:
             # Collect indices of eligible samples
-            valid_bool = np.logical_and.reduce((
-                self.data.index_table.mod_timestamp == self.classifier.timestamp,
-                self.data.index_table.data_timestamp == self.data.data_timestamp,
-                ~self.data.manual_table.is_labeled,  # todo potential problem: unequal df sizes
-                ~self.data.manual_table.is_junk
-                ))
-            valid_idx = self.data.index_table.index[valid_bool]
+            cur_index_table = self.data.index_table.copy()  # make local copy in case it changes in size in mean time
+            valid_idx = cur_index_table.index[np.logical_and(
+                cur_index_table.mod_timestamp == self.classifier.timestamp,
+                cur_index_table.data_timestamp == self.data.data_timestamp
+            )]
+
+            manual_invalid_idx = self.data.manual_table.index[np.logical_or(
+                self.data.manual_table.is_labeled,  # todo potential problem: unequal df sizes
+                self.data.manual_table.is_junk
+            )]
+            valid_idx = [vi for vi in valid_idx if vi not in manual_invalid_idx]
+
             if not len(valid_idx):
                 self.notify('No new traces with states of interest left')
                 return
-            if np.all(np.isnan(self.data.index_table.loc[valid_idx, 'logprob'])):
-                self.notify('No valid unpredicted traces left. Try to train before choosing next example.')
-                return
+            # if np.all(np.isnan(self.data.index_table.loc[valid_idx, 'logprob'])):
+            #     self.notify('No valid unpredicted traces left. Try to train before choosing next example.')
+            #     return
             new_example_idx = self.data.index_table.loc[valid_idx, 'logprob'].idxmin()
             self.example_select.value = new_example_idx
 
@@ -351,7 +364,7 @@ possible, and the error message below
         rect_height = np.abs(all_ts.max()) + np.abs(all_ts.min())
         rect_height_half = rect_height / 2
         rect_width = np.abs(np.subtract(*self.current_example.loc[:1, 'time'])) * 1.01
-        self.source.data = dict(i_don=self.current_example.f_dex_dem, i_acc=self.current_example.f_dex_aem, time=self.current_example.time,
+        self.source.data = dict(f_dex_dem=self.current_example.f_dex_dem, f_dex_aem=self.current_example.f_dex_aem, time=self.current_example.time,
                                 E_FRET=self.current_example.E_FRET, correlation_coefficient=self.current_example.correlation_coefficient, i_sum=self.current_example.i_sum,
                                 E_FRET_sd=self.current_example.E_FRET_sd,
                                 rect_height=np.repeat(rect_height, nb_samples),
@@ -489,7 +502,7 @@ possible, and the error message below
                 'color': self.curve_colors}
             return
         mus = self.classifier.get_states_mu(feature)
-        sds = self.classifier.get_states_sd(feature)
+        sds = [sd if sd > 0.1 else 0.1 for sd in self.classifier.get_states_sd(feature)]
         x_high = max([mu + sd * 3 for mu, sd in zip(mus, sds)])
         x_low = min([mu - sd * 3 for mu, sd in zip(mus, sds)])
         xs = [np.arange(x_low, x_high, (x_high - x_low) / 100)] * self.num_states_slider.value
@@ -563,15 +576,6 @@ possible, and the error message below
             if not any(sm_bool): continue
             trace_dict[fn].loc[:, 'label'] = labels
             trace_dict[fn].to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
-
-        # for fn, tup in self.data.data_clean.iterrows():
-        #     sm_test = tup.labels if len(tup.labels) else tup.prediction
-        #     sm_bool = [True for sm in self.saveme_checkboxes.active if sm in sm_test]
-        #     if not any(sm_bool): continue
-        #     labels = tup.labels + 1 if len(tup.labels) != 0 else [None] * len(tup.time)
-        #     out_df = pd.DataFrame(dict(time=tup.time, i_don=tup.i_don, i_acc=tup.i_acc,
-        #                                label=labels, predicted=tup.prediction + 1))
-        #     out_df.to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
         zip_dir = tempfile.TemporaryDirectory()
         zip_fn = shutil.make_archive(f'{zip_dir.name}/dat_files', 'zip', tfh.name)
         with open(zip_fn, 'rb') as f:
@@ -713,8 +717,8 @@ possible, and the error message below
         ts.rect(x='time', y='rect_mid', width='rect_width', height='rect_height', fill_color={'field': 'labels_pct',
                                                                       'transform': self.col_mapper},
                 source=self.source, **rect_opts)
-        ts.line('time', 'i_don', color='#4daf4a', source=self.source, **line_opts)
-        ts.line('time', 'i_acc', color='#e41a1c', source=self.source, **line_opts)
+        ts.line('time', 'f_dex_dem', color='#4daf4a', source=self.source, **line_opts)
+        ts.line('time', 'f_dex_aem', color='#e41a1c', source=self.source, **line_opts)
         ts_panel = Panel(child=ts, title='Traces')
 
         self.x_range = ts.x_range
@@ -766,8 +770,8 @@ possible, and the error message below
         ts_manual.rect('time', 'rect_mid_down', width='rect_width', height='rect_height_half', fill_color={'field': 'prediction_pct',
                                                                            'transform': self.col_mapper},
                 source=self.source, **rect_opts)
-        ts_manual.line('time', 'i_don', color='#4daf4a', source=self.source, **line_opts)
-        ts_manual.line('time', 'i_acc', color='#e41a1c', source=self.source, **line_opts)
+        ts_manual.line('time', 'f_dex_dem', color='#4daf4a', source=self.source, **line_opts)
+        ts_manual.line('time', 'f_dex_aem', color='#e41a1c', source=self.source, **line_opts)
         ts_manual.toolbar = self.ts_toolbar
         pred_vs_manual_panel = Panel(child=widgetbox(column(ts_manual,revert_labels_button)), title='Predicted')
 
@@ -911,14 +915,15 @@ possible, and the error message below
             self.data.update_index()
             if len(self.data.index_table):
                 self.update_example_list()
+                self.redraw_info_trigger()
             if not self.model_loaded and len(self.data.index_table):
                 self.train_trigger()
             if self.cur_trace_idx is None:
                 if np.any(self.data.index_table.mod_timestamp == self.classifier.timestamp):
                     self.cur_trace_idx = self.data.index_table.index[self.data.index_table.mod_timestamp == self.classifier.timestamp][0]
                     self.new_example_trigger()
-            else:
-                Event().wait(0.1)
+            # else:
+            #     Event().wait(0.1)
 
     def start_threads(self):
         # Start background threads for prediction
