@@ -2,19 +2,14 @@ import os
 import io
 import numpy as np
 
-from itertools import permutations
 import matplotlib
 matplotlib.use('Agg')
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-
 from cached_property import cached_property
 import itertools
 import pandas as pd
-from bokeh.plotting import figure
-from bokeh.models import ColumnDataSource
-from bokeh.embed import components
 from jinja2 import Template
 from tabulate import tabulate
 from FRETboard.helper_functions import print_timestamp, multi_joint_plot
@@ -29,15 +24,22 @@ class FretReport(object):
         self.data = self.gui.data
 
     @cached_property
+    def tr_dict(self):
+        return self.data.get_trace_dict()
+
+    @cached_property
     def out_labels(self):
-        return self.data.data_clean.apply(
-            lambda x: x.labels if len(x.labels) is not 0 else x.prediction, axis=1)
+        """
+        Return manual label if available, else predicted label
+        """
+        return [self.tr_dict[tr].predicted.to_numpy().astype(int) if tr not in self.data.label_dict
+                else self.data.label_dict[tr].astype(int) for tr in self.tr_dict]
 
     @cached_property
     def condensed_seq_df(self):
-        seq_df = pd.DataFrame({'E_FRET': self.data.data_clean.E_FRET,
+        seq_df = pd.DataFrame({'E_FRET': [self.tr_dict[tr].E_FRET.to_numpy() for tr in self.tr_dict],
                                'out_labels': self.out_labels},
-                              index=self.data.data_clean.index)
+                              index=list(self.tr_dict))
         return seq_df.apply(lambda x: self.condense_sequence(x), axis=1)
 
     @cached_property
@@ -93,7 +95,8 @@ class FretReport(object):
     @cached_property
     def efret_vec(self):
         'efret values returned as one long numpy vector'
-        return np.concatenate([np.stack(list(tup), axis=-1) for tup in self.data.data_clean.E_FRET.to_numpy()], 0)
+        return np.concatenate([self.tr_dict[tr].E_FRET.to_numpy() for tr in self.tr_dict], 0)
+        # return np.concatenate([np.stack(list(tup), axis=-1) for tup in self.data.data_clean.E_FRET.to_numpy()], 0)
 
     @cached_property
     def data_states_mu(self):
@@ -112,16 +115,21 @@ class FretReport(object):
                          numalign='center', stralign='center')
         return table
 
+    @cached_property
+    def frame_rate(self):
+        return 1 / np.concatenate([self.tr_dict[tr].time.iloc[1:].to_numpy() -
+                                   self.tr_dict[tr].time.iloc[:-1].to_numpy() for tr in self.tr_dict]).mean()
+
     def get_data_tm(self):
-        tm_vec, ci_vecs = self.classifier.get_data_tm(self.data.get_trace_dict(alex=self.gui.alex))
+        tm_vec, ci_vecs = self.classifier.get_data_tm(self.tr_dict, self.out_labels,
+                                                      self.gui.bootstrap_size_spinner.value)
 
         # translate prob to transition rate
-        frame_rate = 1 / np.concatenate(self.data.data_clean.time.apply(lambda x: x[1:] - x[:-1]).to_numpy()).mean()
         for s in np.arange(self.classifier.nb_states):
             tm_vec[s, s] -= 1
             ci_vecs[s, s, :] -= 1
-        tm_vec *= frame_rate
-        ci_vecs *= frame_rate
+        tm_vec *= self.frame_rate
+        ci_vecs *= self.frame_rate
 
         # make df for csv file
         state_list = [str(nb + 1) for nb in range(self.classifier.nb_states)]
@@ -131,24 +139,6 @@ class FretReport(object):
                                'low_bound': ci_vecs[:, :, 0][msk],
                                'high_bound': ci_vecs[:, :, 1][msk]}, index=transition_list)
         return self.transition_np_to_html(tm_vec, ci_vecs), csv_df.to_csv().replace('\n', '\\n')
-
-        # tm_df = pd.DataFrame(0, index=states, columns=states)
-        # sb = self.transition_df.state_before
-        # sa = self.transition_df.state_after
-        # for s1, s2 in itertools.permutations(states, 2):
-        #     # tm_df.loc[s1, s2] = np.sum(np.logical_and(sb == s1, sa == s2)) / (np.sum(self.out_label_vec_not_last == s1)/10 )
-        #     tm_df.loc[s1,s2] = np.sum(np.logical_and(sb == s1, sa == s2)) / np.sum(self.out_label_vec_not_last == s1) * frame_rate
-        # for s in states:
-        #     tm_df.loc[s,s] = -1* np.sum(tm_df.loc[s,:])
-        #     ci_vecs[s,s] -= 1
-        # tm_vec = tm_df.to_numpy()
-        # return self.transition_np_to_html(tm_vec, ci_vecs)
-        # return tm_df.to_html()
-
-    # @ cached_property
-    # def k_off(self):
-    #     for seq in self.condensed_seq_df:
-    #         pass
 
     @staticmethod
     def condense_sequence(seq):
@@ -197,8 +187,8 @@ class FretReport(object):
     # --- plotting functions ---
 
     def model_params(self):
-        nb_labeled = self.data.data_clean.is_labeled.sum()
-        pct_labeled = nb_labeled / len(self.data.data) * 100
+        nb_labeled = self.data.manual_table.is_labeled.sum()
+        pct_labeled = nb_labeled / len(self.data.index_table) * 100
         out_str = f"""
         Algorithm: {self.gui.algo_select.value} <br/>
         Number of states: {self.classifier.nb_states} <br/>
@@ -256,24 +246,13 @@ class FretReport(object):
         plt.clf()
         return f.getvalue()
 
-    def get_stats_tables(self):
-        # time spent in each state
-        time_dict = {}
-        tst = []
-        mean_times = self.data.data_clean.time.apply(lambda x: (x[-1] - x[0]) / len(x))
-        for state in range(self.classifier.nb_states):
-            tst.append(mean_times * self.out_labels.apply(lambda x: np.sum(x == state)))
-            time_dict[state] = np.sum(mean_times * self.out_labels.apply(lambda x: np.sum(x == state)))
-
     def draw_efret_histograms(self):
         fig = plt.figure()
         ax = fig.gca()
-        efret_vec = np.concatenate(self.data.data_clean.E_FRET)
-        label_vec = np.concatenate(self.out_labels)
-        unique_labels = np.unique(label_vec)
+        unique_labels = np.unique(self.out_label_vec)
         colors = sns.color_palette('Blues', len(unique_labels))
         for li, lab in enumerate(unique_labels):
-            cur_vec = efret_vec[label_vec == lab]
+            cur_vec = self.efret_vec[self.out_label_vec == lab]
             cur_vec = cur_vec[~np.isnan(cur_vec)]
             ax = sns.distplot(cur_vec, kde=False, bins=100, color=colors[li], ax=ax)
 
@@ -286,35 +265,35 @@ class FretReport(object):
         return f.getvalue()
 
 
-    def get_param_tables(self):
-
-        # Transitions table
-        ci_vecs = self.classifier.get_confidence_intervals(data_dict)
-        tm_trained = self.classifier.get_tm(self.classifier.trained).to_numpy()
-        tm_obj = self.transition_np_to_html(tm_trained, ci_vecs)
-
-        nb_states = self.classifier.nb_states
-        state_list = [str(nb + 1) for nb in range(self.classifier.nb_states)]
-        state_list_bold = [f'<b>{s}</b>' for s in state_list]
-        transition_list = [''.join(it) for it in itertools.permutations(state_list, 2)]
-        msk = np.invert(np.eye(nb_states, dtype=bool))
-        csv_df = pd.DataFrame({'rate': tm_trained[msk],
-                              'low_bound': ci_vecs[:,:,0][msk],
-                              'high_bound': ci_vecs[:,:,1][msk]}, index=transition_list)
-        csv_str = csv_df.to_csv().replace('\n', '\\n')
-
-        # Emissions table
-        mu_vecs = [np.array(self.classifier.get_states_mu(feature)).round(3) for feature in self.classifier.feature_list]
-        cv_vecs = [np.array(self.classifier.get_states_sd(feature)).round(3) for feature in self.classifier.feature_list]
-        em_cols = [f'mu {fn}' for fn in self.classifier.feature_list] + \
-                  [f'sd {fn}' for fn in self.classifier.feature_list]
-        em_dict = {cn: mc.tolist() for cn, mc in zip(em_cols, np.concatenate((mu_vecs, cv_vecs)))}
-        em_obj = tabulate(em_dict, tablefmt='html',
-                          headers=em_cols, showindex=state_list_bold,
-                          numalign='center', stralign='center')
-        return tm_obj, em_obj, csv_str
-        # todo: accuracy/posterior probability estimates: hist + text
-        # todo: gauss curves per model
+    # def get_param_tables(self):
+    #
+    #     # Transitions table
+    #     ci_vecs = self.classifier.get_confidence_intervals(data_dict)
+    #     tm_trained = self.classifier.get_tm(self.classifier.trained).to_numpy()
+    #     tm_obj = self.transition_np_to_html(tm_trained, ci_vecs)
+    #
+    #     nb_states = self.classifier.nb_states
+    #     state_list = [str(nb + 1) for nb in range(self.classifier.nb_states)]
+    #     state_list_bold = [f'<b>{s}</b>' for s in state_list]
+    #     transition_list = [''.join(it) for it in itertools.permutations(state_list, 2)]
+    #     msk = np.invert(np.eye(nb_states, dtype=bool))
+    #     csv_df = pd.DataFrame({'rate': tm_trained[msk],
+    #                           'low_bound': ci_vecs[:,:,0][msk],
+    #                           'high_bound': ci_vecs[:,:,1][msk]}, index=transition_list)
+    #     csv_str = csv_df.to_csv().replace('\n', '\\n')
+    #
+    #     # Emissions table
+    #     mu_vecs = [np.array(self.classifier.get_states_mu(feature)).round(3) for feature in self.classifier.feature_list]
+    #     cv_vecs = [np.array(self.classifier.get_states_sd(feature)).round(3) for feature in self.classifier.feature_list]
+    #     em_cols = [f'mu {fn}' for fn in self.classifier.feature_list] + \
+    #               [f'sd {fn}' for fn in self.classifier.feature_list]
+    #     em_dict = {cn: mc.tolist() for cn, mc in zip(em_cols, np.concatenate((mu_vecs, cv_vecs)))}
+    #     em_obj = tabulate(em_dict, tablefmt='html',
+    #                       headers=em_cols, showindex=state_list_bold,
+    #                       numalign='center', stralign='center')
+    #     return tm_obj, em_obj, csv_str
+    #     # todo: accuracy/posterior probability estimates: hist + text
+    #     # todo: gauss curves per model
 
     def transition_np_to_html(self, tm_trained, ci_vecs):
         nb_states = self.classifier.nb_states

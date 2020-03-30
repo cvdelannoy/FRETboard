@@ -57,7 +57,7 @@ class Classifier(object):
             nb_labeled = self.data.manual_table.is_labeled.sum()
             nb_unlabeled = len(self.data.index_table) - nb_labeled
             labeled_seqs = choices(self.data.index_table.index[self.data.manual_table.is_labeled], k=nb_labeled)
-            unlabeled_seqs = choices(self.data.inex_table.index[np.invert(self.data.manual_table.is_labeled)], k=nb_unlabeled)
+            unlabeled_seqs = choices(self.data.index_table.index[np.invert(self.data.manual_table.is_labeled)], k=nb_unlabeled)
             seq_idx = labeled_seqs + unlabeled_seqs
             data_dict = {si: data_dict[si] for si in seq_idx}
         # else:
@@ -236,24 +236,27 @@ class Classifier(object):
         return np.stack([np.stack(list(tup), axis=-1) for tup in df.to_numpy()], 0)
 
     # --- parameters and performance measures ---
-    def get_data_tm(self, data_dict):
+    def get_data_tm(self, trace_dict, out_labels, nb_bootstrap_iters):
         """
         Calculate bootstrapped confidence intervals on data-derived transition matrix values
         :return:
         """
         # actual value
-        seqs = self.data.data_clean.prediction.to_list()
-        actual_tm = self.tm_from_seq(seqs)
+        actual_tm = self.tm_from_seq(out_labels)
 
         # CIs
         tm_array = []
-        if len(self.data.data_clean) > 100:
-            idx_list = np.random.choice(self.data.data_clean.index, 100)
+        invalid_indices = [idx for idx, tup in self.data.manual_table.iterrows() if tup.is_labeled or tup.is_junk]
+        valid_indices = [idx for idx in self.data.index_table.index if idx not in invalid_indices]
+        if len(valid_indices) > 100:
+            idx_list = np.random.choice(valid_indices, 100)
         else:
-            idx_list = self.data.data_clean.index
-        for _ in range(10):
-            hmm = self.get_trained_hmm(data_dict, bootstrap=True)
-            seqs = [self.predict(idx, hmm)[0] for idx in idx_list]
+            idx_list = valid_indices
+        idx_list = np.concatenate((idx_list, self.data.manual_table.query('is_labeled').index), axis=0)
+        trace_dict = {tr: trace_dict[tr] for tr in trace_dict if tr in idx_list}
+        for _ in range(nb_bootstrap_iters):
+            hmm = self.get_trained_hmm(trace_dict, bootstrap=True)
+            seqs = [self.predict(trace_dict[idx], hmm)[0] for idx in idx_list]
             tm_array.append(self.tm_from_seq(seqs))
         tm_mat = np.stack(tm_array, axis=-1)
         sd_mat = np.std(tm_mat, axis=-1)

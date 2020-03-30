@@ -20,7 +20,7 @@ class MainTable(object):
         self.predict_store_fn = h5_dir + 'predict_store_fn.h5'
         self.toparse_fn = h5_dir + 'to_parse.h5'
         self.label_dict = dict()
-        self._eps, self._l, self._d, self._gamma, self.alex = eps, l, d, gamma, alex
+        self._eps, self._l, self._d, self._gamma, self._alex = eps, l, d, gamma, alex
         self.init_table(framerate, alex)
 
     @property
@@ -38,6 +38,18 @@ class MainTable(object):
     @property
     def gamma(self):
         return self._gamma
+
+    @property
+    def alex(self):
+        return self._alex
+
+    @alex.setter
+    def alex(self, alex):
+        self.data_timestamp = numeric_timestamp()
+        with SafeH5(self.toparse_fn, 'a') as fh:
+            fh.attrs['alex'] = alex
+            fh.attrs['data_timestamp'] = self.data_timestamp
+        self._alex = alex
 
     @eps.setter
     def eps(self, eps):

@@ -143,6 +143,7 @@ class Gui(object):
         self.new_cur = 0
 
         self.model_loaded = False
+        self.features_changed = True
         self.train_trigger_activated = False
         self.total_redraw_activated = False
         self.partial_redraw_activated = False
@@ -238,6 +239,7 @@ possible, and the error message below
             with open(f'{self.h5_dir}/{self.classifier.timestamp}.mod', 'wb') as fh:
                 pickle.dump(self.classifier, fh, pickle.HIGHEST_PROTOCOL)
             self.notify('Finished training')
+            self.features_changed = False
             if self.cur_trace_idx is not None:
                 self.current_example.loc[:, 'predicted'], _ = self.classifier.predict(self.current_example)
                 self.redraw_trigger()
@@ -485,6 +487,7 @@ possible, and the error message below
         if len(new) == 0: return
         if old == new: return
         self.classifier.feature_list = [feat for fi, feat in enumerate(self.feature_list) if fi in new]
+        self.features_changed = True
 
     def update_alex_checkbox(self, attr, old, new):
         if len(self.alex_checkbox.active):
@@ -495,7 +498,7 @@ possible, and the error message below
     def update_state_curves(self):
         feature = self.feature_list[self.state_radio.active]
         if self.classifier.trained is None: return
-        if feature not in self.classifier.feature_list:
+        if self.features_changed or feature not in self.classifier.feature_list:
             self.state_source.data = {
                 'xs': [np.arange(0, 1, 0.01)] * self.num_states_slider.value,
                 'ys': [np.zeros(100, dtype=float)] * self.num_states_slider.value,
@@ -505,7 +508,7 @@ possible, and the error message below
         sds = [sd if sd > 0.1 else 0.1 for sd in self.classifier.get_states_sd(feature)]
         x_high = max([mu + sd * 3 for mu, sd in zip(mus, sds)])
         x_low = min([mu - sd * 3 for mu, sd in zip(mus, sds)])
-        xs = [np.arange(x_low, x_high, (x_high - x_low) / 100)] * self.num_states_slider.value
+        xs = [np.arange(x_low, x_high, (x_high - x_low) / 100)] * len(sds)
         sdps = [-(xs[0] - mu) ** 2 / (2 * sd ** 2) for mu, sd in zip (mus, sds)]
         ys = []
         for sd, sdp in zip(sds, sdps):
@@ -513,7 +516,8 @@ possible, and the error message below
                 ys.append(np.zeros(len(sdp)))
             else:
                 ys.append(1 / (sd * np.sqrt(2 * np.pi)) * np.exp(sdp))
-        self.state_source.data = {'ys': ys, 'xs': xs, 'color': self.curve_colors}
+        curve_colors = [colors[n] for n in (np.linspace(0, len(colors) - 1, len(ys))).astype(int)]
+        self.state_source.data = {'ys': ys, 'xs': xs, 'color': curve_colors}
 
     def update_algo(self, attr, old, new):
         if old == new:
@@ -527,7 +531,7 @@ possible, and the error message below
         if new != self.classifier.nb_states:
 
             # update classifier
-            self.classifier = self.classifier_class(nb_states=new, data=self.data, gui=self, features=self.feature_list)
+            self.classifier.nb_states = new
 
             # Update widget: show-me checkboxes
             showme_idx = list(range(new))
@@ -542,9 +546,9 @@ possible, and the error message below
             if self.sel_state_slider.value > new: self.sel_state_slider.value = new
 
             # Reset all manual labels
+            self.data.label_dict = dict()
             if len(self.data.manual_table):
                 self.data.manual_table.is_labeled = False
-                self.data.label_dict = dict()
                 self.data.label_dict[self.cur_trace_idx] = np.zeros(len(self.current_example))
                 blank_labels = [(i, 0) for i in range(len(self.current_example))]
                 patch = {'labels': blank_labels,
