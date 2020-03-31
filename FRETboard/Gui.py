@@ -114,7 +114,7 @@ class Gui(object):
 
         # Classifier object
         self.classifier_class = self.algo_select.value
-        self.classifier = self.classifier_class(nb_states=nb_states, data=self.data, gui=self,
+        self.classifier = self.classifier_class(nb_states=nb_states, data=self.data, buffer=self.buffer_slider.value,
                                                 features=[feat for fi, feat in enumerate(self.feature_list)
                                                           if fi in self.features_checkboxes.active])
 
@@ -524,8 +524,11 @@ possible, and the error message below
             return
         algo = algo_dict.get(new, new)
         self.classifier_class = algo
-        self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, data=self.data, gui=self,
-                                                features=self.feature_list)
+        cur_timestamp = self.classifier.timestamp
+        cur_features = self.classifier.feature_list
+        self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, data=self.data,
+                                                features=cur_features, buffer=self.buffer_slider.value)
+        self.classifier.timestamp = cur_timestamp
 
     def update_num_states(self, attr, old, new):
         if new != self.classifier.nb_states:

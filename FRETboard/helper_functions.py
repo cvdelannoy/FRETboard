@@ -260,3 +260,26 @@ def get_tuple(fc, eps, l, d, gamma):
     else:
         return np.vstack([time, f_dex_dem_raw, f_dex_aem_raw, f_dex_dem, f_dex_aem,
                           E_FRET, E_FRET_sd, i_sum, i_sum_sd, correlation_coefficient])
+
+
+def get_edge_labels(labels, buffer_size):
+    """
+    Encode transitions between differing states X and Y as strings of shape 'eXY'
+    """
+    edge_labels = np.zeros(labels.size, dtype='<U3')
+    overhang_right = (buffer_size - 1) // 2
+    overhang_left = (buffer_size - 1) - overhang_right
+    oh_counter = 0
+    cur_edge = ''
+    cur_label = labels[0]
+    for li, l in enumerate(labels):
+        if l == cur_label:
+            if oh_counter != 0:
+                edge_labels[li] = cur_edge
+                oh_counter -= 1
+        else:
+            cur_edge = f'e{cur_label}{l}'
+            edge_labels[li-overhang_left:li+1] = cur_edge
+            cur_label = l
+            oh_counter = overhang_right
+    return edge_labels

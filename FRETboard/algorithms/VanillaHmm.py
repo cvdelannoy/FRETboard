@@ -33,7 +33,6 @@ class Classifier(object):
         self.feature_list = kwargs['features']
 
         self.nb_states = nb_states
-        # self.gui = kwargs.get('gui', None)
         self.data = data
 
         self.state_names = None  # names assigned to states in same order as pomegranate model
@@ -275,23 +274,6 @@ class Classifier(object):
             for tr in zip(seq[:-1], seq[1:]):
                 tm_out[tr[0], tr[1]] += 1
         return tm_out / np.expand_dims(tm_out.sum(axis=1), -1)
-
-    def get_confidence_intervals(self, data_dict):
-        """
-        Calculate bootstrapped confidence intervals on transition matrix values
-        :return:
-        """
-        tm_array = []
-        for _ in range(10):
-            hmm = self.get_trained_hmm(data_dict=data_dict, bootstrap=True)
-            tm_array.append(self.get_tm(hmm).to_numpy())
-        tm_mat = np.stack(tm_array, axis=-1)
-        sd_mat = np.std(tm_mat, axis=-1)
-        mu_mat = np.mean(tm_mat, axis=-1)
-        ci_mat = np.tile(np.expand_dims(mu_mat, -1), (1, 1, 2))
-        ci_mat[:, :, 0] -= sd_mat * 2
-        ci_mat[:, :, 1] += sd_mat * 2
-        return ci_mat
 
     def get_states_mu(self, feature):
         fidx = np.argwhere(feature == np.array(self.feature_list))[0,0]
