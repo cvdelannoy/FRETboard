@@ -152,8 +152,8 @@ parser.add_argument('--remove-last-event', action='store_true',
                     help='special for Mikes approach: remove last non-ground state event')
 parser.add_argument('--categories', type=str, nargs='+', default=[''],
                     help='In plots, split files and stats by strings that are to be recognized in path names')
-parser.add_argument('--tr-files', type=str, required=False, nargs='+',
-                    help='Transition rate statistics files (1 per category) as returned by FRETboard')
+# parser.add_argument('--tr-files', type=str, required=False, nargs='+',
+#                     help='Transition rate statistics files (1 per category) as returned by FRETboard')
 args = parser.parse_args()
 
 
@@ -165,7 +165,9 @@ pat_ks_nb = re.compile('(?<=state_time_)[0-9]+')
 outdir = parse_output_dir(args.outdir, clean=True)
 summary_dir = parse_output_dir(outdir+'summary_stats/', clean=True)
 trace_dir = parse_output_dir(outdir+'trace_plots/', clean=True)
+trace_csv_dir = parse_output_dir(outdir+'trace_csvs/', clean=True)
 trace_dir_dict = {cat: parse_output_dir(trace_dir + cat, clean=True) for cat in args.categories}
+trace_csv_dir_dict = {cat: parse_output_dir(trace_csv_dir + cat, clean=True) for cat in args.categories}
 
 tracestats_df = pd.DataFrame(index=fb_files, columns=['nb_events', 'nb_events_predicted', 'mean_coverage'])
 eventstats_list = []
@@ -192,7 +194,7 @@ for fb in fb_files:
         cat = cat[0]
         fb_base = basename(fb)
         if fb_base not in manual_dict: continue
-        dat_df = pd.read_csv(fb, sep='\t').drop('label', axis=1)
+        dat_df = pd.read_csv(fb, sep='\t')#.drop('label', axis=1)
 
         # load manual labels
         manual_df = loader_fun(manual_dict[fb_base])
@@ -213,10 +215,10 @@ for fb in fb_files:
             dat_df.predicted = dat_df.predicted.astype(int)
 
         # Add EFRET
-        i_sum = np.sum((dat_df.i_don, dat_df.i_acc), axis=0)
+        i_sum = np.sum((dat_df.f_dex_dem, dat_df.f_dex_aem), axis=0)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            E_FRET = np.divide(dat_df.i_acc, i_sum)
+            E_FRET = np.divide(dat_df.f_dex_aem, i_sum)
         E_FRET[i_sum == 0] = np.nan  # set to nan where i_don and i_acc after background correction cancel out
         dat_df.loc[:, "E_FRET"] = E_FRET
 
@@ -235,7 +237,9 @@ for fb in fb_files:
         # make condensed df
         condensed_df = condense_df(dat_df, 'manual')
         condensed_df.loc[:, 'category'] = cat
-        condensed_df = condensed_df.loc[np.in1d(condensed_df.label, args.target_states)]
+        condensed_df.loc[:, 'pred_idx'] = np.nan
+        condensed_df.loc[:, 'abs_overlap'] = np.nan
+        condensed_df = condensed_df.loc[np.in1d(condensed_df.label, args.target_states)].reset_index().drop('index', axis=1)
         condensed_pred_df = condense_df(dat_df, 'predicted')
         condensed_pred_df.loc[np.invert(np.in1d(condensed_pred_df.label, args.target_states)), 'label'] = 1
         condensed_pred_df.loc[:, 'category'] = cat
@@ -248,25 +252,37 @@ for fb in fb_files:
             manual_range = np.arange(tup.start, tup.end)
             overlaps = condensed_pred_df.apply(lambda x: np.sum(np.in1d(np.arange(x.start, x.end), manual_range)), axis=1)
             pred_idx = overlaps.idxmax()
+            abs_overlap = overlaps.max()
             pred_event = condensed_pred_df.iloc[pred_idx]
             condensed_df.loc[ti, 'predicted'] = int(pred_event.label)
             condensed_df.loc[ti, 'pred_duration'] = pred_event.duration
+            condensed_df.loc[ti, 'abs_overlap'] = overlaps.max()
+            if pred_event.duration > 20 * tup.duration and pred_event.label == 2 and tup.label == 2:
+                cp=1
 
             # Collect classifier performance measures. Taking into account:
-            # - 1 predicted event cannot be counted doubly if covering two actual events
-            # - An event detected to be more than twice as long as
-            if pred_idx in verified_predicted_events:
+            # - 1 predicted event cannot be counted doubly if covering two actual events; take the longest
+            # - An event detected to be more than twice as long as the actual event is a misclassification
+            if pred_idx in condensed_df.pred_idx.values:
+                # The predicted event was matched to a previous actual event
                 confusion_df.loc[(cat, tup.label), 'fn'] += 1
+                # Check which has largest absolute overlap and leave that one in
+                ppidx = condensed_df.index[condensed_df.pred_idx.values == pred_idx][0]
+                if ti > 0 and condensed_df.loc[ti, 'abs_overlap'] > condensed_df.loc[ppidx, 'abs_overlap']:
+                    condensed_df.drop(ppidx, inplace=True)
+                else:
+                    condensed_df.drop(ti, inplace=True)
                 continue
             else:
-                verified_predicted_events.append(pred_idx)
+                condensed_df.loc[ti,'pred_idx'] = pred_idx
             if pred_event.label == tup.label:
                 confusion_df.loc[(cat, tup.label), 'tp'] += 1
             else:
                 confusion_df.loc[(cat, tup.label), 'fn'] += 1
+                condensed_df.drop(ti, inplace=True)
         confusion_list.append(confusion_df)
         for ti, tup in condensed_pred_df.iterrows():
-            if ti in verified_predicted_events: continue
+            if ti in condensed_df.pred_idx.values: continue
             if tup.label != 1: confusion_df.loc[(cat, tup.label), 'fp'] += 1
 
         eventstats_pred_list.append(condensed_pred_df)
@@ -284,11 +300,12 @@ for fb in fb_files:
         plot_dict = {
             'ylabel': 'I',
             'xlabel': 'time (s)',
-            'data': dat_df.loc[:, ['i_don', 'i_acc']].to_numpy(),
+            'data': dat_df.loc[:, ['f_dex_dem', 'f_dex_aem']].to_numpy(),
             'label': dat_df.loc[:, ['predicted', 'manual']].to_numpy()
         }
         plot_obj = plot_trace(plot_dict, nb_classes, dat_df.loc[:, 'time'])
         plot_obj.savefig(f'{trace_dir_dict[cat]}{splitext(basename(fb))[0]}.svg')
+        dat_df.to_csv(f'{trace_csv_dir_dict[cat]}{splitext(basename(fb))[0]}.csv', sep='\t', header=True, index=True)
         plt.close()
     # except:
     #     continue
@@ -301,8 +318,9 @@ confusion_df.loc[:, 'precision'] = confusion_df.tp / (confusion_df.tp + confusio
 confusion_df.loc[:, 'recall'] = confusion_df.tp / (confusion_df.tp + confusion_df.fn)
 confusion_df = confusion_df.rename_axis(['category', 'state']).reset_index()
 confusion_df.sort_values(['category', 'state'], inplace=True)
+confusion_df.to_csv(f'{summary_dir}/confusion.tsv', header=True, index=True, sep='\t')
 pr = sns.scatterplot(x='recall', y='precision', style='state', hue='category', data=confusion_df)
-pr.legend_.remove()
+# pr.legend_.remove()
 plt.xlim(0, 1)
 plt.ylim(0, 1)
 plt.gca().set_aspect('equal', adjustable='box')
@@ -311,7 +329,8 @@ plt.savefig(f'{summary_dir}/precision_recall.svg', bbox_extra_artists=(lgd, ), b
 plt.savefig(f'{summary_dir}/precision_recall.svg', bbox_inches='tight')
 plt.clf()
 # plot transition rates
-if args.tr_files:
+tr_files = parse_input_path(args.fb, pattern='*FRETboard_data_transition_rates.csv')
+if tr_files:
     if any(np.array(framerate_list) - framerate_list[0] > 0.1):
         raise ValueError('Framerate not constant for all samples')
 
@@ -323,7 +342,7 @@ if args.tr_files:
 
     # Loaded from FRETboard
     tr_df_list = []
-    for trf in args.tr_files:
+    for trf in tr_files:
         trf_base = basename(trf)
         cat_list = [cat for cat in args.categories if cat in trf]
         if len(cat_list) > 1: raise ValueError(f'Multiple categories match to transition rate file {trf_base}')
@@ -359,6 +378,8 @@ if args.tr_files:
     transition_piv_df[colnames].plot(kind='bar', yerr=yerr, legend=False)
     # lgd = plt.gca().legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
     # plt.savefig(f'{summary_dir}/transition_rate.svg', bbox_extra_artists=(lgd, ), bbox_inches='tight')
+    transition_piv_df.to_csv(f'{summary_dir}/transitions.tsv', sep='\t', index=True, header=True)
+    np.save(f'{summary_dir}/transitions.tsv.npy', yerr)
     plt.savefig(f'{summary_dir}/transition_rate.svg', bbox_inches='tight')
     plt.clf()
 
@@ -387,6 +408,7 @@ for cat in args.categories:
     plt.xlabel('$E_{FRET}$')
     plt.ylabel('count')
     plt.savefig(f'{summary_dir}/event_counts_kde_{cat}.svg')
+    eventstats_pred_df.loc[eventstats_pred_df.category == cat, :].to_csv(f'{summary_dir}/event_counts_kde_{cat}.tsv', sep='\t', header=True, index=True)
     plt.clf()
 
 # plot event coverage

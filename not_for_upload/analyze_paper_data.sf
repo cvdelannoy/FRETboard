@@ -1,0 +1,33 @@
+import os
+
+__location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
+
+out_dir = config['out_dir']
+
+rule target:
+    input:
+        fb_reports = expand(f'{out_dir}/{{data_set}}/{{exp_config}}/FRETboard_report.html',
+                            data_set=config['data_set'], exp_config=config['exp_config'])
+
+
+rule FRETboard_sim:
+    input:
+         in_dats ='',
+         params_file = '',
+         label_dats = '',
+         nb_manual = 10
+    params:
+         script_dir = __location__,
+         out_dir = out_dir
+    output:
+         fb_report=''
+    shell:
+         '''
+         python {params.script_dir}/simulate_classification.py --in-dats {input.in_dats} \ 
+                                                        --params-file {input.params_file} \
+                                                        --label-dats {input.label_dats} \
+                                                        --nb-manual {input.nb_manual} \
+                                                        --outd-dir {params.out_dir}
+         '''
+
+
