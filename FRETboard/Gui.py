@@ -24,7 +24,7 @@ from bokeh.plotting import figure, curdoc
 from bokeh.models import ColumnDataSource, LinearColorMapper
 from bokeh.models.tools import BoxSelectTool, WheelZoomTool, WheelPanTool, SaveTool, PanTool
 from bokeh.models.callbacks import CustomJS
-from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Div, CheckboxButtonGroup, CheckboxGroup, Spinner, TextInput
+from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Div, CheckboxButtonGroup, CheckboxGroup, Spinner, Toggle
 from bokeh.models.widgets.panels import Panel, Tabs
 from tornado.ioloop import IOLoop
 from tornado import gen
@@ -34,6 +34,7 @@ from FRETboard.Predictor import Predictor
 from FRETboard.helper_functions import print_timestamp, series_to_array, installThreadExcepthook, get_tuple
 from FRETboard.FretReport import FretReport
 from FRETboard.MainTable_parallel import MainTable
+from FRETboard.OneshotHmm import OneshotHmm
 
 from FRETboard.helper_functions import get_tuple, colnames_alex, colnames
 
@@ -79,6 +80,7 @@ class Gui(object):
         self.sel_state_slider = Slider(title='Change selection to state  (num keys)', value=1, start=1,
                                        end=self.num_states_slider.value, step=1, name='sel_state_slider')
         self.sel_state = Div(text='1', name='sel_state')
+        self.guess_toggle = Toggle(label='guess trace')
         self.del_trace_button = Button(label='Delete (Q)', button_type='danger', name='delete_button')
         # 3. Save
 
@@ -115,6 +117,7 @@ class Gui(object):
         # Classifier object
         self.classifier_class = self.algo_select.value
         self.classifier = self.classifier_class(nb_states=nb_states, data=self.data, buffer=self.buffer_slider.value,
+                                                supervision_influence=self.supervision_slider.value,
                                                 features=[feat for fi, feat in enumerate(self.feature_list)
                                                           if fi in self.features_checkboxes.active])
 
@@ -238,6 +241,8 @@ possible, and the error message below
             self.classifier_source.data = dict(params=[self.classifier.get_params()])
             with open(f'{self.h5_dir}/{self.classifier.timestamp}.mod', 'wb') as fh:
                 pickle.dump(self.classifier, fh, pickle.HIGHEST_PROTOCOL)
+            # with SafeH5(f'{self.data.predict_store_fn}', 'w') as fh:
+            #     for idx in fh: del fh[idx]
             self.notify('Finished training')
             self.features_changed = False
             if self.cur_trace_idx is not None:
@@ -298,6 +303,8 @@ possible, and the error message below
         self.l_spinner.value, self.d_spinner.value, self.gamma_factor_spinner.value = self.data.l, self.data.d, self.data.gamma
 
         self.model_loaded = True
+        with open(f'{self.h5_dir}/{self.classifier.timestamp}.mod', 'wb') as fh:
+            pickle.dump(self.classifier, fh, pickle.HIGHEST_PROTOCOL)
         self.notify('Model loaded')
         if self.data.index_table.shape[0] != 0:
             self.data.manual_table.is_labeled = False
@@ -409,11 +416,18 @@ possible, and the error message below
         self.report_holder.text += ' '
 
     def update_classification(self, attr, old, new):
+        new.sort()
         if len(new):
             self.source.selected.indices = []
-            patch = {'labels': [(i, self.sel_state_slider.value - 1) for i in new],
-                     'labels_pct': [(i, (self.sel_state_slider.value - 1) * 1.0 / (self.num_states_slider.value - 1))
-                                    for i in new]}
+            if self.guess_toggle.active:
+                new_labels = self.guess_labels(new)
+                patch = {'labels': [(i, nl) for i, nl in enumerate(new_labels)],
+                         'labels_pct': [(i, nl) for i, nl in enumerate(new_labels / (self.num_states_slider.value - 1))]}
+                self.guess_toggle.active = False
+            else:
+                patch = {'labels': [(i, self.sel_state_slider.value - 1) for i in new],
+                         'labels_pct': [(i, (self.sel_state_slider.value - 1) * 1.0 / (self.num_states_slider.value - 1))
+                                        for i in new]}
             self.source.patch(patch)
 
             self.update_accuracy_hist()
@@ -440,7 +454,7 @@ possible, and the error message below
             self.data.eps = np.nan
         else:
             self.data.eps = float(self.eps_spinner.value)
-        if old_eps != self.data.eps:
+        if old_eps != self.data.eps and self.cur_trace_idx is not None:
             self.refilter_current_example()
             self.redraw_trigger()
 
@@ -527,6 +541,7 @@ possible, and the error message below
         cur_timestamp = self.classifier.timestamp
         cur_features = self.classifier.feature_list
         self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, data=self.data,
+                                                supervision_influence=self.supervision_slider.value,
                                                 features=cur_features, buffer=self.buffer_slider.value)
         self.classifier.timestamp = cur_timestamp
 
@@ -552,6 +567,7 @@ possible, and the error message below
             self.data.label_dict = dict()
             if len(self.data.manual_table):
                 self.data.manual_table.is_labeled = False
+                self.data.manual_table.loc[self.cur_trace_idx, 'is_labeled'] = True
                 self.data.label_dict[self.cur_trace_idx] = np.zeros(len(self.current_example))
                 blank_labels = [(i, 0) for i in range(len(self.current_example))]
                 patch = {'labels': blank_labels,
@@ -590,6 +606,16 @@ possible, and the error message below
         tfh.cleanup()
         zip_dir.cleanup()
         self.datzip_holder.text += ' '
+
+    def guess_trigger(self, is_active):
+        if is_active:
+            self.notify('Select correctly labeled area...')
+
+    def guess_labels(self, label_idx):
+        ohmm = OneshotHmm(self.num_states_slider.value, self.current_example.loc[label_idx, self.feature_list],  # todo feature list ok?
+                          self.data.label_dict[self.cur_trace_idx][label_idx])  # todo indexing like this does not error?
+        return ohmm.predict(self.current_example.loc[:, self.feature_list])
+
 
     def del_trace(self):
         # self.data.del_tuple(self.cur_trace_idx)
@@ -853,6 +879,7 @@ possible, and the error message below
         self.loaded_model_source.on_change('data', self.load_params)
         self.example_select.on_change('value', self.update_example)
         train_button.on_click(self.train_trigger)
+        self.guess_toggle.on_click(self.guess_trigger)
         new_example_button.on_click(self.new_example)
         self.bg_checkbox.on_change('active', lambda attr, old, new: self.update_eps())
         self.bg_button.on_click(self.update_eps)
@@ -893,6 +920,7 @@ possible, and the error message below
                          self.sel_state_slider,
                          # showme_col,
                          row(widgetbox(self.del_trace_button, width=100), widgetbox(train_button, width=100), widgetbox(new_example_button, width=100)),
+                         self.guess_toggle,
                          Div(text="<font size=4>3. Save</font>", width=280, height=15),
                          saveme_col,
                          row(widgetbox(report_button, width=100), widgetbox(save_data_button, width=100), widgetbox(save_model_button, width=100)),

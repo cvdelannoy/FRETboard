@@ -31,9 +31,15 @@ class Predictor(object):
 
             # Check for data to predict
             with SafeHDFStore(self.traces_store_fn) as fh:
-                index_table = fh.get('index_table')
+                if 'index_table' in fh:
+                    index_table = fh.get('index_table')
+                else:
+                    index_table = None
+            if index_table is None:
+                continue
             pred_idx = index_table.index[index_table.mod_timestamp != self.classifier.timestamp][:self.chunk_size]
             if not len(pred_idx): continue
+            index_table = index_table.loc[pred_idx, :]
 
             # predict
             state_seq_dict = {}
@@ -56,7 +62,7 @@ class Predictor(object):
     def check_mod_update(self):
         mod_list = [fn for fn in os.listdir(self.h5_dir) if fn.endswith('.mod')]
         if not len(mod_list): return
-        mod_list.sort()
+        mod_list.sort(key=lambda x: float(x[:-4]))
         mod_fn = mod_list[-1]
         mod_timestamp = int(mod_fn[:-4])
         if mod_timestamp != self.classifier.timestamp:

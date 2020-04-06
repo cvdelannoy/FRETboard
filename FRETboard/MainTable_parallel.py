@@ -154,16 +154,19 @@ class MainTable(object):
     #         fh.loc[idx, col] = new
     #         self.index_table.loc[idx, col] = new
 
-    @property  # todo check if this is fast enough, otherwise cached_property
+    @property
     def accuracy(self):
         """
         Return array of per-trace accuracy values and mean accuracy over entire dataset
         :return:
         """
-        if not len(self.label_dict):  # todo test
+        if not len(self.label_dict):
             return np.array([np.nan], dtype=float), np.nan
-        with SafeH5(self.predict_store_fn, 'r') as fh:
-            pred_dict = {idx: fh.get('/' + idx, None)[()] for idx in self.label_dict}
+        try:
+            with SafeH5(self.predict_store_fn, 'r') as fh:
+                pred_dict = {idx: fh.get('/' + idx, None)[()] for idx in self.label_dict}
+        except:
+            cp=1
         nb_correct = np.array([np.sum(self.label_dict[idx] == pred_dict[idx])
                                for idx in self.label_dict if pred_dict[idx] is not None])
         nb_points = np.array([len(self.label_dict[idx]) for idx in self.label_dict if pred_dict[idx] is not None])
