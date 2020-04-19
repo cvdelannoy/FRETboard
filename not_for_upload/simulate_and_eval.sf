@@ -1,0 +1,75 @@
+import os
+
+dir_list = config['dirs'].split(',')
+algos=config['algos'].split(',')
+fb_path=config['fb_path']
+
+
+eval_dir_list = [dl+'_eval' for dl in dir_list]
+label_scheme_list = [os.path.basename(dl) for dl in dir_list]
+
+rule target:
+	input:
+		mod_struct_svg='mod_struct_eval.svg'
+
+rule simulate_fb:
+	input:
+		in_dir='{dir_name}'
+	params:
+		fb_path=fb_path,
+		algos=algos
+	output:
+		sim_dir=directory('{dir_name}_fb')
+	shell:
+		'''
+		mkdir {output.sim_dir}
+		for algo in {algos}; do
+			python {fb_path}/not_for_upload/simulate_classification.py \
+				--in-dats {input.in_dir}/dats_unlabeled \
+				--params-file "{input.in_dir}/FRETboard_sim_params_${{algo}}.yml" \
+				--label-dats {input.in_dir}/dats_labeled \
+				--nb-manual 10 \
+				--out-dir "{output.sim_dir}/${{algo}}"
+		done
+		'''
+
+rule eval_fb:
+	input:
+		dat_dir='{dir_name}',
+		fb_dir='{dir_name}_fb'
+	params:
+		fb_path=fb_path,
+		algos=algos
+	output:
+		eval_dir=directory('{dir_name}_eval')
+	shell:
+		'''
+		fa=$(echo {algos} | grep -Po '^\S*')
+		nb_states=$(grep -Po '(?<=nb_states: ).+' "{input.dat_dir}/FRETboard_sim_params_${{fa}}.yml" )
+		target_states=
+		for i in $(seq 2 $nb_states); do target_states="${{target_states}} ${{i}}"; done
+		
+		python {fb_path}/not_for_upload/evaluate_traces.py \
+			--fb {input.fb_dir} \
+			--manual {input.dat_dir}/dats_labeled \
+			--manual-type fretboard \
+			--target-states  $(echo "${{target_states}}") \
+			--categories {algos} \
+			--outdir {output.eval_dir}
+		'''
+
+rule generate_figure:
+	input:
+		eval_dirs=eval_dir_list
+	params:
+		fb_path=fb_path,
+		label_scheme_list = label_scheme_list
+	output:
+		svg='mod_struct_eval.svg'
+	shell:
+		'''
+		python {fb_path}/not_for_upload/generate_modstructure_comparison.py \
+			--eval-dirs {input.eval_dirs} \
+			--cat-names {label_scheme_list} \
+			--out-svg {output.svg}
+		'''
