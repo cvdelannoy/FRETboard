@@ -71,13 +71,18 @@ class Classifier(object):
         if self.supervision_influence < 1.0:
             if any(self.data.manual_table.is_labeled):
                 # Case 2: semi-supervised --> perform training with lambda as weights
-                labels = [list(data_dict[dd].labels) if self.data.manual_table.loc[dd, 'is_labeled'] else None for dd in data_dict]  # todo check if training goes alright
+                labels = []
+                for li in data_dict:
+                    if self.data.manual_table.loc[li, 'is_labeled']:
+                        labels.append([f's{lab}' for lab in  self.data.label_dict[li]])
+                    else:
+                        labels.append(None)
+                # labels = [list(self.data.label_dict[dd]) if self.data.manual_table.loc[dd, 'is_labeled'] else None for dd in data_dict]  # todo check if training goes alright
                 # labels = list(self.data.data_clean.labels.to_numpy(copy=True))
                 nsi = 1.0 - self.supervision_influence
                 weights = [nsi if lab is None else self.supervision_influence for lab in labels]
-                hmm.fit([data_dict[dd].loc[:, self.feature_list] for dd in data_dict],  # todo check dimensions: [nb_sequences, nb_samples_per_sequence, nb_features]
-                        weights=weights, labels=labels, n_jobs=self.nb_threads,
-                        use_pseudocount=True)
+                hmm.fit([data_dict[dd].loc[:, self.feature_list].to_numpy() for dd in data_dict],  # todo check dimensions: [nb_sequences, nb_samples_per_sequence, nb_features]
+                        weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi')
             else:
                 # Case 3: unsupervised --> just train
                 hmm.fit([data_dict[dd].loc[:, self.feature_list] for dd in data_dict],

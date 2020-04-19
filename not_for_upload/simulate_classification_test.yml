@@ -2,11 +2,12 @@ algo: VanillaHmm
 nb_states: 2
 features:
   - E_FRET
-  - E_FRET_sd
-  - i_sum
-  - i_sum_sd
-  - f_dex_dem
-  - f_dex_aem
+#  - E_FRET_sd
+#  - i_sum
+#  - i_sum_sd
+#  - f_dex_dem
+#  - f_dex_aem
+#  - correlation_coefficient
 DBSCAN_eps: nan
 supervision_influence: 1.0
 buffer_size: 3

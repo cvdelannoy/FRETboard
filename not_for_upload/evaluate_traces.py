@@ -12,7 +12,10 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 from functools import reduce
 import seaborn as sns
+import pickle
 from itertools import permutations
+import warnings
+from scipy.linalg import logm
 
 mpl.rcParams['figure.dpi'] = 400
 
@@ -60,14 +63,10 @@ def condense_seq(labels, values):
 def get_transitions(labels):
     out_list = []
     cur_label = labels[0]
-    count = 0
     for label in labels:
-        if label == cur_label:
-            count += 1
-        else:
-            out_list.append((str(cur_label) + str(label), count))
+        if label != cur_label:
+            out_list.append((cur_label, label))
             cur_label = label
-            count = 1
     return out_list
 
 def condense_df(seq, manual):
@@ -174,9 +173,12 @@ eventstats_list = []
 eventstats_pred_list = []
 target_states_w_ground = copy(args.target_states)
 if 1 not in target_states_w_ground: target_states_w_ground += [1]
-transition_df = pd.DataFrame(0, columns=['nb_samples', 'nb_transitions'], index=[f'{ts[0]}{ts[1]}' for ts in permutations(target_states_w_ground, 2)])
+midx = pd.MultiIndex.from_tuples(list(permutations(target_states_w_ground, 2)), names=['from', 'to'])
+transition_df = pd.DataFrame(0, columns=['nb_samples', 'nb_transitions'], index=midx)
+# transition_df = pd.DataFrame(0, columns=['nb_samples', 'nb_transitions'], index=[f'{ts[0]}{ts[1]}' for ts in permutations(target_states_w_ground, 2)])
 framerate_list = []
 confusion_list = []
+tdp_list = []
 
 loader_fun = dict(matlab=matlab_load_fun, fretboard=fretboard_load_fun)[args.manual_type]
 
@@ -186,6 +188,7 @@ total_pts = 0
 correct_pts = 0
 max_state = 0
 plt.rcParams.update({'font.size': 30})  # large text for trace plots
+efret_dict = {cat:{st: [] for st in args.target_states + [1]} for cat in args.categories}
 for fb in fb_files:
     # try:
         cat = [cat for cat in args.categories if cat in fb]
@@ -201,6 +204,8 @@ for fb in fb_files:
 
         dat_df.loc[:, 'manual'] = manual_df.label.astype(int)
         dat_df.loc[np.invert(np.in1d(dat_df.manual, args.target_states + [1])), 'manual'] = 1
+        for lab in dat_df.manual.unique():
+            efret_dict[cat][lab].append(dat_df.query(f'manual=={lab}').E_FRET)
         if args.remove_last_event:
             ground_state = dat_df.predicted.min()
             nb_rows = len(dat_df) - 1
@@ -224,14 +229,20 @@ for fb in fb_files:
 
         # Update transitions data
         transition_list = get_transitions(dat_df.manual)
-        for trl in transition_list:
-            if not any(np.in1d(target_states_str, list(trl[0]))): continue
-            if trl[0] in transition_df.index:
-                transition_df.loc[trl[0], 'nb_samples'] += trl[1]
-                transition_df.loc[trl[0], 'nb_transitions'] += 1
-            else:
-                transition_df.loc[trl[0], 'nb_samples'] = trl[1]
-                transition_df.loc[trl[0], 'nb_transitions'] = 1
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            for trl in transition_list:
+                transition_df.loc[trl, 'nb_transitions'] += 1
+            for ul in dat_df.manual.unique():
+                transition_df.loc[(ul,), 'nb_samples'] = transition_df.loc[(ul,), 'nb_samples'].to_numpy()[0] + np.sum(dat_df.manual == ul)
+        # for trl in transition_list:
+        #     if not any(np.in1d(target_states_str, list(trl))): continue
+        #     if trl in transition_df.index:
+        #         transition_df.loc[trl[0], 'nb_samples'] += trl[1]
+        #         transition_df.loc[trl[0], 'nb_transitions'] += 1
+        #     else:
+        #         transition_df.loc[trl[0], 'nb_samples'] = trl[1]
+        #         transition_df.loc[trl[0], 'nb_transitions'] = 1
         framerate_list.append(1 / (dat_df.time[1:].to_numpy() - dat_df.time[:-1].to_numpy()).mean())
 
         # make condensed df
@@ -241,6 +252,8 @@ for fb in fb_files:
         condensed_df.loc[:, 'abs_overlap'] = np.nan
         condensed_df = condensed_df.loc[np.in1d(condensed_df.label, args.target_states)].reset_index().drop('index', axis=1)
         condensed_pred_df = condense_df(dat_df, 'predicted')
+        tdp_list.append(pd.DataFrame({'departure_efret': condensed_pred_df.E_FRET.iloc[:-1].to_numpy(),
+                               'arrival_efret': condensed_pred_df.E_FRET.iloc[1:].to_numpy(), 'category': cat}))
         condensed_pred_df.loc[np.invert(np.in1d(condensed_pred_df.label, args.target_states)), 'label'] = 1
         condensed_pred_df.loc[:, 'category'] = cat
 
@@ -257,12 +270,10 @@ for fb in fb_files:
             condensed_df.loc[ti, 'predicted'] = int(pred_event.label)
             condensed_df.loc[ti, 'pred_duration'] = pred_event.duration
             condensed_df.loc[ti, 'abs_overlap'] = overlaps.max()
-            if pred_event.duration > 20 * tup.duration and pred_event.label == 2 and tup.label == 2:
-                cp=1
-
             # Collect classifier performance measures. Taking into account:
             # - 1 predicted event cannot be counted doubly if covering two actual events; take the longest
-            # - An event detected to be more than twice as long as the actual event is a misclassification
+            # if pred_event.duration > 10 * tup.duration and pred_event.label != 1 and tup.label != 1:
+
             if pred_idx in condensed_df.pred_idx.values:
                 # The predicted event was matched to a previous actual event
                 confusion_df.loc[(cat, tup.label), 'fn'] += 1
@@ -310,7 +321,39 @@ for fb in fb_files:
     # except:
     #     continue
 
+
+transition_df.index = [str(idx[0]) + str(idx[1]) for idx in transition_df.index.to_flat_index()]
 plt.rcParams.update({'font.size': 15})  # smaller text for summary plots
+
+# Plot transition density plots
+efret_means = {}  # note actual label-based!
+for cat in efret_dict:
+    efret_means[cat] = {}
+    for lab in efret_dict[cat]:
+        efret_means[cat][lab] = np.nanmean(np.concatenate(efret_dict[cat][lab]))
+with open(f'{summary_dir}/means_dict.pkl', 'wb') as fh:
+    pickle.dump(efret_means, fh, protocol=pickle.HIGHEST_PROTOCOL)
+
+tdp_df = pd.concat(tdp_list)
+for cat, df in tdp_df.groupby('category'):
+    fig = plt.figure()
+    ax = fig.gca()
+    ax.set_aspect('equal')
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    for lab in efret_means[cat]:
+        plt.axvline(efret_means[cat][lab], color='black', ls='--')
+        plt.axhline(efret_means[cat][lab], color='black', ls='--')
+    sns.kdeplot(df.departure_efret, df.arrival_efret, shade=True, cmap="coolwarm", ax=ax)
+    # ax.collections[0].set_color('#3b4cc0')
+    ax.set_facecolor('#4961d2')
+    ax.set_xlabel('$E_{PR}$ before')
+    ax.set_ylabel('$E_{PR}$ after')
+    plt.savefig(f'{summary_dir}/{cat}_tdp.svg')
+    df.to_csv(f'{summary_dir}/{cat}_tdp.tsv', header=True, index=True, sep='\t')
+    with open(f'{summary_dir}/{cat}_means_dict.pkl', 'wb') as fh:
+        pickle.dump(efret_means[cat], fh, protocol=pickle.HIGHEST_PROTOCOL)
+    plt.clf()
 
 # Plot precision/recall
 confusion_df = reduce(lambda x, y: x.add(y, fill_value=0), confusion_list)
@@ -338,6 +381,19 @@ if tr_files:
     framerate = np.mean(framerate_list)
     transition_df.loc[:, 'rate'] = 0
     tb = transition_df.nb_transitions != 0
+
+    # correct discrete --> continuous
+    # tm = np.zeros((nb_classes, nb_classes))
+    # for ti, tup in transition_df.iterrows():
+    #     tm[int(ti[0]) - 1, int(ti[1]) - 1] = tup.nb_transitions / tup.nb_samples
+    # for i in range(nb_classes):
+    #     tm[i,i] = 1 - np.sum(tm[i,:])
+
+    # tm_rate = np.eye(nb_classes) + framerate * logm(tm)
+    # for tdi in transition_df.index:
+    #     i1, i2 = list(tdi)
+    #     transition_df.loc[tdi, 'rate'] = tm_rate[int(i1) - 1, int(i2) - 1]
+
     transition_df.loc[tb, 'rate'] = transition_df.loc[tb, 'nb_transitions'] / transition_df.loc[tb, 'nb_samples'] * framerate
 
     # Loaded from FRETboard

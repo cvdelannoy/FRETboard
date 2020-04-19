@@ -3,6 +3,7 @@ import os
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 
 out_dir = config['out_dir']
+params_files = config['params_files']
 
 rule target:
     input:
@@ -12,20 +13,21 @@ rule target:
 
 rule FRETboard_sim:
     input:
-         in_dats ='',
-         params_file = '',
-         label_dats = '',
+         dat_tar ='',
+         params_file = '{wildcars.param_file}',
          nb_manual = 10
     params:
          script_dir = __location__,
          out_dir = out_dir
     output:
-         fb_report=''
+         fb_report='{wildcards.data_set}/{wildcards.param_file}/'
     shell:
          '''
-         python {params.script_dir}/simulate_classification.py --in-dats {input.in_dats} \ 
+         tar -xf {input.dat_tar}
+         fn="{{{input.dat_tar}%.*}}"
+         python {params.script_dir}/simulate_classification.py --in-dats "${fn}/dat_files_unlabeled" \ 
                                                         --params-file {input.params_file} \
-                                                        --label-dats {input.label_dats} \
+                                                        --label-dats "${fn}/dat_files_labeled" \
                                                         --nb-manual {input.nb_manual} \
                                                         --outd-dir {params.out_dir}
          '''

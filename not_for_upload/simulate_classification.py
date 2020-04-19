@@ -59,9 +59,15 @@ for n in range(args.nb_manual):
         unlabeled_index_table = data.index_table.loc[idx_bool, :]
         min_lp_idx = unlabeled_index_table.index[unlabeled_index_table.logprob.argmin()]
     # min_lp_idx = data.index_table.sample(1).index[0]
-    data.label_dict[min_lp_idx] = pd.read_csv(label_dict[min_lp_idx], sep='\t').predicted.to_numpy() - 1
+    data.label_dict[min_lp_idx] = pd.read_csv(label_dict[min_lp_idx], sep='\t').label.to_numpy(dtype=int) - 1
     data.manual_table.loc[min_lp_idx] = {'is_labeled': True, 'is_junk': False}
-    cl.train(data.trace_dict, supervision_influence=params_dict['supervision_influence'])
+    try:
+        cl.train(data.trace_dict, supervision_influence=params_dict['supervision_influence'])
+    except:
+        print(f'error occurred at manual labeling of {min_lp_idx}')
+        print(f'label_file dims: {data.label_dict[min_lp_idx].shape}')
+        print(f'trace_file dims: {data.trace_dict[min_lp_idx].shape}')
+        raise
 
     # Repeat prediction
     for idx in data.index_table.index:
