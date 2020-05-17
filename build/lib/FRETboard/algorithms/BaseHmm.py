@@ -18,28 +18,8 @@ def parallel_predict(tup_list, mod):
     return logprob_list, state_list
 
 class Classifier(object):
-    """ HMM classifier that automatically adds 'edge states' to better recognize valid transitions between states.
+    """ HMM model class
     """
-    def __init__(self, nb_states, data, **kwargs):
-        """
-        :param nb_states: number of states to detect
-        :param data: object of class MainTable
-        :param gui: Gui object [optional]
-        :param buffer: int, size of buffer area around regular classes [required if gui not given]
-        """
-        self.trained = None
-        self.timestamp = numeric_timestamp()
-        self.nb_threads = kwargs.get('nb_threads', 8)
-        self.feature_list = kwargs['features']
-        self.supervision_influence = kwargs['supervision_influence']
-
-        self.nb_states = nb_states
-        self.data = data
-
-        self.state_names = None  # names assigned to states in same order as pomegranate model
-        self.pg_gui_state_dict = dict()
-        self.gui_state_dict = dict()
-        self.str2num_state_dict = dict()
 
     # --- training ---
     def train(self, data_dict, supervision_influence=1.0):
@@ -54,14 +34,14 @@ class Classifier(object):
 
         # Make selection of tuples, if bootstrapping (otherwise use all data)
         if bootstrap:
-            idx_list = list(data_dict)
             nb_labeled = self.data.manual_table.is_labeled.sum()
-            nb_unlabeled = len(idx_list) - nb_labeled
-            unlabeled_idx = [idx for idx in idx_list if idx not in self.data.manual_table.query('is_labeled').index]
-            labeled_seqs = choices(self.data.manual_table.query('is_labeled').index, k=nb_labeled)
-            unlabeled_seqs = choices(unlabeled_idx, k=nb_unlabeled)
+            nb_unlabeled = len(self.data.index_table) - nb_labeled
+            labeled_seqs = choices(self.data.index_table.index[self.data.manual_table.is_labeled], k=nb_labeled)
+            unlabeled_seqs = choices(self.data.index_table.index[np.invert(self.data.manual_table.is_labeled)], k=nb_unlabeled)
             seq_idx = labeled_seqs + unlabeled_seqs
             data_dict = {si: data_dict[si] for si in seq_idx}
+        # else:
+        #     seq_idx = list(data_dict)
 
         # Get initialized hmm (structure + initial parameters)
         hmm = self.get_untrained_hmm(data_dict)
@@ -71,18 +51,13 @@ class Classifier(object):
         if self.supervision_influence < 1.0:
             if any(self.data.manual_table.is_labeled):
                 # Case 2: semi-supervised --> perform training with lambda as weights
-                labels = []
-                for li in data_dict:
-                    if self.data.manual_table.loc[li, 'is_labeled']:
-                        labels.append([f's{lab}' for lab in  self.data.label_dict[li]])
-                    else:
-                        labels.append(None)
-                # labels = [list(self.data.label_dict[dd]) if self.data.manual_table.loc[dd, 'is_labeled'] else None for dd in data_dict]  # todo check if training goes alright
+                labels = [list(data_dict[dd].labels) if self.data.manual_table.loc[dd, 'is_labeled'] else None for dd in data_dict]  # todo check if training goes alright
                 # labels = list(self.data.data_clean.labels.to_numpy(copy=True))
                 nsi = 1.0 - self.supervision_influence
                 weights = [nsi if lab is None else self.supervision_influence for lab in labels]
-                hmm.fit([data_dict[dd].loc[:, self.feature_list].to_numpy() for dd in data_dict],  # todo check dimensions: [nb_sequences, nb_samples_per_sequence, nb_features]
-                        weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi')
+                hmm.fit([data_dict[dd].loc[:, self.feature_list] for dd in data_dict],  # todo check dimensions: [nb_sequences, nb_samples_per_sequence, nb_features]
+                        weights=weights, labels=labels, n_jobs=self.nb_threads,
+                        use_pseudocount=True)
             else:
                 # Case 3: unsupervised --> just train
                 hmm.fit([data_dict[dd].loc[:, self.feature_list] for dd in data_dict],
@@ -281,6 +256,23 @@ class Classifier(object):
                 tm_out[tr[0], tr[1]] += 1
         return tm_out / np.expand_dims(tm_out.sum(axis=1), -1)
 
+    def get_confidence_intervals(self, data_dict):
+        """
+        Calculate bootstrapped confidence intervals on transition matrix values
+        :return:
+        """
+        tm_array = []
+        for _ in range(10):
+            hmm = self.get_trained_hmm(data_dict=data_dict, bootstrap=True)
+            tm_array.append(self.get_tm(hmm).to_numpy())
+        tm_mat = np.stack(tm_array, axis=-1)
+        sd_mat = np.std(tm_mat, axis=-1)
+        mu_mat = np.mean(tm_mat, axis=-1)
+        ci_mat = np.tile(np.expand_dims(mu_mat, -1), (1, 1, 2))
+        ci_mat[:, :, 0] -= sd_mat * 2
+        ci_mat[:, :, 1] += sd_mat * 2
+        return ci_mat
+
     def get_states_mu(self, feature):
         fidx = np.argwhere(feature == np.array(self.feature_list))[0,0]
         mu_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[0]
@@ -294,6 +286,22 @@ class Classifier(object):
                    for state in self.trained.states if not state.is_silent()}
         sd_list = [sd_dict[mk] for mk in sorted(list(sd_dict))]
         return sd_list
+
+    def get_tm(self, hmm):
+        df = pd.DataFrame({st: [0] * self.nb_states for st in range(self.nb_states)})
+        df.set_index(df.columns, inplace=True)
+        state_idx_dict = {st.name: idx for idx, st in enumerate(hmm.states)}
+        dense_tm = hmm.dense_transition_matrix()
+        for s0, s1 in [(i1, i2) for i1 in range(self.nb_states) for i2 in range(self.nb_states)]:
+            si0 = state_idx_dict[f's{s0}']; si1 = state_idx_dict[f's{s1}']
+            df.loc[s0, s1] = dense_tm[si0, si1]
+        df = df / df.sum(1).T  # correct for start/end transitions
+        # # todo: switching to transition rates i.o. probs here, for kinSoft challenge
+        mean_durations = self.data.data_clean.time.apply(lambda x: (x[-1] - x[0]) / len(x))
+        duration_frame = np.mean(mean_durations)
+        df[np.eye(self.nb_states, dtype=bool)] -= 1
+        df /= duration_frame
+        return df
 
     # --- saving/loading models ---
     def get_params(self):
@@ -309,7 +317,7 @@ class Classifier(object):
                    + div + gui_state_dict_txt
                    + div + pg_gui_state_dict_txt
                    + div + str2num_state_dict_txt
-                   + div + f'nb_states: {str(self.nb_states)}\ndbscan_epsilon: {self.data.eps}\nsupervision_influence: {self.supervision_influence}')
+                   + div + f'nb_states: {str(self.nb_states)}\ndbscan_epsilon: {self.data.eps}')
         return out_txt
 
     def load_params(self, file_contents):
@@ -336,5 +344,3 @@ class Classifier(object):
         if misc_dict['dbscan_epsilon'] == 'nan': misc_dict['dbscan_epsilon'] = np.nan
         self.nb_states = misc_dict['nb_states']
         self.data.eps = misc_dict['dbscan_epsilon']
-        self.supervision_influence = misc_dict['supervision_influence']
-        self.timestamp = numeric_timestamp()

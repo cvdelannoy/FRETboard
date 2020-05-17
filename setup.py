@@ -10,6 +10,7 @@ setup(
     packages=['FRETboard'],
     install_requires=['numpy==1.17.3',
                       'pandas==0.25.3',
+                      'statsmodels==0.11.0',
                       'pomegranate==0.11.2',
                       'bokeh==1.4.0',
                       'cached-property==1.5.1',

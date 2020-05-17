@@ -2,11 +2,13 @@ import os
 
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 
+
 out_dir = config['out_dir']
-params_files = config['params_files']
+
 
 rule target:
     input:
+        mod_struct_svg = ,
         fb_reports = expand(f'{out_dir}/{{data_set}}/{{exp_config}}/FRETboard_report.html',
                             data_set=config['data_set'], exp_config=config['exp_config'])
 
@@ -33,3 +35,12 @@ rule FRETboard_sim:
          '''
 
 
+rule generate_mod_struct_svg:
+    input:
+         lab_schemes= expand(f'{}'),
+         eval_dirs=,
+    output:
+         out_svg = '{ds1, []}'
+    shell:
+         '''
+         '''

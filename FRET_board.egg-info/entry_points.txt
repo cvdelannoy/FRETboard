@@ -1,0 +1,3 @@
+[console_scripts]
+FRETboard = FRETboard.__main__:main
+
