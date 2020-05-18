@@ -17,7 +17,10 @@ setup(
                       'tabulate==0.8.3',
                       'tornado==6.0.3',
                       'seaborn==0.9.0',
-                      'scikit-learn==0.21.2'],
+                      'scikit-learn==0.21.2',
+                      'h5py==2.10.0',
+                      'tables==3.6.1',
+                      ],
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License"
