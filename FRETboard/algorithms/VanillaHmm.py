@@ -6,7 +6,6 @@ from random import choices
 import itertools
 import yaml
 from FRETboard.helper_functions import numeric_timestamp
-from joblib import Parallel, delayed
 
 
 def parallel_predict(tup_list, mod):
@@ -65,7 +64,8 @@ class Classifier(object):
 
         # Get initialized hmm (structure + initial parameters)
         hmm = self.get_untrained_hmm(data_dict)
-
+        X = [data_dict[dd].loc[:, self.feature_list].to_numpy() for dd in data_dict]
+        X = [x.reshape(-1).reshape(-1, len(self.feature_list)) for x in X]
         # Fit model on data
         # Case 1: supervised --> perform no training
         if self.supervision_influence < 1.0:
@@ -74,19 +74,15 @@ class Classifier(object):
                 labels = []
                 for li in data_dict:
                     if self.data.manual_table.loc[li, 'is_labeled']:
-                        labels.append([f's{lab}' for lab in  self.data.label_dict[li]])
+                        labs = [hmm.start.name] + [f's{lab}' for lab in self.data.label_dict[li]] + [hmm.end.name]
+                        labels.append(labs)
                     else:
                         labels.append(None)
-                # labels = [list(self.data.label_dict[dd]) if self.data.manual_table.loc[dd, 'is_labeled'] else None for dd in data_dict]  # todo check if training goes alright
-                # labels = list(self.data.data_clean.labels.to_numpy(copy=True))
                 nsi = 1.0 - self.supervision_influence
                 weights = [nsi if lab is None else self.supervision_influence for lab in labels]
-                hmm.fit([data_dict[dd].loc[:, self.feature_list].to_numpy() for dd in data_dict],  # todo check dimensions: [nb_sequences, nb_samples_per_sequence, nb_features]
-                        weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi')
+                hmm.fit(X, weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi')
             else:
-                # Case 3: unsupervised --> just train
-                hmm.fit([data_dict[dd].loc[:, self.feature_list] for dd in data_dict],
-                        n_jobs=self.nb_threads, use_pseudocount=True)
+                hmm.fit(X, use_pseudocount=True, algorithm='viterbi')
         return hmm
 
     def get_untrained_hmm(self, data_dict):
@@ -107,7 +103,7 @@ class Classifier(object):
         state_names = list(dists)
         tm_mat = trans_df.loc[state_names, state_names].to_numpy()
         hmm = pg.HiddenMarkovModel.from_matrix(transition_probabilities=tm_mat,
-                                               distributions=dists.values(),
+                                               distributions=[dists[sn] for sn in state_names],
                                                starts=[pstart_dict[sn] for sn in state_names],
                                                ends=[pend_dict[sn] for sn in state_names],
                                                state_names=state_names)

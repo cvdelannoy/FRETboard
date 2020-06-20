@@ -71,19 +71,18 @@ class Classifier(object):
         # Fit model on data
         # Case 1: supervised --> perform no training
         if self.supervision_influence < 1.0:
+            X = [data_dict[dd].loc[:, self.feature_list].to_numpy() for dd in data_dict]
+            X = [x.reshape(-1).reshape(-1, len(self.feature_list)) for x in X]
             if any(self.data.manual_table.is_labeled):
                 # Case 2: semi-supervised --> perform training with lambda as weights
                 labels = [list(data_dict[dd].labels) if self.data.manual_table.loc[dd, 'is_labeled'] else None for dd in data_dict]
                 nsi = 1.0 - self.supervision_influence
                 weights = [nsi if lab is None else self.supervision_influence for lab in labels]
                 labels = [self.add_boundary_labels(lab, hmm) if len(lab) else None for lab in labels]
-                hmm.fit([data_dict[dd].loc[:, self.feature_list] for dd in data_dict],
-                        weights=weights, labels=labels, n_jobs=self.nb_threads,
-                        use_pseudocount=True)
+                hmm.fit(X, weights=weights, labels=labels, n_jobs=self.nb_threads, use_pseudocount=True)
             else:
                 # Case 3: unsupervised --> just train
-                hmm.fit([data_dict[dd].loc[:, self.feature_list] for dd in data_dict],
-                        n_jobs=self.nb_threads, use_pseudocount=True)
+                hmm.fit(X, n_jobs=self.nb_threads, use_pseudocount=True)
         return hmm
 
     def add_boundary_labels(self, labels, hmm):

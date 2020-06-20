@@ -70,42 +70,56 @@ class Classifier(object):
         # Fit model on data
         # Case 1: supervised --> perform no training
         if self.supervision_influence < 1.0:
+            X = [data_dict[dd].loc[:, self.feature_list].to_numpy() for dd in data_dict]
+            X = [x.reshape(-1).reshape(-1, len(self.feature_list)) for x in X]
             if any(self.data.manual_table.is_labeled):
                 # Case 2: semi-supervised --> perform training with lambda as weights
-                labels = [list(data_dict[dd].labels) if self.data.manual_table.loc[dd, 'is_labeled'] else None for dd in data_dict]
+                labels = []
+                for li in data_dict:
+                    if self.data.manual_table.loc[li, 'is_labeled']:
+                        labels.append([f's{lab}' for lab in self.data.label_dict[li]])
+                    else:
+                        labels.append(None)
+                # labels = [list(data_dict[dd].labels) if self.data.manual_table.loc[dd, 'is_labeled'] else None for dd in data_dict]
                 nsi = 1.0 - self.supervision_influence
                 weights = [nsi if lab is None else self.supervision_influence for lab in labels]
-                labels = [self.add_boundary_labels(lab, hmm) if len(lab) else None for lab in labels]
-                hmm.fit([data_dict[dd].loc[:, self.feature_list] for dd in data_dict],
-                        weights=weights, labels=labels, n_jobs=self.nb_threads,
-                        use_pseudocount=True)
+                labels = [self.add_boundary_labels(lab, hmm) if lab is not None else None for lab in labels]
+                hmm.fit(X, weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi')
             else:
                 # Case 3: unsupervised --> just train
-                hmm.fit([data_dict[dd].loc[:, self.feature_list] for dd in data_dict],
-                        n_jobs=self.nb_threads, use_pseudocount=True)
+                hmm.fit(X, use_pseudocount=True, algorithm='viterbi')
         return hmm
 
     def add_boundary_labels(self, labels, hmm):
         """
         Add transitional boundary layers when labels switch class
         """
+        if not len(labels): return None
         states = hmm.states
         out_labels = [None] * len(labels)
         overhang_left = self.buffer // 2
         overhang_right = self.buffer - overhang_left
         oh_counter = 0
         prev_label = None
-        cur_label = labels[0]
+        cur_label = labels[0][1:]
         for li, l in enumerate(labels):
-            if l == cur_label:
+            if l[1:] == cur_label:
                 if oh_counter != 0:
                     out_labels[li] = states[self.str2num_state_dict[f'e{prev_label}{cur_label}_{self.buffer - oh_counter}']]
                     oh_counter -= 1
                 else:
-                    out_labels[li] = states[self.str2num_state_dict[f's{cur_label}']]
+                    try:
+                        out_labels[li] = states[self.str2num_state_dict[f's{cur_label}']]
+                    except:
+                        print(f'out_labels: {str(out_labels)}')
+                        print(f'li: {li}')
+                        print(f'nb states {len(states)}')
+                        print(f'{str(self.str2num_state_dict)}')
+                        print(f's{cur_label}')
+                        raise
             else:
                 prev_label = cur_label
-                cur_label = l
+                cur_label = l[1:]
                 oh_counter = overhang_right
                 ol_safe = min(overhang_left, li-1)  # save against extending edge labels beyond range
                 ol_residual = overhang_left - ol_safe
