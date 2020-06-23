@@ -97,19 +97,25 @@ class Classifier(object):
         if not len(labels): return None
         states = hmm.states
         out_labels = [None] * len(labels)
-        overhang_left = self.buffer // 2
-        overhang_right = self.buffer - overhang_left
+
+        overhang_right = self.buffer // 2
+        overhang_left = self.buffer - overhang_right  # -1 for current position
+
+        # overhang_left = self.buffer // 2
+        # overhang_right = self.buffer - overhang_left
         oh_counter = 0
         prev_label = None
         cur_label = labels[0][1:]
         for li, l in enumerate(labels):
             if l[1:] == cur_label:
                 if oh_counter != 0:
-                    out_labels[li] = states[self.str2num_state_dict[f'e{prev_label}{cur_label}_{self.buffer - oh_counter}']]
+                    out_labels[li] = f'e{prev_label}{cur_label}_{self.buffer - oh_counter}'
+                    # out_labels[li] = states[self.str2num_state_dict[f'e{prev_label}{cur_label}_{self.buffer - oh_counter}']]
                     oh_counter -= 1
                 else:
                     try:
-                        out_labels[li] = states[self.str2num_state_dict[f's{cur_label}']]
+                        out_labels[li] = f's{cur_label}'
+                        # out_labels[li] = states[self.str2num_state_dict[f's{cur_label}']]
                     except:
                         print(f'out_labels: {str(out_labels)}')
                         print(f'li: {li}')
@@ -118,14 +124,15 @@ class Classifier(object):
                         print(f's{cur_label}')
                         raise
             else:
+                if overhang_left > li:
+                    # left margin does not allow for full set of border states; do not mark as overhang
+                    out_labels[li] = f's{cur_label}'
+                    continue
                 prev_label = cur_label
                 cur_label = l[1:]
                 oh_counter = overhang_right
-                ol_safe = min(overhang_left, li-1)  # save against extending edge labels beyond range
-                ol_residual = overhang_left - ol_safe
-                out_labels[li-overhang_left+1:li+1] = [
-                    states[self.str2num_state_dict[f'e{prev_label}{cur_label}_{i + ol_residual}']] for i in range(ol_safe)]
-        return [hmm.start] + out_labels + [hmm.end]
+                out_labels[li-overhang_left + 1:li + 1] = [f'e{prev_label}{cur_label}_{i}' for i in range(overhang_left)]
+        return [hmm.start.name] + out_labels + [hmm.end]
 
     def get_untrained_hmm(self, data_dict):
         """
@@ -200,8 +207,10 @@ class Classifier(object):
         states = dict()
         for i in range(self.nb_states):
             sn = f's{i}'
-            # todo TAKE THIS BIT FROM VANILLA
-            states[sn] = pg.State(self.get_dist(data_vec[y == i, :].T), name=f's{i}')
+            # todo THIS WHERE GMM-HMM DIFFERS FROM EDGE AWARE
+            dist = pg.GeneralMixtureModel.from_samples(pg.MultivariateGaussianDistribution, n_components=10, X=data_vec[y == i, :])
+            states[sn] = pg.State(dist, name=f's{i}')
+            # states[sn] = pg.State(self.get_dist(data_vec[y == i, :].T.copy()), name=f's{i}')
             pg_gui_state_dict[sn] = i
         present_states = list(states)
 
@@ -217,6 +226,7 @@ class Classifier(object):
                 pg_gui_state_dict[f'{sn}_{i}'] = int(edge[0]) if i < left_buffer else int(edge[1])
             edge_states[sn] = [estates_list, (f's{edge[0]}', f's{edge[1]}')]
         return states, edge_states, pg_gui_state_dict
+
 
     @staticmethod
     def get_dist(data_vec):

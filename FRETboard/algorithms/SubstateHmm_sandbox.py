@@ -72,6 +72,8 @@ class Classifier(object):
         # Fit model on data
         # Case 1: supervised --> perform no training
         if self.supervision_influence < 1.0:
+            X = [data_dict[dd].loc[:, self.feature_list].to_numpy() for dd in data_dict]
+            X = [x.reshape(-1).reshape(-1, len(self.feature_list)) for x in X]
             if any(self.data.manual_table.is_labeled):
                 # Case 2: semi-supervised --> perform training with lambda as weights
                 labels = []
@@ -86,12 +88,11 @@ class Classifier(object):
                         labels.append(None)
                 nsi = 1.0 - self.supervision_influence
                 weights = [nsi if lab is None else self.supervision_influence for lab in labels]
-                hmm.fit([data_dict[dd].loc[:, self.feature_list].to_numpy() for dd in data_dict],
-                        weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi')
+                hmm.fit(X, weights=weights, labels=labels, n_jobs=self.nb_threads,
+                        use_pseudocount=True, algorithm='viterbi')
             else:
                 # Case 3: unsupervised --> just train
-                hmm.fit([data_dict[dd].loc[:, self.feature_list].to_numpy() for dd in data_dict], use_pseudocount=True,
-                        algorithm='viterbi')
+                hmm.fit(X, use_pseudocount=True, algorithm='viterbi')
         return hmm
 
     def convert_gmm_labels(self, labels, X, gm_dict):
@@ -150,57 +151,6 @@ class Classifier(object):
         for k in pstart_dict: pstart_dict[k] = max(pstart_dict[k], 0.000001)
         for k in pend_dict: pend_dict[k] = max(pend_dict[k], 0.000001)
 
-        # # note: no substates
-        # # Add states, self-transitions, transitions to start/end state
-        # se_dict = {}
-        # for sidx, s_name in enumerate(states):
-        #     s = states[s_name]
-        #     start_state = pg.State(None, name=f'{s_name}_start');
-        #     end_state = pg.State(None, name=f'{s_name}_end')
-        #     hmm.add_state(s[0])
-        #     hmm.add_transition(hmm.start, s[0], pstart_dict[s_name], pseudocount=0)
-        #     hmm.add_transition(s[0], hmm.end, pend_dict[s_name], pseudocount=0)
-        #     hmm.add_transition(s[0], s[0], tm_dict[(s_name, s_name)], pseudocount=0)
-        #
-        #
-        # # Make connections between states using edge states
-        # for es_name in edge_states:
-        #     es_list, es_ids = edge_states[es_name]
-        #     hmm.add_states(es_list)
-        #     hmm.add_transition(states[es_ids[0]][0], es_list[0], tm_dict[edge_states[es_name][1]], pseudocount=0)
-        #     hmm.add_transition(es_list[-1], states[es_ids[1]][0], 1.0, pseudocount=9999999)
-        #     for i in range(1, self.buffer): hmm.add_transition(es_list[i - 1], es_list[i], 1.0, pseudocount=9999999)
-
-        # # note only silent states
-        # # Add states, self-transitions, transitions to start/end state
-        # se_dict = {}
-        # for sidx, s_name in enumerate(states):
-        #     s = states[s_name]
-        #     start_state = pg.State(None, name=f'{s_name}_start'); end_state = pg.State(None, name=f'{s_name}_end')
-        #     hmm.add_states([s[0], start_state, end_state])
-        #     hmm.add_transition(hmm.start, start_state, pstart_dict[s_name], pseudocount=0)
-        #     hmm.add_transition(end_state, hmm.end, pend_dict[s_name], pseudocount=0)
-        #     hmm.add_transition(end_state, start_state, tm_dict[(s_name, s_name)], pseudocount=0)
-        #     hmm.add_transition(start_state, s[0], 1, pseudocount=0)
-        #     hmm.add_transition(s[0], end_state, 1, pseudocount=0)
-        #
-        #     # for ssidx, ss in enumerate(s):
-        #     #     hmm.add_transition(start_state, ss, gm_dict[s_name].weights_[ssidx], pseudocount=0)
-        #     #     hmm.add_transition(ss, end_state, 1.0, pseudocount=0)
-        #     se_dict[s_name] = {
-        #         'start': start_state,
-        #         'end': end_state
-        #     }
-        #
-        # # Make connections between states using edge states
-        # for es_name in edge_states:
-        #     es_list, es_ids = edge_states[es_name]
-        #     hmm.add_states(es_list)
-        #     hmm.add_transition(se_dict[es_ids[0]]['end'], es_list[0], tm_dict[edge_states[es_name][1]], pseudocount=0)
-        #     hmm.add_transition(es_list[-1], se_dict[es_ids[1]]['start'], 1.0, pseudocount=9999999)
-        #     for i in range(1, self.buffer): hmm.add_transition(es_list[i-1], es_list[i], 1.0, pseudocount=9999999)
-
-        # note original
         # Add states, self-transitions, transitions to start/end state
         # se_dict = {}
         tr_dict = {}
@@ -223,18 +173,6 @@ class Classifier(object):
             #     hmm.add_transition(ss, hmm.end, pend_dict[s_name])
 
             tr_dict[s_name] = internal_tr_dict
-
-            # hmm.add_transition(hmm.start, start_state, pstart_dict[s_name], pseudocount=0)
-            # hmm.add_transition(end_state, hmm.end, pend_dict[s_name], pseudocount=0)
-            # hmm.add_transition(end_state, start_state, tm_dict[(s_name, s_name)], pseudocount=0)
-            # for ssidx, ss in enumerate(s):
-            #     hmm.add_transition(start_state, ss, gm_dict[s_name].weights_[ssidx], pseudocount=0)
-            #     hmm.add_transition(ss, ss, 1.0, pseudocount=0)
-            #     hmm.add_transition(ss, end_state, 1.0, pseudocount=0)
-            # se_dict[s_name] = {
-            #     'start': start_state,
-            #     'end': end_state
-            # }
 
         # Make connections between states using edge states
         for es_name in edge_states:

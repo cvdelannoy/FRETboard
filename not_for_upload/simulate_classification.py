@@ -14,10 +14,13 @@ from not_for_upload.MainTable_simulate import MainTable
 from not_for_upload.FretReport_sim import FretReport
 import yaml
 
+np.random.seed(1)
+
 
 parser = argparse.ArgumentParser(description='Simulate classification procedure of FRETboard'
                                              ' given labeled dat files.')
 parser.add_argument('--in-dats', type=str, required=True)
+parser.add_argument('--nb-states', type=int, required=True)
 parser.add_argument('--params-file', type=str, required=True,
                     help='parameter values for initialization of FRETboard classifier in yaml file')
 parser.add_argument('--label-dats', type=str, required=True)
@@ -45,7 +48,7 @@ data = MainTable(eps=params_dict['DBSCAN_eps'], l=0, d=0, gamma=1, alex=0, dat_l
 
 # Initialize classifier, train unsupervised
 Classifier = importlib.import_module('FRETboard.algorithms.' + params_dict['algo']).Classifier
-cl = Classifier(data=data, **params_dict)
+cl = Classifier(data=data, nb_states=args.nb_states, **params_dict)
 cl.train(data_dict=data.trace_dict, supervision_influence=params_dict['supervision_influence'])
 
 for idx in data.index_table.index:
@@ -57,7 +60,8 @@ for n in range(args.nb_manual):
     else:
         idx_bool = [idx not in data.label_dict for idx in data.index_table.index]
         unlabeled_index_table = data.index_table.loc[idx_bool, :]
-        min_lp_idx = unlabeled_index_table.index[unlabeled_index_table.logprob.argmin()]
+        # min_lp_idx = unlabeled_index_table.index[unlabeled_index_table.logprob.idxmin()]
+        min_lp_idx = unlabeled_index_table.logprob.idxmin()
     # min_lp_idx = data.index_table.sample(1).index[0]
     data.label_dict[min_lp_idx] = pd.read_csv(label_dict[min_lp_idx], sep='\t').label.to_numpy(dtype=int) - 1
     data.manual_table.loc[min_lp_idx] = {'is_labeled': True, 'is_junk': False}
@@ -79,6 +83,7 @@ for n in range(args.nb_manual):
 # Report
 report_str = FretReport(cl, data, params_dict['algo'], params_dict['buffer_size'],
                         params_dict['supervision_influence'], params_dict['bootstrap_size']).construct_html_report()
+os.makedirs(out_dir, exist_ok=True)
 with open(out_dir+'FRETboard_report.html', 'w') as fh:
     fh.write(report_str)
 tm_str = re.search('(?<=var text = ").+(?=";)', report_str).group(0).replace('''\\n''', '''\n''')

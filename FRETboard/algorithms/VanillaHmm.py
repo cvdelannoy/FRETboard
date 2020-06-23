@@ -78,6 +78,8 @@ class Classifier(object):
                         labels.append(labs)
                     else:
                         labels.append(None)
+                # labels = [[hmm.start.name] + list(data_dict[dd].labels) + [hmm.end.name]
+                #           if self.data.manual_table.loc[dd, 'is_labeled'] else None for dd in data_dict]
                 nsi = 1.0 - self.supervision_influence
                 weights = [nsi if lab is None else self.supervision_influence for lab in labels]
                 hmm.fit(X, weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi')

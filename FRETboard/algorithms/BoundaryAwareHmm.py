@@ -1,4 +1,3 @@
-import pandas as pd
 import numpy as np
 import pomegranate as pg
 from pomegranate.kmeans import Kmeans
@@ -7,8 +6,6 @@ import itertools
 from itertools import permutations
 import yaml
 from FRETboard.helper_functions import numeric_timestamp, get_edge_labels
-from sklearn.mixture import GaussianMixture
-# from joblib import Parallel, delayed
 
 
 def parallel_predict(tup_list, mod):
@@ -78,49 +75,57 @@ class Classifier(object):
                 labels = []
                 for li in data_dict:
                     if self.data.manual_table.loc[li, 'is_labeled']:
-                        cur_labels = self.add_boundary_labels(self.data.label_dict[li])
-                        gm_labels = self.convert_gmm_labels(cur_labels,
-                                                            data_dict[li].loc[:, self.feature_list].to_numpy(), gm_dict)
-                        labels.append(gm_labels)
-                        # labels.append([f's{lab}' for lab in self.data.label_dict[li]])
+                        labels.append([f's{lab}' for lab in self.data.label_dict[li]])
                     else:
                         labels.append(None)
                 nsi = 1.0 - self.supervision_influence
                 weights = [nsi if lab is None else self.supervision_influence for lab in labels]
-                hmm.fit(X, weights=weights, labels=labels, n_jobs=self.nb_threads,
-                        use_pseudocount=True, algorithm='viterbi')
+                labels = [self.add_boundary_labels(lab, hmm) if lab is not None else None for lab in labels]
+                hmm.fit(X, weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi')
             else:
                 # Case 3: unsupervised --> just train
-                hmm.fit(X, n_jobs=self.nb_threads, use_pseudocount=True)
+                hmm.fit(X, use_pseudocount=True, algorithm='viterbi')
         return hmm
 
     def add_boundary_labels(self, labels, hmm):
         """
         Add transitional boundary layers when labels switch class
         """
+        if not len(labels): return None
         states = hmm.states
         out_labels = [None] * len(labels)
-        overhang_left = self.buffer // 2
-        overhang_right = self.buffer - overhang_left
+
+        overhang_right = self.buffer // 2
+        overhang_left = self.buffer - overhang_right  # -1 for current position
+
         oh_counter = 0
         prev_label = None
-        cur_label = labels[0]
+        cur_label = labels[0][1:]
         for li, l in enumerate(labels):
-            if l == cur_label:
+            if l[1:] == cur_label:
                 if oh_counter != 0:
-                    out_labels[li] = states[self.str2num_state_dict[f'e{prev_label}{cur_label}_{self.buffer - oh_counter}']]
+                    out_labels[li] = f'e{prev_label}{cur_label}_{self.buffer - oh_counter}'
                     oh_counter -= 1
                 else:
-                    out_labels[li] = states[self.str2num_state_dict[f's{cur_label}']]
+                    try:
+                        out_labels[li] = f's{cur_label}'
+                    except:
+                        print(f'out_labels: {str(out_labels)}')
+                        print(f'li: {li}')
+                        print(f'nb states {len(states)}')
+                        print(f'{str(self.str2num_state_dict)}')
+                        print(f's{cur_label}')
+                        raise
             else:
+                if overhang_left > li:
+                    # left margin does not allow for full set of border states; do not mark as overhang
+                    out_labels[li] = f's{cur_label}'
+                    continue
                 prev_label = cur_label
-                cur_label = l
+                cur_label = l[1:]
                 oh_counter = overhang_right
-                ol_safe = min(overhang_left, li-1)  # save against extending edge labels beyond range
-                ol_residual = overhang_left - ol_safe
-                out_labels[li-overhang_left+1:li+1] = [
-                    states[self.str2num_state_dict[f'e{prev_label}{cur_label}_{i + ol_residual}']] for i in range(ol_safe)]
-        return [hmm.start] + out_labels + [hmm.end]
+                out_labels[li-overhang_left + 1:li + 1] = [f'e{prev_label}{cur_label}_{i}' for i in range(overhang_left)]
+        return [hmm.start.name] + out_labels + [hmm.end]
 
     def get_untrained_hmm(self, data_dict):
         """
@@ -140,21 +145,20 @@ class Classifier(object):
         # Add states, self-transitions, transitions to start/end state
         for sidx, s_name in enumerate(states):
             s = states[s_name]
-            s.name = s_name
-            hmm.add_model(s)
-            hmm.add_transition(hmm.start, s.start, pstart_dict[s_name], pseudocount=0)
-            hmm.add_transition(s.end, hmm.end, pend_dict[s_name], pseudocount=0)
-            hmm.add_transition(s.end, s.start, tm_dict[(s_name, s_name)], pseudocount=0)
+            hmm.add_state(s)
+            hmm.add_transition(hmm.start, s, pstart_dict[s_name], pseudocount=0)
+            hmm.add_transition(s, hmm.end, pend_dict[s_name], pseudocount=0)
+            hmm.add_transition(s, s, tm_dict[(s_name, s_name)], pseudocount=0)
 
         # Make connections between states using edge states
         for es_name in edge_states:
             es_list = edge_states[es_name][0]
             s1, s2 = [states[s] for s in edge_states[es_name][1]]
             for es in es_list: hmm.add_state(es)
-            hmm.add_transition(s1.end, es_list[0], tm_dict[edge_states[es_name][1]])
+            hmm.add_transition(s1, es_list[0], tm_dict[edge_states[es_name][1]])
             for i in range(1, self.buffer):
                 hmm.add_transition(es_list[i-1], es_list[i], 1.0, pseudocount=9999999)
-            hmm.add_transition(es_list[-1], s2.start, 1.0, pseudocount=9999999)
+            hmm.add_transition(es_list[-1], s2, 1.0, pseudocount=9999999)
         hmm.bake()
 
         state_names = np.array([state.name for state in hmm.states])
@@ -165,8 +169,7 @@ class Classifier(object):
 
     def get_states(self, data_dict): # todo check
         """
-        Return dicts of pomgranate states with initialized normal multivariate distributions. In supervised mode, do not
-        return a state if no examples are available!
+        Return dicts of pomgranate states with initialized normal multivariate distributions
         """
         left_buffer = self.buffer // 2
         if not any(self.data.manual_table.is_labeled):
@@ -178,10 +181,6 @@ class Classifier(object):
                 km_idx = np.arange(data_vec.shape[0])
             km = Kmeans(k=self.nb_states, n_init=1).fit(X=data_vec[km_idx, :])
             y = km.predict(data_vec)
-            # if 'E_FRET' in self.feature_list:  # order found clusters on E_FRET value if possible
-            #     efret_centroids = km.centroids[:, [True if feat == 'E_FRET' else False for feat in self.feature_list]].squeeze()
-            #     kml_dict = {ol: nl for ol, nl in zip(np.arange(self.nb_states), np.argsort(efret_centroids))}
-            #     y = np.vectorize(kml_dict.__getitem__)(y)
             def distfun(s1, s2):
                 return self.get_dist(data_vec[np.logical_or(y == s1, y == s2), :].T)
         else:
@@ -201,9 +200,12 @@ class Classifier(object):
         states = dict()
         for i in range(self.nb_states):
             sn = f's{i}'
-            if np.sum(y == i) < 2: continue
-            states[sn], added_state_names = self.get_substate_object(data_vec[y == i, :].T, state_name=sn)
-            for asn in added_state_names: pg_gui_state_dict[asn] = i
+            X = data_vec[y == i, :].T.copy()
+            if X.size == 0 and self.trained is not None:
+                states[sn] = self.trained.states[self.str2num_state_dict[sn]]
+            else:
+                states[sn] = pg.State(self.get_main_dist(data_vec[y == i, :].T.copy()), name=f's{i}')
+            pg_gui_state_dict[sn] = i
         present_states = list(states)
 
         # Create edge states
@@ -219,25 +221,8 @@ class Classifier(object):
             edge_states[sn] = [estates_list, (f's{edge[0]}', f's{edge[1]}')]
         return states, edge_states, pg_gui_state_dict
 
-    def get_substate_object(self, vec, state_name):
-        vec_clean = vec[:, np.invert(np.any(np.isnan(vec), axis=0))]
-        nb_clust = min(10, vec_clean.shape[1])
-        # labels = GaussianMixture(n_components=nb_clust).fit_predict(vec_clean.T)
-        gm = GaussianMixture(n_components=nb_clust).fit(vec_clean.T)
-        gm.covariances_ += np.eye(gm.covariances_.shape[1]) * 1E-9
-        hmm_out = pg.HiddenMarkovModel()
-        hmm_out.name = state_name
-        hmm_out.start.name = f'{state_name}_start'
-        hmm_out.end.name = f'{state_name}_end'
-        added_state_names = []
-        for n in range(nb_clust):
-            sn = f'{state_name}_{str(n)}'
-            added_state_names.append(sn)
-            st = pg.State(pg.MultivariateGaussianDistribution(gm.means_[n,:], gm.covariances_[n, :, :]), name=sn)
-            hmm_out.add_state(st)
-            hmm_out.add_transition(hmm_out.start, st, gm.weights_[n], pseudocount=9999999)
-            hmm_out.add_transition(st, hmm_out.end, 1.0, pseudocount=9999999)
-        return hmm_out, added_state_names
+    def get_main_dist(self, X):
+        return self.get_dist(X)
 
     @staticmethod
     def get_dist(data_vec):
@@ -306,10 +291,9 @@ class Classifier(object):
         logprob_list: list of floats of length len(idx) containing posterior log-probabilities
         """
         if hmm is None: hmm = self.trained
-        data = np.split(trace_df.loc[:, self.feature_list].to_numpy(),len(trace_df), axis=0)
-        trace_state_list = hmm.predict(data, algorithm='map')  # todo segfaults with viterbi??
-        logprob = self.trained.log_probability(data)  # todo now requires 2 runs for logprob only!
-        state_list = np.vectorize(self.gui_state_dict.__getitem__)(trace_state_list)
+        logprob, trace_state_list = hmm.viterbi(np.split(trace_df.loc[:, self.feature_list].to_numpy(),
+                                                         len(trace_df), axis=0))
+        state_list = np.vectorize(self.gui_state_dict.__getitem__)([ts[0] for ts in trace_state_list[1:-1]])
         return state_list, logprob
 
     def get_matrix(self, df):
@@ -357,30 +341,18 @@ class Classifier(object):
         return tm_out / np.expand_dims(tm_out.sum(axis=1), -1)
 
     def get_states_mu(self, feature):
+        state_names = [f's{i}' for i in range(self.nb_states)]
         fidx = np.argwhere(feature == np.array(self.feature_list))[0,0]
-        mu_dict = {n: np.nan for n in range(self.nb_states)}
-        for state in self.trained.states:
-            if state.is_silent(): continue
-            if state.distribution.name == 'MultivariateGaussianDistribution':
-                mu_dict[self.pg_gui_state_dict.get(state.name, 0)] = state.distribution.parameters[0][fidx]
-            elif state.distribution.name == 'IndependentComponentsDistribution':
-                mu_dict[self.pg_gui_state_dict.get(state.name, 0)] = state.distribution.distributions[fidx].parameters[0]
-        # mu_dict = {self.pg_gui_state_dict.get(state.name, 0): state.distribution.distributions[fidx].parameters[0]
-        #            for state in self.trained.states if not state.is_silent()}
+        mu_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[0]
+                   for state in self.trained.states if state.name in state_names}
         mu_list = [mu_dict[mk] for mk in sorted(list(mu_dict))]
         return mu_list
 
     def get_states_sd(self, feature):
+        state_names = [f's{i}' for i in range(self.nb_states)]
         fidx = np.argwhere(feature == np.array(self.feature_list))[0, 0]
-        sd_dict = {n: np.nan for n in range(self.nb_states)}
-        for state in self.trained.states:
-            if state.is_silent(): continue
-            if state.distribution.name == 'MultivariateGaussianDistribution':
-                sd_dict[self.pg_gui_state_dict.get(state.name, 0)] = state.distribution.parameters[1][fidx][fidx]
-            elif state.distribution.name == 'IndependentComponentsDistribution':
-                sd_dict[self.pg_gui_state_dict.get(state.name, 0)] = state.distribution.distributions[fidx].parameters[1]
-        # sd_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[1]
-        #            for state in self.trained.states if not state.is_silent()}
+        sd_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[1]
+                   for state in self.trained.states if state.name in state_names}
         sd_list = [sd_dict[mk] for mk in sorted(list(sd_dict))]
         return sd_list
 
@@ -392,7 +364,7 @@ class Classifier(object):
         str2num_state_dict_txt = yaml.dump(self.str2num_state_dict)
         feature_txt = '\n'.join(self.feature_list)
         div = '\nSTART_NEW_SECTION\n'
-        out_txt = ('SubstateHmm'
+        out_txt = ('EdgeAwareHmm'
                    + div + mod_txt
                    + div + feature_txt
                    + div + gui_state_dict_txt
@@ -409,7 +381,7 @@ class Classifier(object):
          pg_gui_state_dict_txt,
          str2num_state_dict_txt,
          misc_txt) = file_contents.split('\nSTART_NEW_SECTION\n')
-        if mod_check != 'SubstateHmm':
+        if mod_check != 'EdgeAwareHmm':
             error_msg = '\nERROR: loaded model parameters are not for a substate HMM!'
             raise ValueError(error_msg)
         self.trained = pg.HiddenMarkovModel().from_yaml(model_txt)

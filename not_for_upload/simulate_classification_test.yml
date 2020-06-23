@@ -1,4 +1,4 @@
-algo: SubstateHmm
+algo: SubstateHmm_sandbox
 nb_states: 2
 features:
   - E_FRET
