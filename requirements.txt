@@ -11,4 +11,5 @@ tabulate
 joblib
 jinja2
 pyyaml
+psutil
 h5py
