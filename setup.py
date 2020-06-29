@@ -10,7 +10,7 @@ setup(
     packages=['FRETboard'],
     install_requires=['pandas==1.0.5',
                       'statsmodels==0.11.1',
-                      # 'pomegranate==0.13.3',
+                      'pomegranate==0.13.3',
                       'bokeh==1.4.0',
                       'cached-property==1.5.1',
                       'tabulate==0.8.3',
@@ -19,6 +19,7 @@ setup(
                       'scikit-learn==0.21.2',
                       'h5py==2.10.0',
                       'tables==3.6.1',
+                      'psutil==5.7.0'
                       ],
     classifiers=[
         "Programming Language :: Python :: 3",
