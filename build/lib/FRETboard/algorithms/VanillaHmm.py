@@ -6,7 +6,6 @@ from random import choices
 import itertools
 import yaml
 from FRETboard.helper_functions import numeric_timestamp
-from joblib import Parallel, delayed
 
 
 def parallel_predict(tup_list, mod):
@@ -65,28 +64,26 @@ class Classifier(object):
 
         # Get initialized hmm (structure + initial parameters)
         hmm = self.get_untrained_hmm(data_dict)
-
+        X = [data_dict[dd].loc[:, self.feature_list].to_numpy() for dd in data_dict]
+        X = [x.reshape(-1).reshape(-1, len(self.feature_list)) for x in X]
         # Fit model on data
         # Case 1: supervised --> perform no training
-        if self.supervision_influence < 1.0:
-            if any(self.data.manual_table.is_labeled):
-                # Case 2: semi-supervised --> perform training with lambda as weights
-                labels = []
-                for li in data_dict:
-                    if self.data.manual_table.loc[li, 'is_labeled']:
-                        labels.append([f's{lab}' for lab in  self.data.label_dict[li]])
-                    else:
-                        labels.append(None)
-                # labels = [list(self.data.label_dict[dd]) if self.data.manual_table.loc[dd, 'is_labeled'] else None for dd in data_dict]  # todo check if training goes alright
-                # labels = list(self.data.data_clean.labels.to_numpy(copy=True))
-                nsi = 1.0 - self.supervision_influence
-                weights = [nsi if lab is None else self.supervision_influence for lab in labels]
-                hmm.fit([data_dict[dd].loc[:, self.feature_list].to_numpy() for dd in data_dict],  # todo check dimensions: [nb_sequences, nb_samples_per_sequence, nb_features]
-                        weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi')
-            else:
-                # Case 3: unsupervised --> just train
-                hmm.fit([data_dict[dd].loc[:, self.feature_list] for dd in data_dict],
-                        n_jobs=self.nb_threads, use_pseudocount=True)
+        if self.supervision_influence < 1.0 and any(self.data.manual_table.is_labeled):
+            # Case 2: semi-supervised --> perform training with lambda as weights
+            labels = []
+            for li in data_dict:
+                if self.data.manual_table.loc[li, 'is_labeled']:
+                    labs = [hmm.start.name] + [f's{lab}' for lab in self.data.label_dict[li]] + [hmm.end.name]
+                    labels.append(labs)
+                else:
+                    labels.append(None)
+            # labels = [[hmm.start.name] + list(data_dict[dd].labels) + [hmm.end.name]
+            #           if self.data.manual_table.loc[dd, 'is_labeled'] else None for dd in data_dict]
+            nsi = 1.0 - self.supervision_influence
+            weights = [nsi if lab is None else self.supervision_influence for lab in labels]
+            hmm.fit(X, weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi')
+        elif not any(self.data.manual_table.is_labeled):
+            hmm.fit(X, use_pseudocount=True, algorithm='viterbi')
         return hmm
 
     def get_untrained_hmm(self, data_dict):
@@ -107,7 +104,7 @@ class Classifier(object):
         state_names = list(dists)
         tm_mat = trans_df.loc[state_names, state_names].to_numpy()
         hmm = pg.HiddenMarkovModel.from_matrix(transition_probabilities=tm_mat,
-                                               distributions=dists.values(),
+                                               distributions=[dists[sn] for sn in state_names],
                                                starts=[pstart_dict[sn] for sn in state_names],
                                                ends=[pend_dict[sn] for sn in state_names],
                                                state_names=state_names)
@@ -219,20 +216,6 @@ class Classifier(object):
         state_list = np.vectorize(self.gui_state_dict.__getitem__)([ts[0] for ts in trace_state_list[1:-1]])
         return state_list, logprob
 
-        # tuple_list = np.array([np.stack(list(tup), axis=-1)
-        #                        for tup in self.data.data_clean.loc[idx, self.feature_list].to_numpy()])
-        #
-        # # fwd/bwd also logprobs parallel
-        # nb_threads = min(len(idx), self.nb_threads)
-        # batch_idx = np.array_split(np.arange(len(tuple_list)), nb_threads)
-        # parallel_list = Parallel(n_jobs=nb_threads)(delayed(parallel_predict)(tuple_list[bi], self.trained)
-        #                                            for bi in batch_idx)
-        # logprob_list, pred_list = list(map(list, zip(*parallel_list)))
-        # logprob_list = list(itertools.chain.from_iterable(logprob_list))
-        # pred_list = [np.vectorize(self.gui_state_dict.__getitem__)(pred[1:-1])
-        #              for pred in itertools.chain.from_iterable(pred_list)]
-        #
-        # return pred_list, logprob_list
 
     def get_matrix(self, df):
         """

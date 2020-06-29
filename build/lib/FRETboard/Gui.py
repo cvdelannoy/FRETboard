@@ -97,7 +97,7 @@ class Gui(object):
         self.datzip_holder = PreText(text='', css_classes=['hidden'])
         self.ssfret_holder = PreText(text='', css_classes=['hidden'])
         self.keystroke_holder = PreText(text='', css_classes=['hidden'], name='keystroke_holder')
-        self.features_checkboxes = CheckboxGroup(labels=[''] * len(self.feature_list), active=[0, 1, 2, 3, 4])
+        self.features_checkboxes = CheckboxGroup(labels=[''] * len(self.feature_list), active=[5, 6])
         self.state_radio = RadioGroup(labels=[''] * len(self.feature_list), active=0)
 
         # Settings

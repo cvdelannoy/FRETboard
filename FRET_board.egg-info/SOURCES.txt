@@ -20,11 +20,14 @@ FRETboard/SafeHDFStore.py
 FRETboard/__init__.py
 FRETboard/__main__.py
 FRETboard/algorithms.yml
+FRETboard/example_data.pkl
 FRETboard/helper_functions.py
 FRETboard/io_functions.py
 FRETboard/main.py
 FRETboard/algorithms/BaseHmm.py
-FRETboard/algorithms/EdgeAwareHmm.py
+FRETboard/algorithms/BoundaryAwareHmm.py
+FRETboard/algorithms/EdgeAwareHmm_sandbox.py
+FRETboard/algorithms/GmmHmm.py
 FRETboard/algorithms/SubstateHmm.py
 FRETboard/algorithms/SubstateHmm_sandbox.py
 FRETboard/algorithms/VanillaHmm.py
