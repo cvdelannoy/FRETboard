@@ -1,6 +1,6 @@
 numpy
 pandas==1.0.5
-pomegranate==0.13.3
+pomegranate
 bokeh==1.4.0
 tornado
 scikit-learn
