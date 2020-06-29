@@ -68,23 +68,22 @@ class Classifier(object):
         X = [x.reshape(-1).reshape(-1, len(self.feature_list)) for x in X]
         # Fit model on data
         # Case 1: supervised --> perform no training
-        if self.supervision_influence < 1.0:
-            if any(self.data.manual_table.is_labeled):
-                # Case 2: semi-supervised --> perform training with lambda as weights
-                labels = []
-                for li in data_dict:
-                    if self.data.manual_table.loc[li, 'is_labeled']:
-                        labs = [hmm.start.name] + [f's{lab}' for lab in self.data.label_dict[li]] + [hmm.end.name]
-                        labels.append(labs)
-                    else:
-                        labels.append(None)
-                # labels = [[hmm.start.name] + list(data_dict[dd].labels) + [hmm.end.name]
-                #           if self.data.manual_table.loc[dd, 'is_labeled'] else None for dd in data_dict]
-                nsi = 1.0 - self.supervision_influence
-                weights = [nsi if lab is None else self.supervision_influence for lab in labels]
-                hmm.fit(X, weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi')
-            else:
-                hmm.fit(X, use_pseudocount=True, algorithm='viterbi')
+        if self.supervision_influence < 1.0 and any(self.data.manual_table.is_labeled):
+            # Case 2: semi-supervised --> perform training with lambda as weights
+            labels = []
+            for li in data_dict:
+                if self.data.manual_table.loc[li, 'is_labeled']:
+                    labs = [hmm.start.name] + [f's{lab}' for lab in self.data.label_dict[li]] + [hmm.end.name]
+                    labels.append(labs)
+                else:
+                    labels.append(None)
+            # labels = [[hmm.start.name] + list(data_dict[dd].labels) + [hmm.end.name]
+            #           if self.data.manual_table.loc[dd, 'is_labeled'] else None for dd in data_dict]
+            nsi = 1.0 - self.supervision_influence
+            weights = [nsi if lab is None else self.supervision_influence for lab in labels]
+            hmm.fit(X, weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi')
+        elif not any(self.data.manual_table.is_labeled):
+            hmm.fit(X, use_pseudocount=True, algorithm='viterbi')
         return hmm
 
     def get_untrained_hmm(self, data_dict):
@@ -217,20 +216,6 @@ class Classifier(object):
         state_list = np.vectorize(self.gui_state_dict.__getitem__)([ts[0] for ts in trace_state_list[1:-1]])
         return state_list, logprob
 
-        # tuple_list = np.array([np.stack(list(tup), axis=-1)
-        #                        for tup in self.data.data_clean.loc[idx, self.feature_list].to_numpy()])
-        #
-        # # fwd/bwd also logprobs parallel
-        # nb_threads = min(len(idx), self.nb_threads)
-        # batch_idx = np.array_split(np.arange(len(tuple_list)), nb_threads)
-        # parallel_list = Parallel(n_jobs=nb_threads)(delayed(parallel_predict)(tuple_list[bi], self.trained)
-        #                                            for bi in batch_idx)
-        # logprob_list, pred_list = list(map(list, zip(*parallel_list)))
-        # logprob_list = list(itertools.chain.from_iterable(logprob_list))
-        # pred_list = [np.vectorize(self.gui_state_dict.__getitem__)(pred[1:-1])
-        #              for pred in itertools.chain.from_iterable(pred_list)]
-        #
-        # return pred_list, logprob_list
 
     def get_matrix(self, df):
         """

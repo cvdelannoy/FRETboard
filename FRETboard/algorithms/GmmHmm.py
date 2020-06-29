@@ -9,28 +9,78 @@ import BoundaryAwareHmm
 class Classifier(BoundaryAwareHmm.Classifier):
 
     def get_main_dist(self, X):
+        nd=5
         if X.size == 0:
             # No prior model and no examples assigned --> initialize dummy with 0 and diagonal cov matrix
-            return pg.GeneralMixtureModel([
-                pg.MultivariateGaussianDistribution([0]*len(self.feature_list), np.eye(len(self.feature_list)))
-                for _ in range(5)], weights=[0.2] * 5)
-        return pg.GeneralMixtureModel.from_samples(pg.MultivariateGaussianDistribution, n_components=5, X=X.T.copy())
+            dist_list = []
+            for _ in range(nd):
+                dist_list.append(pg.IndependentComponentsDistribution([pg.NormalDistribution(0,1) for _ in range(len(self.feature_list))]))
+            return pg.GeneralMixtureModel(dist_list, weights=[1/nd] * nd)
+
+        # Determine number of components using BIC
+        X = X.T.copy()
+        bic_list, dist_list = self.select_distribution(X)
+        return dist_list[np.argmin(bic_list)]
+        # return pg.GeneralMixtureModel.from_samples([pg.NormalDistribution for _ in range(len(self.feature_list))], n_components=nd, X=X.T.copy())
+
+    def select_distribution(self, X):
+        bic_list, dist_list = [], []
+        for nc in range(1, min(10, X.shape[0])):
+            if nc == 1:
+                dist = pg.IndependentComponentsDistribution.from_samples(X,
+                    distributions=[pg.NormalDistribution for _ in range(len(self.feature_list))])
+                p = dist.log_probability(X).sum()
+                k = len(self.feature_list) * 2
+            else:
+                dist = pg.GeneralMixtureModel.from_samples(
+                    [pg.NormalDistribution for _ in range(len(self.feature_list))],
+                    n_components=nc, X=X, n_init=10)
+                p = dist.log_probability(X).sum()
+                k = (len(self.feature_list) * 2 + 1) * nc
+            dist_list.append(dist)
+            bic_list.append(k * np.log(X.shape[0]) - 2 * p)
+        return bic_list, dist_list
 
     def get_states_mu(self, feature):
         state_names = [f's{i}' for i in range(self.nb_states)]
         fidx = np.argwhere(feature == np.array(self.feature_list))[0,0]
-        dist_dict = {self.pg_gui_state_dict[state.name]: (state.distribution.distributions, state.distribution.weights)
-                   for state in self.trained.states if state.name in state_names}
-        mu_dict = {dd: dist_dict[dd][0][dist_dict[dd][1].argmax()].parameters[0][fidx] for dd in dist_dict}
+        mu_dict = {}
+        for state in self.trained.states:
+            if state.name not in state_names: continue
+            dist = state.distribution
+            if type(dist) == pg.GeneralMixtureModel:
+                mu_dict[self.pg_gui_state_dict[state.name]] = dist.distributions[dist.weights.argmax()].parameters[0][fidx].parameters[0]
+            elif type(dist) == pg.IndependentComponentsDistribution:
+                mu_dict[self.pg_gui_state_dict[state.name]] = dist.distributions[fidx].parameters[0]
+            else:
+                raise ValueError(f'Expected IndependentComponentDistribution or GMM, got {type(dist)}')
+        # dist_dict = {self.pg_gui_state_dict[state.name]: (state.distribution.distributions, state.distribution.weights)
+        #            for state in self.trained.states if state.name in state_names}
+        #
+        # mu_dict = {dd: dist_dict[dd][0][dist_dict[dd][1].argmax()].parameters[0][fidx].parameters[0] for dd in dist_dict}
         mu_list = [mu_dict[mk] for mk in sorted(list(mu_dict))]
         return mu_list
 
     def get_states_sd(self, feature):
         state_names = [f's{i}' for i in range(self.nb_states)]
         fidx = np.argwhere(feature == np.array(self.feature_list))[0, 0]
-        dist_dict = {self.pg_gui_state_dict[state.name]: (state.distribution.distributions, state.distribution.weights)
-                     for state in self.trained.states if state.name in state_names}
-        sd_dict = {dd: dist_dict[dd][0][dist_dict[dd][1].argmax()].parameters[1][fidx][fidx] for dd in dist_dict}
+
+        sd_dict = {}
+        for state in self.trained.states:
+            if state.name not in state_names: continue
+            dist = state.distribution
+            if type(dist) == pg.GeneralMixtureModel:
+                sd_dict[self.pg_gui_state_dict[state.name]] = \
+                dist.distributions[dist.weights.argmax()].parameters[0][fidx].parameters[1]
+            elif type(dist) == pg.IndependentComponentsDistribution:
+                sd_dict[self.pg_gui_state_dict[state.name]] = dist.distributions[fidx].parameters[1]
+            else:
+                raise ValueError(f'Expected IndependentComponentDistribution or GMM, got {type(dist)}')
+
+        # dist_dict = {self.pg_gui_state_dict[state.name]: (state.distribution.distributions, state.distribution.weights)
+        #              for state in self.trained.states if state.name in state_names}
+        # sd_dict = {dd: dist_dict[dd][0][dist_dict[dd][1].argmax()].parameters[0][fidx].parameters[1] for dd in
+        #            dist_dict}
         sd_list = [sd_dict[mk] for mk in sorted(list(sd_dict))]
         return sd_list
 

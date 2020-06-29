@@ -67,24 +67,23 @@ class Classifier(object):
 
         # Fit model on data
         # Case 1: supervised --> perform no training
-        if self.supervision_influence < 1.0:
-            X = [data_dict[dd].loc[:, self.feature_list].to_numpy() for dd in data_dict]
-            X = [x.reshape(-1).reshape(-1, len(self.feature_list)) for x in X]
-            if any(self.data.manual_table.is_labeled):
-                # Case 2: semi-supervised --> perform training with lambda as weights
-                labels = []
-                for li in data_dict:
-                    if self.data.manual_table.loc[li, 'is_labeled']:
-                        labels.append([f's{lab}' for lab in self.data.label_dict[li]])
-                    else:
-                        labels.append(None)
-                nsi = 1.0 - self.supervision_influence
-                weights = [nsi if lab is None else self.supervision_influence for lab in labels]
-                labels = [self.add_boundary_labels(lab, hmm) if lab is not None else None for lab in labels]
-                hmm.fit(X, weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi')
-            else:
-                # Case 3: unsupervised --> just train
-                hmm.fit(X, use_pseudocount=True, algorithm='viterbi')
+        X = [data_dict[dd].loc[:, self.feature_list].to_numpy() for dd in data_dict]
+        X = [x.reshape(-1).reshape(-1, len(self.feature_list)) for x in X]
+        if self.supervision_influence < 1.0 and any(self.data.manual_table.is_labeled):
+            # Case 2: semi-supervised --> perform training with lambda as weights
+            labels = []
+            for li in data_dict:
+                if self.data.manual_table.loc[li, 'is_labeled']:
+                    labels.append([f's{lab}' for lab in self.data.label_dict[li]])
+                else:
+                    labels.append(None)
+            nsi = 1.0 - self.supervision_influence
+            weights = [nsi if lab is None else self.supervision_influence for lab in labels]
+            labels = [self.add_boundary_labels(lab, hmm) if lab is not None else None for lab in labels]
+            hmm.fit(X, weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi')
+        elif not any(self.data.manual_table.is_labeled):
+            # Case 3: unsupervised --> just train
+            hmm.fit(X, use_pseudocount=True, algorithm='viterbi', max_iterations=100)
         return hmm
 
     def add_boundary_labels(self, labels, hmm):

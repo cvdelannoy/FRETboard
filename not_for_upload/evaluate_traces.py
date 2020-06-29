@@ -184,6 +184,7 @@ loader_fun = dict(matlab=matlab_load_fun, fretboard=fretboard_load_fun)[args.man
 
 nb_classes = len(args.target_states) + 1
 acc_list = []
+acc_df = pd.DataFrame(0, columns=['correct', 'total'], index=args.categories)
 total_pts = 0
 correct_pts = 0
 max_state = 0
@@ -196,8 +197,9 @@ for fb in fb_files:
         elif len(cat) > 1: raise ValueError(f'trace {fb} falls in multiple categories, redefine categories')
         cat = cat[0]
         fb_base = basename(fb)
-        if fb_base not in manual_dict: continue
-        dat_df = pd.read_csv(fb, sep='\t')#.drop('label', axis=1)
+        if fb_base not in manual_dict: continue  # skip if no ground truth file available
+        dat_df = pd.read_csv(fb, sep='\t')
+        if not dat_df.label.isnull().all(): continue  # skip if read was used as labeled example
 
         # load manual labels
         manual_df = loader_fun(manual_dict[fb_base])
@@ -307,6 +309,9 @@ for fb in fb_files:
         total_pts += dat_df.shape[0]
         correct_pts += correct
 
+        acc_df.loc[cat, 'correct'] = acc_df.loc[cat, 'correct'] + correct
+        acc_df.loc[cat, 'total'] = acc_df.loc[cat, 'total'] + dat_df.shape[0]
+
         # plot trace
         plot_dict = {
             'ylabel': 'I',
@@ -320,10 +325,10 @@ for fb in fb_files:
         plt.close()
     # except:
     #     continue
-
-
-transition_df.index = [str(idx[0]) + str(idx[1]) for idx in transition_df.index.to_flat_index()]
+transition_df.index = [f'{str(idx[0])}_{str(idx[1])}' for idx in transition_df.index.to_flat_index()]
 plt.rcParams.update({'font.size': 15})  # smaller text for summary plots
+acc_df.loc[:, 'accuracy'] = acc_df.correct / acc_df.total
+acc_df.to_csv(f'{summary_dir}/accuracy_per_category.tsv', sep='\t')
 
 # Plot transition density plots
 efret_means = {}  # note actual label-based!
@@ -362,7 +367,9 @@ confusion_df.loc[:, 'recall'] = confusion_df.tp / (confusion_df.tp + confusion_d
 confusion_df = confusion_df.rename_axis(['category', 'state']).reset_index()
 confusion_df.sort_values(['category', 'state'], inplace=True)
 confusion_df.to_csv(f'{summary_dir}/confusion.tsv', header=True, index=True, sep='\t')
-pr = sns.scatterplot(x='recall', y='precision', style='state', hue='category', data=confusion_df)
+pr = sns.scatterplot(x='recall', y='precision', style='state', hue='category',
+                     markers=('o', 'v', '^', '<', '>', '8', 's', 'p', '*', 'h', 'H', 'D', 'd', 'P', 'X'),
+                     data=confusion_df)
 # pr.legend_.remove()
 plt.xlim(0, 1)
 plt.ylim(0, 1)
@@ -409,7 +416,7 @@ if tr_files:
         tr_df_list.append(tr_cur_df)
     tr_df = pd.concat(tr_df_list)
     target_states_list = np.array(args.target_states + [1], dtype=str)
-    tr_df = tr_df.loc[tr_df.transition.apply(lambda x: np.all(np.in1d(list(str(x)), target_states_list))), :]
+    tr_df = tr_df.loc[tr_df.transition.apply(lambda x: np.all(np.in1d(list(x.split('_')), target_states_list))), :]
 
     tr_df.loc[:, 'transition'] = tr_df.transition.astype(str)
     tr_df.sort_values(['category', 'transition'], inplace=True)

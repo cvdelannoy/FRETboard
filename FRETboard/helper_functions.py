@@ -80,8 +80,11 @@ def multi_joint_plot(col_x, col_y, col_k, df, scatter_alpha=.5, palette='Blues')
         df_group = df.loc[df.loc[:, col_k] == ul, :]
         color = colors[ui]
         g.plot_joint(colored_scatter(df_group[col_x], df_group[col_y], color))
-        sns.distplot(df_group[col_x].values, ax=g.ax_marg_x, color=color, hist=False)
-        sns.distplot(df_group[col_y].values,ax=g.ax_marg_y, color=color, vertical=True, hist=False)
+        try:
+            sns.distplot(df_group[col_x].values, ax=g.ax_marg_x, color=color, hist=False)
+            sns.distplot(df_group[col_y].values,ax=g.ax_marg_y, color=color, vertical=True, hist=False)
+        except:
+            print('Cannot plot distributions in scatterplot due to statsmodels bug')
     # # Do also global Hist
     # sns.distplot(df[col_x].values, ax=g.ax_marg_x, color='grey')
     # sns.distplot(df[col_y].values.ravel(), ax=g.ax_marg_y, color='grey', vertical=True)

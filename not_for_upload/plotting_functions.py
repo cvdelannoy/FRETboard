@@ -50,6 +50,13 @@ def plot_trace(data_dicts, nb_classes, time, axes=None, states_colors=None):
     for pid, cdd in enumerate(data_dicts):
         if cdd['data'].ndim < 2:
             cdd['data'] = np.expand_dims(cdd['data'], -1)
+
+        if cdd.get('label') is not None:
+            vrange = cdd.get('ylim', (cdd['data'].min(), cdd['data'].max()))
+            plot_dict[pid].pcolorfast((0, time.max()), vrange, cdd['label'].reshape(1,-1),
+                                      vmin=1, vmax=nb_classes,
+                                      cmap=LinearSegmentedColormap.from_list('custom', states_colors),
+                                      alpha=1)
         if pid == len(data_dicts)-1:
             plot_dict[pid].set(ylabel=cdd['ylabel'], xlabel=cdd['xlabel'])
         else:
@@ -60,27 +67,29 @@ def plot_trace(data_dicts, nb_classes, time, axes=None, states_colors=None):
             plot_dict[pid].plot(time, cdd['data'][:, n], linewidth=0.5, color=cdd['colors'][n])
             if cdd.get('ylim', False):
                 plot_dict[pid].set_ylim(cdd['ylim'])
-        if cdd.get('label') is not None:
-            if cdd['label'].ndim < 2:
-                cdd['label'] = np.expand_dims(cdd['label'], -1)
-            nb_colbars = cdd['label'].shape[1]
-            for n in range(nb_colbars):
-                if n == 0:
-                    bw = (plot_dict[pid].get_ylim()[1] - plot_dict[pid].get_ylim()[0]) * 0.3
-                    spacing = bw * 0.1
-                    cb_vrange = [cdd['data'].min() - bw, cdd['data'].min()]
-                    colbar_width = cb_vrange[1] - cb_vrange[0]
-                else:
-                    cb_bottom = cb_vrange[0]
-                    cb_vrange = [cb_bottom - spacing, cb_bottom - colbar_width - spacing]
-                plot_dict[pid].pcolorfast((0, time.max()), cb_vrange, cdd['label'][:, n].reshape(1,-1),
-                                          vmin=1, vmax=nb_classes,
-                                          cmap=LinearSegmentedColormap.from_list('custom', states_colors),
-                                          alpha=1)
+        # if cdd.get('label') is not None:
+        #     if cdd['label'].ndim < 2:
+        #         cdd['label'] = np.expand_dims(cdd['label'], -1)
+        #     nb_colbars = cdd['label'].shape[1]
+        #     for n in range(nb_colbars):
+        #         if n == 0:
+        #             bw = (plot_dict[pid].get_ylim()[1] - plot_dict[pid].get_ylim()[0]) * 0.3
+        #             spacing = bw * 0.1
+        #             cb_vrange = [cdd['data'].min() - bw, cdd['data'].min()]
+        #             colbar_width = cb_vrange[1] - cb_vrange[0]
+        #         else:
+        #             cb_bottom = cb_vrange[0]
+        #             cb_vrange = [cb_bottom - spacing, cb_bottom - colbar_width - spacing]
+        #         plot_dict[pid].pcolorfast((0, time.max()), cb_vrange, cdd['label'][:, n].reshape(1,-1),
+        #                                   vmin=1, vmax=nb_classes,
+        #                                   cmap=LinearSegmentedColormap.from_list('custom', states_colors),
+        #                                   alpha=1)
     plt.tight_layout()
 
 def plot_recall_precision(confusion_df, ax):
-    pr = sns.scatterplot(x='recall', y='precision', style='state', hue='category', data=confusion_df, ax=ax, s=100)
+    pr = sns.scatterplot(x='recall', y='precision', style='state', hue='category',
+                         markers=('o', 'v', '^', '<', '>', '8', 's', 'p', '*', 'h', 'H', 'D', 'd', 'P', 'X'),
+                         data=confusion_df, ax=ax, s=100)
     pr.legend_.remove()
     # categories = confusion_df.category.sort_values().to_numpy()
     # for _, tup in confusion_df.iterrows():
@@ -108,10 +117,12 @@ def plot_transition_bar(transition_df, yerr, ax):
     ax.set_ylim(bottom=0)
 
 def plot_kde(kde_df, eventstats_df, target_states, ax):
-    states_colors = ['#ff7f00', '#377eb8'][:len(target_states)]  # orange blue (http://colorbrewer2.org/#type=qualitative&scheme=Set1&n=5)
+    states_colors = sns.color_palette(None, 10)
+    # states_colors = ['#ff7f00', '#377eb8'][:len(target_states)]  # orange blue (http://colorbrewer2.org/#type=qualitative&scheme=Set1&n=5)
+
     for tsi, ts in enumerate(target_states):
         sns.kdeplot(kde_df.loc[kde_df.label == ts, 'E_FRET'], ax=ax, color=states_colors[tsi], legend=False)
-        sns.kdeplot(eventstats_df.loc[eventstats_df.label == ts, 'E_FRET'], ax=ax, color=states_colors[tsi],
+        sns.kdeplot(eventstats_df.loc[eventstats_df.label == ts, 'E_FRET'], ax=ax, color='black',
                     legend=False, linestyle='--')
     ax.set_xlabel('$E_{FRET}$')
     ax.set_ylabel('')

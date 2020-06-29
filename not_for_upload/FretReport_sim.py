@@ -136,7 +136,7 @@ class FretReport(object):
 
         # make df for csv file
         state_list = [str(nb + 1) for nb in range(self.classifier.nb_states)]
-        transition_list = [''.join(it) for it in itertools.permutations(state_list, 2)]
+        transition_list = ['_'.join(it) for it in itertools.permutations(state_list, 2)]
         msk = np.invert(np.eye(self.classifier.nb_states, dtype=bool))
         csv_df = pd.DataFrame({'rate': tm_vec[msk],
                                'low_bound': ci_vecs[:, :, 0][msk],
