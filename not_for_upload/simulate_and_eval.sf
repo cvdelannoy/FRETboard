@@ -16,9 +16,9 @@ for arg in ('in_dir', 'out_dir', 'algos'):
 # Parse arguments
 in_dir = os.path.abspath(config['in_dir']) + '/'
 dir_list = [in_dir + dr for dr in list(os.walk(in_dir))[0][1]]
-basedir_list = [re.search('[^/]+$', dn).group(0) for dn in dir_list]
+basedir_list = sorted([re.search('[^/]+$', dn).group(0) for dn in dir_list])
 params_dict = {}
-for bdn, dn in zip(basedir_list, dir_list):
+for dn in dir_list:
 	if 'params.txt' not in os.listdir(dn): raise ValueError(f'Add a params file in every dir! Missing in {dn}')
 
 out_dir = os.path.abspath(config['out_dir']) + '/'

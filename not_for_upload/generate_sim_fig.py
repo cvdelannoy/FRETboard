@@ -35,8 +35,8 @@ transitions_tsv = [ev +'/summary_stats/transitions.tsv' for ev in args.eval_dirs
 # assert len(confusion_tsv) == len(eventstats_tsv) == len(transitions_tsv) == len(cat_names)
 
 nb_plots = len(confusion_tsv)
-fig = plt.figure(constrained_layout=False, figsize=(16/2.54 * 3, 40/2.54))
-gs = gridspec.GridSpec(3, nb_plots, figure=fig, wspace=0.2, hspace=0.13)
+fig = plt.figure(constrained_layout=False, figsize=(48/2.54, 40/2.54))
+gs = gridspec.GridSpec(3, nb_plots, figure=fig, wspace=0.2, hspace=0.30)
 cat_str = '|'.join(args.cat_names)
 
 # confusion_dict = {re.search(cat_str, fn).group(0): pd.read_csv(fn, sep='\t', header=0) for fn in confusion_tsv}
@@ -46,6 +46,7 @@ transitions_dict = {re.search(cat_str, fn).group(0): [pd.read_csv(fn, sep='\t', 
 kde_dict = {re.search(cat_str, fn).group(0): pd.read_csv(fn, sep='\t', header=0) for fn in kde_tsv}
 
 plot_types = ['kde', 'transition']
+nb_cats = len(args.cat_names)
 for cidx, cat in enumerate(args.cat_names):
 
     # plot
@@ -65,5 +66,8 @@ for cidx, cat in enumerate(args.cat_names):
     if cidx == 0:
         ax_dict['transition'].set_ylabel('Transitions ($s^{-1}$)')
         ax_dict['kde'].set_ylabel('Count density')
-plt.tight_layout()
+    if cidx ==  nb_cats // 2:
+        ax_dict['transition'].set_xlabel('Transition')
+        ax_dict['kde'].set_xlabel('$E_{FRET}$')
+# plt.tight_layout()
 fig.savefig(args.out_svg)

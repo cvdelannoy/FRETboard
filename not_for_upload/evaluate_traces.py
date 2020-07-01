@@ -1,5 +1,5 @@
 import argparse
-import os, fnmatch, warnings
+import os, fnmatch, sys
 from matplotlib.colors import LinearSegmentedColormap
 from copy import copy
 from os.path import basename, splitext, abspath
@@ -16,6 +16,10 @@ import pickle
 from itertools import permutations
 import warnings
 from scipy.linalg import logm
+from matplotlib.ticker import MaxNLocator
+__location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
+sys.path.append(__location__)
+from plotting_functions import plot_transition_bubble
 
 mpl.rcParams['figure.dpi'] = 400
 
@@ -436,15 +440,26 @@ if tr_files:
         yerr_list.append(np.expand_dims(np.vstack((sdf.rate - sdf.low_bound, sdf.high_bound - sdf.rate)), 0))
     yerr = np.vstack(yerr_list)
     transition_piv_df = transition_df.pivot(index='transition', columns='category', values='rate')
+    # move 'actual' column to last
     colnames = list(transition_piv_df.columns)
     colnames.remove('actual'); colnames += ['actual']
-    transition_piv_df[colnames].plot(kind='bar', yerr=yerr, legend=False)
+    transition_piv_df = transition_piv_df.loc[:, colnames]
+    transition_piv_df.plot(kind='bar', yerr=yerr, legend=False)
     # lgd = plt.gca().legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
     # plt.savefig(f'{summary_dir}/transition_rate.svg', bbox_extra_artists=(lgd, ), bbox_inches='tight')
     transition_piv_df.to_csv(f'{summary_dir}/transitions.tsv', sep='\t', index=True, header=True)
     np.save(f'{summary_dir}/transitions.tsv.npy', yerr)
     plt.savefig(f'{summary_dir}/transition_rate.svg', bbox_inches='tight')
     plt.clf()
+
+    # tr bubble plot
+    transition_piv_df.index = pd.MultiIndex.from_tuples([ [int(it) for it in idx.split('_')]
+                                                          for idx in transition_piv_df.index], names=['from', 'to'])
+    transition_piv_df.reset_index(inplace=True)
+
+    for cat in args.categories:
+        fig = plot_transition_bubble(transition_piv_df, cat)
+        fig.savefig(f'{summary_dir}/transition_bubbleplot_{cat}.svg')
 
 # plot correct E_FRET histograms
 eventstats_df = pd.concat(eventstats_list)
