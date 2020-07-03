@@ -393,19 +393,21 @@ if tr_files:
     transition_df.loc[:, 'rate'] = 0
     tb = transition_df.nb_transitions != 0
 
+    # transition_df.loc[tb, 'rate'] = transition_df.loc[tb, 'nb_transitions'] / transition_df.loc[tb, 'nb_samples'] * framerate
+
     # correct discrete --> continuous
-    # tm = np.zeros((nb_classes, nb_classes))
-    # for ti, tup in transition_df.iterrows():
-    #     tm[int(ti[0]) - 1, int(ti[1]) - 1] = tup.nb_transitions / tup.nb_samples
-    # for i in range(nb_classes):
-    #     tm[i,i] = 1 - np.sum(tm[i,:])
+    tm = np.zeros((nb_classes, nb_classes))
+    for ti, tup in transition_df.iterrows():
+        s1, s2 = [int(tii) - 1 for tii in ti.split('_')]
+        tm[s1, s2] = tup.nb_transitions / tup.nb_samples
+    for i in range(nb_classes):
+        tm[i,i] = 1 - np.sum(tm[i,:])
 
-    # tm_rate = np.eye(nb_classes) + framerate * logm(tm)
-    # for tdi in transition_df.index:
-    #     i1, i2 = list(tdi)
-    #     transition_df.loc[tdi, 'rate'] = tm_rate[int(i1) - 1, int(i2) - 1]
-
-    transition_df.loc[tb, 'rate'] = transition_df.loc[tb, 'nb_transitions'] / transition_df.loc[tb, 'nb_samples'] * framerate
+    tm_rate = np.eye(nb_classes) + framerate * logm(tm)
+    tm_rate[tm_rate<0] = 0.0
+    for tdi in transition_df.index:
+        i1, i2 = [int(ii) for ii in tdi.split('_')]
+        transition_df.loc[tdi, 'rate'] = tm_rate[int(i1) - 1, int(i2) - 1]
 
     # Loaded from FRETboard
     tr_df_list = []
@@ -460,6 +462,7 @@ if tr_files:
     for cat in args.categories:
         fig = plot_transition_bubble(transition_piv_df, cat)
         fig.savefig(f'{summary_dir}/transition_bubbleplot_{cat}.svg')
+        plt.close()
 
 # plot correct E_FRET histograms
 eventstats_df = pd.concat(eventstats_list)

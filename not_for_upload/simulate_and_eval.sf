@@ -24,6 +24,7 @@ for dn in dir_list:
 out_dir = os.path.abspath(config['out_dir']) + '/'
 eval_dir_list = [f'{out_dir}/{bd}_eval/' for bd in basedir_list]
 
+nb_manual = int(config.get('nb_manual', 5))
 algos=config['algos']
 if type(config['algos']) is list:
 	algos = config['algos']
@@ -52,7 +53,7 @@ rule simulate_fb:
 				--in-dats {input.in_dir}/dats_unlabeled \
 				--params-file "{workflow.basedir}/algo_configs/{wildcards.algo}.yml" \
 				--label-dats {input.in_dir}/dats_labeled \
-				--nb-manual 5 \
+				--nb-manual {nb_manual} \
 				--out-dir {output.sim_dir}
 		'''
 

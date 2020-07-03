@@ -1,6 +1,7 @@
 import os
 import io
 import numpy as np
+from scipy.linalg import logm
 
 import matplotlib
 matplotlib.use('Agg')
@@ -127,12 +128,13 @@ class FretReport(object):
         tm_vec, ci_vecs = self.classifier.get_data_tm(self.tr_dict, self.out_labels,
                                                       self.bootstrap_size)
 
-        # translate prob to transition rate
-        for s in np.arange(self.classifier.nb_states):
-            tm_vec[s, s] -= 1
-            ci_vecs[s, s, :] -= 1
-        tm_vec *= self.frame_rate
-        ci_vecs *= self.frame_rate
+        # # Correct to continous transition rate
+        # tm_vec = np.eye(self.classifier.nb_states) + self.frame_rate * logm(tm_vec)
+        # for s in np.arange(self.classifier.nb_states):
+        #     tm_vec[s, s] -= 1
+        #     ci_vecs[s, s, :] -= 1
+        # # tm_vec *= self.frame_rate
+        # # ci_vecs *= self.frame_rate
 
         # make df for csv file
         state_list = [str(nb + 1) for nb in range(self.classifier.nb_states)]

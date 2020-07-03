@@ -5,7 +5,8 @@ from random import choices
 import itertools
 from itertools import permutations
 import yaml
-from FRETboard.helper_functions import numeric_timestamp, get_edge_labels
+from FRETboard.helper_functions import numeric_timestamp, get_edge_labels, discrete2continuous
+
 
 
 def parallel_predict(tup_list, mod):
@@ -27,6 +28,7 @@ class Classifier(object):
         :param buffer: int, size of buffer area around regular classes [required if gui not given]
         """
         self.trained = None
+        self.framerate = None
         self.timestamp = numeric_timestamp()
         self.nb_threads = kwargs.get('nb_threads', 8)
         self.feature_list = kwargs['features']
@@ -50,6 +52,9 @@ class Classifier(object):
         self.timestamp = numeric_timestamp()
 
     def get_trained_hmm(self, data_dict, bootstrap=False):
+        if self.framerate is None:
+            self.framerate = 1 / np.concatenate([data_dict[tr].time.iloc[1:].to_numpy() -
+                                                 data_dict[tr].time.iloc[:-1].to_numpy() for tr in data_dict]).mean()
 
         # Make selection of tuples, if bootstrapping (otherwise use all data)
         if bootstrap:
@@ -307,8 +312,11 @@ class Classifier(object):
         Calculate bootstrapped confidence intervals on data-derived transition matrix values
         :return:
         """
+        state_order_dict = {state.name: idx for idx, state in enumerate(self.trained.states)}
+
         # actual value
-        actual_tm = self.tm_from_seq(out_labels)
+        actual_tm = self.tm_from_hmm(self.trained, state_order_dict)
+        # actual_tm = discrete2continuous(self.tm_from_seq(out_labels), self.framerate)
 
         # CIs
         tm_array = []
@@ -322,8 +330,11 @@ class Classifier(object):
         trace_dict = {tr: trace_dict[tr] for tr in trace_dict if tr in idx_list}
         for _ in range(nb_bootstrap_iters):
             hmm = self.get_trained_hmm(trace_dict, bootstrap=True)
-            seqs = [self.predict(trace_dict[idx], hmm)[0] for idx in idx_list]
-            tm_array.append(self.tm_from_seq(seqs))
+            tm = self.tm_from_hmm(hmm, state_order_dict)
+            tm_array.append(tm)
+            # seqs = [self.predict(trace_dict[idx], hmm)[0] for idx in idx_list]
+            # cur_tm = discrete2continuous(self.tm_from_seq(seqs), self.framerate)
+            # tm_array.append(cur_tm)
         tm_mat = np.stack(tm_array, axis=-1)
         sd_mat = np.std(tm_mat, axis=-1)
         mu_mat = np.mean(tm_mat, axis=-1)
@@ -331,6 +342,16 @@ class Classifier(object):
         ci_mat[:, :, 0] -= sd_mat * 2
         ci_mat[:, :, 1] += sd_mat * 2
         return actual_tm, ci_mat
+
+    def tm_from_hmm(self, hmm, state_order_dict):
+        full_tm = hmm.dense_transition_matrix()
+        tm = np.zeros([self.nb_states, self.nb_states])
+        state_list = list(range(self.nb_states))
+        for s1, s2 in permutations(state_list, 2):
+            tm[s1, s2] = full_tm[state_order_dict[f's{s1}'], state_order_dict[f'e{s1}{s2}_0']]
+        for s in state_list:
+            tm[s,s] = full_tm[state_order_dict[f's{s}'], state_order_dict[f's{s}']]
+        return discrete2continuous(tm, self.framerate)
 
     def tm_from_seq(self, seq_list):
         tm_out = np.zeros([self.nb_states, self.nb_states], dtype=int)

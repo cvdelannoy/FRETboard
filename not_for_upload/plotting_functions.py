@@ -131,6 +131,9 @@ def plot_transition_bar(transition_df, yerr, ax):
     ax.set_ylim(bottom=0)
 
 def plot_transition_bubble(tdf, cat):
+    tdf = tdf.copy()
+    tdf.loc[tdf.loc[:, cat] < 0.001, cat] = 0
+    tdf.loc[tdf.loc[:, 'actual'] < 0.001, 'actual'] = 0
     pts_scaling = 7500
     fig = plt.figure()
 
@@ -159,8 +162,8 @@ def plot_transition_bubble(tdf, cat):
 
     # make legend, from: https://blogs.oii.ox.ac.uk/bright/2014/08/12/point-size-legends-in-matplotlib-and-basemap-plots/
     max_marker_size = tdf.loc[:, [cat, 'actual']].max().max()
-    labels_raw = np.arange(0.05, 0.5, 0.05)
-    labels = [0.05] + [labels_raw[li].round(2) for li in range(1, len(labels_raw)) if
+    labels_raw = np.arange(0.01, 0.2, 0.01)
+    labels = [0.01] + [labels_raw[li].round(2) for li in range(1, len(labels_raw)) if
                        labels_raw[li - 1] <= max_marker_size]
     lab_obj_list = [plt.scatter([], [], s=l * pts_scaling, edgecolors='none',
                                 color='grey') for l in labels]
