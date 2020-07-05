@@ -2,12 +2,12 @@ import pandas as pd
 import numpy as np
 import pomegranate as pg
 from pomegranate.kmeans import Kmeans
-from random import choices
+from random import choices, sample
 import itertools
 from itertools import permutations
 import yaml
 from FRETboard.helper_functions import numeric_timestamp, discrete2continuous
-
+from datetime import datetime
 
 def parallel_predict(tup_list, mod):
     vit_list = [mod.viterbi(tup) for tup in tup_list]
@@ -57,14 +57,26 @@ class Classifier(object):
             self.framerate = 1 / np.concatenate([data_dict[tr].time.iloc[1:].to_numpy() -
                                                  data_dict[tr].time.iloc[:-1].to_numpy() for tr in data_dict]).mean()
 
-        # Make selection of tuples, if bootstrapping (otherwise use all data)
+        idx_list = list(data_dict)
+        nb_labeled = self.data.manual_table.is_labeled.sum()
+        nb_unlabeled = len(idx_list) - nb_labeled
+        unlabeled_idx = [idx for idx in idx_list if idx not in self.data.manual_table.query('is_labeled').index]
+
+        # Take bootstrapped /subsampled sample
         if bootstrap:
-            idx_list = list(data_dict)
-            nb_labeled = self.data.manual_table.is_labeled.sum()
-            nb_unlabeled = len(idx_list) - nb_labeled
-            unlabeled_idx = [idx for idx in idx_list if idx not in self.data.manual_table.query('is_labeled').index]
-            labeled_seqs = choices(self.data.manual_table.query('is_labeled').index, k=nb_labeled)
-            unlabeled_seqs = choices(unlabeled_idx, k=nb_unlabeled)
+            labeled_seqs = [si for si in self.data.manual_table.query('is_labeled').index if si in data_dict]
+            labeled_seqs = choices(labeled_seqs, k=nb_labeled)
+            if nb_unlabeled <= 100:
+                # bootstrap size m == n
+                unlabeled_seqs = choices(unlabeled_idx, k=nb_unlabeled)
+            else:
+                # subsampling, m = 100
+                unlabeled_seqs = sample(unlabeled_idx, k=100)
+            seq_idx = labeled_seqs + unlabeled_seqs
+            data_dict = {si: data_dict[si] for si in seq_idx}
+        elif nb_unlabeled > 100:
+            labeled_seqs = self.data.manual_table.query('is_labeled').index.to_list()
+            unlabeled_seqs = sample(unlabeled_idx, k=100)
             seq_idx = labeled_seqs + unlabeled_seqs
             data_dict = {si: data_dict[si] for si in seq_idx}
 
@@ -93,9 +105,9 @@ class Classifier(object):
             # nsi = 1 - si
             # weights = [nsi if lab is None else si for lab in labels]
 
-            hmm.fit(X, weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi')
+            hmm.fit(X, weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi', max_iterations=100)
         elif not any(self.data.manual_table.is_labeled):
-            hmm.fit(X, use_pseudocount=True, algorithm='viterbi')
+            hmm.fit(X, use_pseudocount=True, algorithm='viterbi', max_iterations=100)
         return hmm
 
     def get_untrained_hmm(self, data_dict):
@@ -245,19 +257,14 @@ class Classifier(object):
 
         # actual estimate
         actual_tm = self.tm_from_hmm(self.trained, state_order_dict)
-        # actual_tm = discrete2continuous(self.tm_from_seq(out_labels), self.framerate)
 
         # CIs
         tm_array = []
-        invalid_indices = [idx for idx, tup in self.data.manual_table.iterrows() if tup.is_labeled or tup.is_junk]
-        valid_indices = [idx for idx in self.data.index_table.index if idx not in invalid_indices]
-        if len(valid_indices) > 100:
-            idx_list = np.random.choice(valid_indices, 100)
-        else:
-            idx_list = valid_indices
-        idx_list = np.concatenate((idx_list, self.data.manual_table.query('is_labeled').index), axis=0)
+        invalid_indices = [idx for idx, tup in self.data.manual_table.iterrows() if tup.is_junk]
+        idx_list = [idx for idx in self.data.index_table.index if idx not in invalid_indices]
         trace_dict = {tr: trace_dict[tr] for tr in trace_dict if tr in idx_list}
-        for _ in range(nb_bootstrap_iters):
+        for n in range(nb_bootstrap_iters):
+            print(f'{datetime.now()}: bootstrap round {n}')
             hmm = self.get_trained_hmm(trace_dict, bootstrap=True)
             tm = self.tm_from_hmm(hmm, state_order_dict)
             tm_array.append(tm)

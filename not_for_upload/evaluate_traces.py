@@ -238,6 +238,8 @@ for fb in fb_files:
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
             for trl in transition_list:
+                if trl[0] == 3 and trl[1] == 2:
+                    cp=1
                 transition_df.loc[trl, 'nb_transitions'] += 1
             for ul in dat_df.manual.unique():
                 transition_df.loc[(ul,), 'nb_samples'] = transition_df.loc[(ul,), 'nb_samples'].to_numpy()[0] + np.sum(dat_df.manual == ul)

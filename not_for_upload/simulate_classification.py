@@ -6,6 +6,7 @@ import re
 import numpy as np
 import pandas as pd
 import importlib
+from datetime import datetime
 import argparse
 from not_for_upload.helper_functions import parse_output_dir, parse_input_path
 from os.path import basename
@@ -69,10 +70,11 @@ if args.supervision_influence is not None:
 data = MainTable(eps=params_dict['DBSCAN_eps'], l=0, d=0, gamma=1, alex=0, dat_list=dat_list)
 
 # Initialize classifier, train unsupervised
+print(f'{datetime.now()}: start initial training (unsupervised)')
 Classifier = importlib.import_module('FRETboard.algorithms.' + params_dict['algo']).Classifier
 cl = Classifier(data=data, nb_states=args.nb_states, **params_dict)
 cl.train(data_dict=data.trace_dict, supervision_influence=params_dict['supervision_influence'])
-
+print(f'{datetime.now()}: initial training done')
 for idx in data.index_table.index:
     data.trace_dict[idx].loc[:, 'predicted'], data.index_table.loc[idx, 'logprob'] = cl.predict(data.trace_dict[idx])
 for n in range(args.nb_manual):
@@ -88,6 +90,7 @@ for n in range(args.nb_manual):
         min_lp_idx = unlabeled_index_table.logprob.idxmin()
     data.label_dict[min_lp_idx] = pd.read_csv(label_dict[min_lp_idx], sep='\t').label.to_numpy(dtype=int) - 1
     data.manual_table.loc[min_lp_idx] = {'is_labeled': True, 'is_junk': False}
+    print(f'{datetime.now()}: start manual round {n}')
     try:
         cl.train(data.trace_dict, supervision_influence=params_dict['supervision_influence'])
     except:
@@ -95,6 +98,7 @@ for n in range(args.nb_manual):
         print(f'label_file dims: {data.label_dict[min_lp_idx].shape}')
         print(f'trace_file dims: {data.trace_dict[min_lp_idx].shape}')
         raise
+    print(f'{datetime.now()}: finished manual round {n}')
 
     # Repeat prediction
     for idx in data.index_table.index:

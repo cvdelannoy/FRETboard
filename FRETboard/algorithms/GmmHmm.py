@@ -9,7 +9,6 @@ import BoundaryAwareHmm
 class Classifier(BoundaryAwareHmm.Classifier):
 
     def get_main_dist(self, X):
-        nd=5
         if X.size == 0:
             # No prior model and no examples assigned --> initialize dummy with 0 and diagonal cov matrix
             dist_list = []
@@ -25,7 +24,7 @@ class Classifier(BoundaryAwareHmm.Classifier):
 
     def select_distribution(self, X):
         bic_list, dist_list = [], []
-        for nc in range(1, min(10, X.shape[0])):
+        for nc in range(1, min(5, X.shape[0])):
             if nc == 1:
                 dist = pg.IndependentComponentsDistribution.from_samples(X,
                     distributions=[pg.NormalDistribution for _ in range(len(self.feature_list))])
@@ -34,7 +33,7 @@ class Classifier(BoundaryAwareHmm.Classifier):
             else:
                 dist = pg.GeneralMixtureModel.from_samples(
                     [pg.NormalDistribution for _ in range(len(self.feature_list))],
-                    n_components=nc, X=X, n_init=10)
+                    n_components=nc, X=X, n_init=3)
                 p = dist.log_probability(X).sum()
                 k = (len(self.feature_list) * 2 + 1) * nc
             dist_list.append(dist)

@@ -130,7 +130,7 @@ def plot_transition_bar(transition_df, yerr, ax):
     ax.xaxis.set_tick_params(rotation='default')
     ax.set_ylim(bottom=0)
 
-def plot_transition_bubble(tdf, cat):
+def plot_transition_bubble(tdf, cat, ax=None):
     tdf = tdf.copy()
     tdf.loc[tdf.loc[:, cat] < 0.001, cat] = 0
     tdf.loc[tdf.loc[:, 'actual'] < 0.001, 'actual'] = 0

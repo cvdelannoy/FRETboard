@@ -125,6 +125,7 @@ class FretReport(object):
                                    self.tr_dict[tr].time.iloc[:-1].to_numpy() for tr in self.tr_dict]).mean()
 
     def get_data_tm(self):
+        print('Starting bootstrapping')
         tm_vec, ci_vecs = self.classifier.get_data_tm(self.tr_dict, self.out_labels,
                                                       self.bootstrap_size)
 

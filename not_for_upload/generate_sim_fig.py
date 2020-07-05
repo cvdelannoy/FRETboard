@@ -7,7 +7,7 @@ import os
 import numpy as np
 import seaborn as sns
 import matplotlib as mpl
-from plotting_functions import plot_recall_precision, plot_coverage_violin, plot_transition_bar, plot_kde
+from plotting_functions import plot_transition_bar, plot_kde, plot_transition_bubble
 
 font = {'family' : 'normal',
         'size'   : 22}
@@ -58,6 +58,10 @@ for cidx, cat in enumerate(args.cat_names):
                    idx, plot_name in enumerate(plot_types)}
     plot_kde(kde_dict[cat], eventstats_dict[cat], args.target_states, ax_dict['kde'])
     plot_transition_bar(transitions_dict[cat][0], transitions_dict[cat][1], ax_dict['transition'])
+    # if '10_state' in cat:
+    #     plot_transition_bubble(transitions_dict[cat][0], transitions_dict[cat][0].columns[0], ax_dict['transition'])
+    # else:
+    #     plot_transition_bar(transitions_dict[cat][0], transitions_dict[cat][1], ax_dict['transition'])
 
 
     # transitions_dict[cat][0].plot(kind='bar', yerr=transitions_dict[cat][1], legend=False, ax=ax_dict['transition'])
