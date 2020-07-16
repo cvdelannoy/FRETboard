@@ -1,5 +1,7 @@
 import argparse
 import os, fnmatch, sys
+import matplotlib as mpl
+mpl.use('Agg')
 from matplotlib.colors import LinearSegmentedColormap
 from copy import copy
 from os.path import basename, splitext, abspath
@@ -16,6 +18,8 @@ import pickle
 from itertools import permutations
 import warnings
 from scipy.linalg import logm
+from scipy.stats import ttest_ind, ks_2samp, shapiro
+from statsmodels.stats.weightstats import ttost_ind
 from matplotlib.ticker import MaxNLocator
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 sys.path.append(__location__)
@@ -194,6 +198,7 @@ correct_pts = 0
 max_state = 0
 plt.rcParams.update({'font.size': 30})  # large text for trace plots
 efret_dict = {cat:{st: [] for st in args.target_states + [1]} for cat in args.categories}
+efret_pred_dict = {cat:{st: [] for st in args.target_states + [1]} for cat in args.categories}
 for fb in fb_files:
     # try:
         cat = [cat for cat in args.categories if cat in fb]
@@ -212,18 +217,20 @@ for fb in fb_files:
         dat_df.loc[np.invert(np.in1d(dat_df.manual, args.target_states + [1])), 'manual'] = 1
         for lab in dat_df.manual.unique():
             efret_dict[cat][lab].append(dat_df.query(f'manual=={lab}').E_FRET)
-        if args.remove_last_event:
-            ground_state = dat_df.predicted.min()
-            nb_rows = len(dat_df) - 1
-            ground_bool = dat_df.predicted == ground_state
-            state_found = False
-            for gi, gb in enumerate(ground_bool[::-1]):
-                if not gb:
-                    state_found = True
-                    dat_df.loc[nb_rows-gi, 'predicted'] = ground_state.astype(int)
-                elif state_found:
-                    break
-            dat_df.predicted = dat_df.predicted.astype(int)
+        for lab in dat_df.manual.unique():
+            efret_pred_dict[cat][lab].append(dat_df.query(f'predicted=={lab}').E_FRET)
+        # if args.remove_last_event:
+        #     ground_state = dat_df.predicted.min()
+        #     nb_rows = len(dat_df) - 1
+        #     ground_bool = dat_df.predicted == ground_state
+        #     state_found = False
+        #     for gi, gb in enumerate(ground_bool[::-1]):
+        #         if not gb:
+        #             state_found = True
+        #             dat_df.loc[nb_rows-gi, 'predicted'] = ground_state.astype(int)
+        #         elif state_found:
+        #             break
+        #     dat_df.predicted = dat_df.predicted.astype(int)
 
         # Add EFRET
         i_sum = np.sum((dat_df.f_dex_dem, dat_df.f_dex_aem), axis=0)
@@ -338,10 +345,11 @@ acc_df.to_csv(f'{summary_dir}/accuracy_per_category.tsv', sep='\t')
 
 # Plot transition density plots
 efret_means = {}  # note actual label-based!
-for cat in efret_dict:
+for cat in args.categories:
     efret_means[cat] = {}
     for lab in efret_dict[cat]:
-        efret_means[cat][lab] = np.nanmean(np.concatenate(efret_dict[cat][lab]))
+        if len(efret_dict[cat][lab]):
+            efret_means[cat][lab] = np.nanmean(np.concatenate(efret_dict[cat][lab]))
 with open(f'{summary_dir}/means_dict.pkl', 'wb') as fh:
     pickle.dump(efret_means, fh, protocol=pickle.HIGHEST_PROTOCOL)
 
@@ -471,6 +479,10 @@ eventstats_df = pd.concat(eventstats_list)
 eventstats_pred_df = pd.concat(eventstats_pred_list)
 eventstats_pred_df = copy(eventstats_pred_df.loc[np.in1d(eventstats_pred_df.label, args.target_states), :])
 for cat in args.categories:
+    ttest_df = pd.DataFrame(np.nan, columns=['t', 'p_t', 'ks', 'p_ks', 'p_sw_pred', 'p_sw_true', 'nb_events_pred', 'nb_events_true'],
+                            index=pd.MultiIndex.from_product((args.categories, args.target_states), names=['category', 'state']))
+
+
     # for ts in args.target_states:
     #     col = colmap(ts / max(args.target_states))
     #     epdf = eventstats_pred_df.loc[np.logical_and(eventstats_pred_df.label == ts, eventstats_pred_df.category == cat), 'E_FRET']
@@ -483,16 +495,35 @@ for cat in args.categories:
     #     plt.savefig(f'{summary_dir}/event_counts_{cat}_{ts}.svg')
     #     plt.clf()
     for ts in args.target_states:
-        epdf = eventstats_pred_df.loc[np.logical_and(eventstats_pred_df.label == ts, eventstats_pred_df.category == cat), 'E_FRET']
-        edf = eventstats_df.loc[np.logical_and(eventstats_df.label == ts, eventstats_df.category == cat), 'E_FRET']
+        efret_pred_dict[cat][ts] = np.concatenate(efret_pred_dict[cat][ts])
+        efret_dict[cat][ts] = np.concatenate(efret_dict[cat][ts])
+        epdf = efret_pred_dict[cat][ts]
+        edf = efret_dict[cat][ts]
+        # epdf = eventstats_pred_df.loc[np.logical_and(eventstats_pred_df.label == ts, eventstats_pred_df.category == cat), 'E_FRET']
+        # edf = eventstats_df.loc[np.logical_and(eventstats_df.label == ts, eventstats_df.category == cat), 'E_FRET']
         col = colmap(ts / max(args.target_states))
         sns.kdeplot(epdf, color=col, legend=False)
         sns.kdeplot(edf, color=col, linestyle='--', legend=False)
+        ttest_df.loc[(cat, ts), ('nb_events_pred', 'nb_events_true')] = len(epdf), len(edf)
+        if len(edf) and len(epdf):
+            ttest_df.loc[(cat, ts), ('t', 'p_t')] = ttest_ind(epdf, edf)
+            ttest_df.loc[(cat, ts), ('ks', 'p_ks')] = ks_2samp(epdf, edf)
+            ttest_df.loc[(cat, ts), 'ttost_p'] = ttost_ind(epdf, edf, low=-0.025, upp=0.025, usevar='unequal')[0]
+            ttest_df.loc[(cat, ts), 'p_sw_pred'] = shapiro(epdf)[1]
+            ttest_df.loc[(cat, ts), 'p_sw_true'] = shapiro(edf)[1]
+    ttest_df.to_csv(f'{summary_dir}/ttest_results_{cat}.tsv', sep='\t')
     plt.xlabel('$E_{FRET}$')
     plt.ylabel('count')
     plt.savefig(f'{summary_dir}/event_counts_kde_{cat}.svg')
-    eventstats_pred_df.loc[eventstats_pred_df.category == cat, :].to_csv(f'{summary_dir}/event_counts_kde_{cat}.tsv', sep='\t', header=True, index=True)
+    eventstats_pred_df.loc[eventstats_pred_df.category == cat, :].drop('category', axis=1).to_csv(f'{summary_dir}/event_counts_kde_{cat}.tsv', sep='\t', header=True, index=False)
     plt.clf()
+eventstats_df.to_csv(f'{summary_dir}/event_counts_kde_true.tsv', sep='\t', header=True, index=False)
+
+with open(f'{summary_dir}/efret_pred_dict.pkl', 'wb') as fh:
+    pickle.dump(efret_pred_dict, fh, protocol=pickle.HIGHEST_PROTOCOL)
+with open(f'{summary_dir}/efret_dict.pkl', 'wb') as fh:
+    pickle.dump(efret_dict, fh, protocol=pickle.HIGHEST_PROTOCOL)
+
 
 # plot event coverage
 eventstats_df.loc[:, 'coverage'] = eventstats_df.pred_duration / eventstats_df.duration * 100.0

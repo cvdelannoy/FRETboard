@@ -325,7 +325,7 @@ possible, and the error message below
 
     def get_edge_labels(self, labels):
         """
-        Encode transitions between differing states X and Y as strings of shape 'eXY'
+        Encode transitions between differing states X and Y as strings of shape 'eX_Y'
         """
         edge_labels = np.zeros(labels.size, dtype='<U3')
         overhang_right = (self.buffer_slider.value - 1) // 2
@@ -339,7 +339,7 @@ possible, and the error message below
                     edge_labels[li] = cur_edge
                     oh_counter -= 1
             else:
-                cur_edge = f'e{cur_label}{l}'
+                cur_edge = f'e{cur_label}_{l}'
                 edge_labels[li-overhang_left:li+1] = cur_edge
                 cur_label = l
                 oh_counter = overhang_right

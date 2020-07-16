@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import sys
 import threading
 from scipy.stats import norm, mode
+from scipy.linalg import logm
 from math import sqrt
 
 colnames = ['time',
@@ -269,9 +270,9 @@ def get_tuple(fc, eps, l, d, gamma):
 
 def get_edge_labels(labels, buffer_size):
     """
-    Encode transitions between differing states X and Y as strings of shape 'eXY'
+    Encode transitions between differing states X and Y as strings of shape 'eX_Y'
     """
-    edge_labels = np.zeros(labels.size, dtype='<U3')
+    edge_labels = np.zeros(labels.size, dtype='<U6')
     overhang_right = (buffer_size - 1) // 2
     overhang_left = (buffer_size - 1) - overhang_right
     oh_counter = 0
@@ -283,7 +284,7 @@ def get_edge_labels(labels, buffer_size):
                 edge_labels[li] = cur_edge
                 oh_counter -= 1
         else:
-            cur_edge = f'e{cur_label}{l}'
+            cur_edge = f'e{cur_label}_{l}'
             edge_labels[li-overhang_left:li+1] = cur_edge
             cur_label = l
             oh_counter = overhang_right
@@ -309,3 +310,15 @@ def get_ssfret_dist(efret, idx=None):
     if idx is None:
         return mu, sd, srsd, n_points
     return mu, sd, srsd, n_points, idx
+
+def discrete2continuous(tm, framerate):
+    """
+    Convert discrete transition matrix such as output by HMMs to continous transition rates estimates
+    """
+    assert tm.ndim == 2
+    assert tm.shape[0] == tm.shape[1]
+    nb_states = tm.shape[0]
+    rm = np.eye(nb_states) + framerate * logm(tm)
+    rm[rm < 0] = 0.0  # correct small negative values
+    rm[np.eye(nb_states, dtype=bool)] -= 1
+    return rm

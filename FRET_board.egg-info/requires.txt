@@ -1,3 +1,4 @@
+cython==0.29.20
 pandas==1.0.5
 statsmodels==0.11.1
 pomegranate==0.13.3
@@ -9,3 +10,4 @@ seaborn==0.9.0
 scikit-learn==0.21.2
 h5py==2.10.0
 tables==3.6.1
+psutil==5.7.0

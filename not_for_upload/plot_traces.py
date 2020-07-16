@@ -21,7 +21,6 @@ args = parser.parse_args()
 
 dat_df = pd.read_csv(args.tsv, header=0, sep='\t')
 
-
 # Retain indicated stretch
 dat_df = dat_df.loc[dat_df.time >= args.start_pos, :]
 dat_df.time = dat_df.time - dat_df.time.iloc[0]
@@ -33,7 +32,7 @@ if args.nb_states == -1:
 elif args.nb_states > 0:
     nb_states = args.nb_states
 else:
-    raise  ValueError(f'{args.nb_states} is not a valid number of states.')
+    raise ValueError(f'{args.nb_states} is not a valid number of states.')
 
 # states_colors = ['#ff7f00', '#377eb8'][:nb_states] # orange blue (http://colorbrewer2.org/#type=qualitative&scheme=Set1&n=5)
 states_colors = ['#a3a3a3', '#373737'][:nb_states]  # grey shades

@@ -1,13 +1,13 @@
 algo: GmmHmm
 features:
-#  - E_FRET
+  - E_FRET
 #  - E_FRET_sd
-#  - i_sum
-#  - i_sum_sd
+  - i_sum
+  - i_sum_sd
   - f_dex_dem
   - f_dex_aem
   - correlation_coefficient
-DBSCAN_eps: nan
-supervision_influence: 0.9
+DBSCAN_eps: 15
+supervision_influence: 1.0
 buffer_size: 3
 bootstrap_size: 100

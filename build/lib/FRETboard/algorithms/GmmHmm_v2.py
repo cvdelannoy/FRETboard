@@ -167,8 +167,7 @@ class Classifier(object):
             pg_gui_state_dict[sn] = i
         return dists, pg_gui_state_dict
 
-    @staticmethod
-    def get_dist(data_vec):
+    def get_dist(self, data_vec):
         dist_list = []
         for vec in data_vec:
             vec = vec[~np.isnan(vec)]

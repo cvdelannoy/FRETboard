@@ -1,5 +1,7 @@
 import sys
 import os
+import matplotlib as mpl
+mpl.use('Agg')
 __location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 sys.path.append(f'{__location__}/..')
 import re
@@ -49,12 +51,14 @@ parser.add_argument('--store-intermediates', action='store_true',
                     help='Store FRETboard results after every round of training')
 parser.add_argument('--supervision-influence', type=float,
                     help='override supervision influence (lambda) in params file')
+parser.add_argument('--allow-restart', action='store_true',
+                    help='Allow simulation to pick up after crash')
 args = parser.parse_args()
 
 
 dat_list = parse_input_path(args.in_dats, pattern='*.dat')
 label_list = parse_input_path(args.label_dats, pattern='*.dat')
-out_dir = parse_output_dir(args.out_dir, clean=True)
+out_dir = parse_output_dir(args.out_dir, clean=not args.allow_restart)
 
 base_label_list = [basename(lab) for lab in label_list]
 label_dict = {bl: ll for bl, ll in zip(base_label_list, label_list)}
@@ -70,14 +74,30 @@ if args.supervision_influence is not None:
 data = MainTable(eps=params_dict['DBSCAN_eps'], l=0, d=0, gamma=1, alex=0, dat_list=dat_list)
 
 # Initialize classifier, train unsupervised
-print(f'{datetime.now()}: start initial training (unsupervised)')
 Classifier = importlib.import_module('FRETboard.algorithms.' + params_dict['algo']).Classifier
 cl = Classifier(data=data, nb_states=args.nb_states, **params_dict)
-cl.train(data_dict=data.trace_dict, supervision_influence=params_dict['supervision_influence'])
-print(f'{datetime.now()}: initial training done')
+
+# Load previous model if possible
+model_list = [fn for fn in os.listdir(out_dir) if 'model_round' in fn]
+if args.allow_restart and len(model_list):
+    model_dict = {int(re.search('(?<=model_round_)[0-9]+', fn).group(0)): fn for fn in model_list}
+    max_it = max(model_dict)
+    print(f'{datetime.now()}: Loading model {max_it}')
+    with open(f'{out_dir}{model_dict[max_it]}', 'r') as fh: modstr = fh.read()
+    cl.load_params(modstr)
+else:
+    print(f'{datetime.now()}: start initial training (unsupervised)')
+    cl.train(data_dict=data.trace_dict, supervision_influence=params_dict['supervision_influence'])
+    print(f'{datetime.now()}: initial training done')
+    max_it = 0
+
+# First round of predictions
 for idx in data.index_table.index:
     data.trace_dict[idx].loc[:, 'predicted'], data.index_table.loc[idx, 'logprob'] = cl.predict(data.trace_dict[idx])
-for n in range(args.nb_manual):
+
+# semi-supervised rounds
+for n in range(max_it, args.nb_manual):
+    with open(f'{out_dir}/model_round_{n}.txt', 'w') as fh: fh.write(cl.get_params())  # save model
     if args.store_intermediates:
         intermediate_dir = parse_output_dir(f'{out_dir}{n}')
         store_results(cl, data, params_dict, intermediate_dir)
@@ -104,6 +124,8 @@ for n in range(args.nb_manual):
     for idx in data.index_table.index:
         data.trace_dict[idx].loc[:, 'predicted'], data.index_table.loc[idx, 'logprob'] = cl.predict(
             data.trace_dict[idx])
+
+with open(f'{out_dir}/model_end.txt', 'w') as fh: fh.write(cl.get_params())  # save model
 
 # Store results
 if args.store_intermediates:

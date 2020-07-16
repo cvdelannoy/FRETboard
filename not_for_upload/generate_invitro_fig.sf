@@ -1,4 +1,5 @@
 import os, re, yaml
+import pandas as pd
 # sys.path.append(workflow.basedir)
 # from helper_functions import parse_input_path
 
@@ -10,7 +11,7 @@ import os, re, yaml
 #
 
 # Check arguments
-for arg in ('in_dir', 'out_dir', 'algos'):
+for arg in ('in_dir', 'out_dir', 'example_traces'):
 	if arg not in config: raise ValueError(f'Missing required config argument: {arg} ')
 
 # Parse arguments
@@ -19,21 +20,17 @@ dir_list = [in_dir + dr for dr in list(os.walk(in_dir))[0][1]]
 basedir_list = sorted([re.search('[^/]+$', dn).group(0) for dn in dir_list])
 params_dict = {}
 for dn in dir_list:
-	if 'params.txt' not in os.listdir(dn): raise ValueError(f'Add a params file in every dir! Missing in {dn}')
+	if 'params.txt' not in os.listdir(dn): raise ValueError(f'Add a params.txt file in every dir! Missing in {dn}')
+	if 'algo_config.yml' not in os.listdir(dn): raise ValueError(f'Add an algo_config.yml in every dir! Missing in {dn}')
 
 out_dir = os.path.abspath(config['out_dir']) + '/'
 eval_dir_list = [f'{out_dir}/{bd}_eval/' for bd in basedir_list]
 
+
 nb_manual = int(config.get('nb_manual', 5))
-algos=config['algos']
-if type(config['algos']) is list:
-	algos = config['algos']
-else:
-	algos = config['algos'].split(',')
 
 rule target:
 	input:
-		mod_struct_svg=f'{out_dir}mod_struct_eval.svg',
 		sim_fig_svg=f'{out_dir}sim_figure.svg'
 
 rule simulate_fb:
@@ -41,9 +38,8 @@ rule simulate_fb:
 		in_dir=f'{in_dir}{{dir_name}}'
 	params:
 		fb_path=workflow.basedir,
-		algo='{algo}'
 	output:
-		sim_dir=directory(f'{out_dir}{{dir_name}}_fb/{{algo}}')
+		sim_dir=directory(f'{out_dir}{{dir_name}}_fb')
 	shell:
 		''' 
 		source {input.in_dir}/params.txt
@@ -51,7 +47,7 @@ rule simulate_fb:
 		python {workflow.basedir}/simulate_classification.py \
 				--nb-states $nb_states \
 				--in-dats {input.in_dir}/dats_unlabeled \
-				--params-file "{workflow.basedir}/algo_configs/{wildcards.algo}.yml" \
+				--params-file "{input.in_dir}/algo_config.yml" \
 				--label-dats {input.in_dir}/dats_labeled \
 				--nb-manual {nb_manual} \
 				--out-dir {output.sim_dir}
@@ -60,57 +56,40 @@ rule simulate_fb:
 rule eval_fb:
 	input:
 		dat_dir=f'{in_dir}{{dir_name}}',
-		fb_dir=expand(f'{out_dir}{{{{dir_name}}}}_fb/{{al}}', al=algos)
-	params:
-		fb_path=workflow.basedir,
-		fb_dir=f'{out_dir}{{dir_name}}_fb',
-		algos=algos
+		 fb_dir=f'{out_dir}{{dir_name}}_fb'
 	output:
 		eval_dir=directory(f'{out_dir}{{dir_name}}_eval')
 	shell:
 		'''
 		source {input.dat_dir}/params.txt
-		# fa=$(echo {algos} | grep -Po '^\S*')
-		#  nb_states=$(grep -Po '(?<=nb_states: ).+' "{input.dat_dir}/FRETboard_sim_params_${{fa}}.yml" )
 		target_states=
-		for i in $(seq 1 $nb_states); do target_states="${{target_states}} ${{i}}"; done
+		for i in $(seq 2 $nb_states); do target_states="${{target_states}} ${{i}}"; done
+		# cats=$( ls {input.fb_dir} )
 		
 		python {workflow.basedir}/evaluate_traces.py \
-			--fb {params.fb_dir} \
+			--fb {input.fb_dir} \
 			--manual {input.dat_dir}/dats_labeled \
 			--manual-type fretboard \
 			--target-states  $(echo "${{target_states}}") \
-			--categories {algos} \
 			--outdir {output.eval_dir}
 		'''
 
-rule generate_mod_comparison:
-	input:
-		eval_dirs=expand(f'{out_dir}{{dir_name}}_eval', dir_name=basedir_list)
-	output:
-		svg=f'{out_dir}mod_struct_eval.svg'
-	shell:
-		'''
-		python {workflow.basedir}/generate_modstructure_comparison.py \
-			--eval-dirs {input.eval_dirs} \
-			--cat-names {basedir_list} \
-			--out-svg {output.svg}
-		'''
-
-rule generate_sim_figure:
+rule generate_invitro_figure:
 	input:
 		eval_dirs=expand(f'{out_dir}{{dir_name}}_eval', dir_name=basedir_list),
-		dat_dir=expand(f'{in_dir}{{dir_name}}', dir_name=basedir_list)
+		dat_dir=expand(f'{in_dir}{{dir_name}}', dir_name=basedir_list),
+		example_traces_tsv=config['example_traces']
 	output:
-		svg=f'{out_dir}sim_figure.svg'
+		svg=f'{out_dir}invitro_figure.svg'
 	shell:
 		'''
 		# source {input.dat_dir}/params.txt
 		# target_states=
 		# for i in $(seq 2 $nb_states); do target_states="${{target_states}} ${{i}}"; done
-		python {workflow.basedir}/generate_sim_fig.py \
+		python {workflow.basedir}/generate_invitro_fig.py \
 			--eval-dirs {input.eval_dirs} \
 			--target-states 2 3 4 5 6 7 8 9 10 \
 			--cat-names {basedir_list} \
-			--out-svg {output.svg}
+			--out-svg {output.svg} \
+			--example-traces-tsv {input.example_traces_tsv}
 		'''

@@ -1,13 +1,14 @@
-import pandas as pd
 import numpy as np
 import pomegranate as pg
 from pomegranate.kmeans import Kmeans
+from datetime import datetime
 from random import choices, sample
 import itertools
 from itertools import permutations
 import yaml
-from FRETboard.helper_functions import numeric_timestamp, discrete2continuous
-from datetime import datetime
+from FRETboard.helper_functions import numeric_timestamp, get_edge_labels, discrete2continuous
+
+
 
 def parallel_predict(tup_list, mod):
     vit_list = [mod.viterbi(tup) for tup in tup_list]
@@ -32,7 +33,7 @@ class Classifier(object):
         self.timestamp = numeric_timestamp()
         self.nb_threads = kwargs.get('nb_threads', 8)
         self.feature_list = kwargs['features']
-        self.supervision_influence = kwargs['supervision_influence']
+        self.buffer = kwargs.get('buffer', 3)
 
         self.nb_states = nb_states
         self.data = data
@@ -52,7 +53,6 @@ class Classifier(object):
         self.timestamp = numeric_timestamp()
 
     def get_trained_hmm(self, data_dict, bootstrap=False):
-
         if self.framerate is None:
             self.framerate = 1 / np.concatenate([data_dict[tr].time.iloc[1:].to_numpy() -
                                                  data_dict[tr].time.iloc[:-1].to_numpy() for tr in data_dict]).mean()
@@ -82,33 +82,71 @@ class Classifier(object):
 
         # Get initialized hmm (structure + initial parameters)
         hmm = self.get_untrained_hmm(data_dict)
-        X = [data_dict[dd].loc[:, self.feature_list].to_numpy() for dd in data_dict]
-        X = [x.reshape(-1).reshape(-1, len(self.feature_list)) for x in X]
+
         # Fit model on data
         # Case 1: supervised --> perform no training
+        X = [data_dict[dd].loc[:, self.feature_list].to_numpy() for dd in data_dict]
+        X = [x.reshape(-1).reshape(-1, len(self.feature_list)) for x in X]
         if self.supervision_influence < 1.0 and any(self.data.manual_table.is_labeled):
             # Case 2: semi-supervised --> perform training with lambda as weights
             labels = []
             for li in data_dict:
                 if self.data.manual_table.loc[li, 'is_labeled']:
-                    labs = [hmm.start.name] + [f's{lab}' for lab in self.data.label_dict[li]] + [hmm.end.name]
-                    labels.append(labs)
+                    labels.append([f's{lab}' for lab in self.data.label_dict[li]])
                 else:
                     labels.append(None)
-            # labels = [[hmm.start.name] + list(data_dict[dd].labels) + [hmm.end.name]
-            #           if self.data.manual_table.loc[dd, 'is_labeled'] else None for dd in data_dict]
-
             nsi = 1.0 - self.supervision_influence
             weights = [nsi if lab is None else self.supervision_influence for lab in labels]
-            # nb_labeled = self.data.manual_table.is_labeled.sum()
-            # si = nb_labeled / len(self.data.index_table)
-            # nsi = 1 - si
-            # weights = [nsi if lab is None else si for lab in labels]
-
-            hmm.fit(X, weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi', max_iterations=100)
+            labels = [self.add_boundary_labels(lab, hmm) if lab is not None else None for lab in labels]
+            hmm.fit(X, weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi', max_iterations=1000,
+                    # batches_per_epoch=20
+                    )
         elif not any(self.data.manual_table.is_labeled):
-            hmm.fit(X, use_pseudocount=True, algorithm='viterbi', max_iterations=100)
+            # Case 3: unsupervised --> just train
+            hmm.fit(X, use_pseudocount=True, algorithm='viterbi', max_iterations=1000,
+                    # batches_per_epoch=20
+                    )
         return hmm
+
+    def add_boundary_labels(self, labels, hmm):
+        """
+        Add transitional boundary layers when labels switch class
+        """
+        if not len(labels): return None
+        states = hmm.states
+        out_labels = [None] * len(labels)
+
+        overhang_right = self.buffer // 2
+        overhang_left = self.buffer - overhang_right  # -1 for current position
+
+        oh_counter = 0
+        prev_label = None
+        cur_label = labels[0][1:]
+        for li, l in enumerate(labels):
+            if l[1:] == cur_label:
+                if oh_counter != 0:
+                    out_labels[li] = f'e{prev_label}_{cur_label}_{self.buffer - oh_counter}'
+                    oh_counter -= 1
+                else:
+                    try:
+                        out_labels[li] = f's{cur_label}'
+                    except:
+                        print(f'out_labels: {str(out_labels)}')
+                        print(f'li: {li}')
+                        print(f'nb states {len(states)}')
+                        print(f'{str(self.str2num_state_dict)}')
+                        print(f's{cur_label}')
+                        raise
+            else:
+                if overhang_left > li:
+                    # left margin does not allow for full set of border states; do not mark as overhang
+                    out_labels[li] = f's{cur_label}'
+                    continue
+                prev_label = cur_label
+                cur_label = l[1:]
+                oh_counter = overhang_right
+                out_labels[li-overhang_left + 1:li + 1] = [f'e{prev_label}_{cur_label}_{i}' for i in range(overhang_left)]
+        return [hmm.start.name] + out_labels + [hmm.end]
 
     def get_untrained_hmm(self, data_dict):
         """
@@ -116,31 +154,45 @@ class Classifier(object):
         - If all data is unlabeled: finds emission parameters using k-means, transmission and start p are equal
         - If some data is labeled: initial estimate using given classifications
         """
+        hmm = pg.HiddenMarkovModel()
 
         # Get emission distributions & transition probs
-        dists, pg_gui_state_dict = self.get_states(data_dict)
-        trans_df, pstart_dict, pend_dict = self.get_transitions(data_dict)
-        trans_df.replace(0, 0.000001, inplace=True)
-        # for k in tm_dict: tm_dict[k] = max(tm_dict[k], 0.000001)  # reset 0-prob transitions to essentially 0, avoids nans on edges
+        states, edge_states, pg_gui_state_dict = self.get_states(data_dict)
+        tm_dict, pstart_dict, pend_dict = self.get_transitions(data_dict)
+        for k in tm_dict: tm_dict[k] = max(tm_dict[k], 0.000001)  # reset 0-prob transitions to essentially 0, avoids nans on edges
         for k in pstart_dict: pstart_dict[k] = max(pstart_dict[k], 0.000001)
         for k in pend_dict: pend_dict[k] = max(pend_dict[k], 0.000001)
 
-        state_names = list(dists)
-        tm_mat = trans_df.loc[state_names, state_names].to_numpy()
-        hmm = pg.HiddenMarkovModel.from_matrix(transition_probabilities=tm_mat,
-                                               distributions=[dists[sn] for sn in state_names],
-                                               starts=[pstart_dict[sn] for sn in state_names],
-                                               ends=[pend_dict[sn] for sn in state_names],
-                                               state_names=state_names)
+        # Add states, self-transitions, transitions to start/end state
+        for s_name in states:
+            s = states[s_name]
+            hmm.add_state(s)
+            hmm.add_transition(hmm.start, s, pstart_dict[s_name], pseudocount=0)
+            hmm.add_transition(s, hmm.end, pend_dict[s_name], pseudocount=0)
+            hmm.add_transition(s, s, tm_dict[(s_name, s_name)], pseudocount=0)
+
+        # Make connections between states using edge states
+        for es_name in edge_states:
+            es_list = edge_states[es_name][0]
+            s1, s2 = [states[s] for s in edge_states[es_name][1]]
+            for es in es_list: hmm.add_state(es)
+            hmm.add_transition(s1, es_list[0], tm_dict[edge_states[es_name][1]])
+            for i in range(1, self.buffer):
+                hmm.add_transition(es_list[i-1], es_list[i], 1.0, pseudocount=9999999)
+            hmm.add_transition(es_list[-1], s2, 1.0, pseudocount=9999999)
+        hmm.bake()
+
+        state_names = np.array([state.name for state in hmm.states])
         self.pg_gui_state_dict = pg_gui_state_dict
         self.gui_state_dict = {si: pg_gui_state_dict.get(s, None) for si, s in enumerate(state_names)}
         self.str2num_state_dict = {str(si): ni for si, ni in zip(state_names, list(self.gui_state_dict))}
         return hmm
 
-    def get_states(self, data_dict):
+    def get_states(self, data_dict): # todo check
         """
         Return dicts of pomgranate states with initialized normal multivariate distributions
         """
+        left_buffer = self.buffer // 2
         if not any(self.data.manual_table.is_labeled):
             # Estimate emission distributions (same as pomegranate does usually)
             data_vec = np.concatenate([dat.loc[:, self.feature_list].to_numpy() for dat in data_dict.values()], 0)
@@ -150,22 +202,49 @@ class Classifier(object):
                 km_idx = np.arange(data_vec.shape[0])
             km = Kmeans(k=self.nb_states, n_init=1).fit(X=data_vec[km_idx, :])
             y = km.predict(data_vec)
+            def distfun(s1, s2):
+                return self.get_dist(data_vec[np.logical_or(y == s1, y == s2), :].T)
         else:
             # Estimate emission distributions from given class labels
             labeled_indices = self.data.manual_table.query('is_labeled').index
             data_vec = np.concatenate([data_dict[idx].loc[:, self.feature_list].to_numpy()
                                        for idx in data_dict if idx in labeled_indices], 0)
             y = np.concatenate([self.data.label_dict[idx]
-                                       for idx in data_dict if idx in labeled_indices], 0)
+                                for idx in data_dict if idx in labeled_indices], 0)
+            y_edge = np.concatenate([get_edge_labels(self.data.label_dict[idx].astype(int), self.buffer)
+                                     for idx in data_dict if idx in labeled_indices], 0)
+            def distfun(s1, s2):
+                return self.get_dist(data_vec[y_edge == f'e{s1}_{s2}', :].T)
 
-        # Create distributions
+        # Create states
         pg_gui_state_dict = dict()
-        dists = dict()
+        states = dict()
         for i in range(self.nb_states):
             sn = f's{i}'
-            dists[sn] = self.get_dist(data_vec[y == i, :].T)
+            X = data_vec[y == i, :].T.copy()
+            if X.size == 0 and self.trained is not None:
+                states[sn] = self.trained.states[self.str2num_state_dict[sn]]
+            else:
+                states[sn] = pg.State(self.get_main_dist(data_vec[y == i, :].T.copy()), name=f's{i}')
             pg_gui_state_dict[sn] = i
-        return dists, pg_gui_state_dict
+        present_states = list(states)
+
+        # Create edge states
+        edges = list(permutations(range(self.nb_states), 2))
+        # edges = list(permutations(np.unique(y.astype(int)), 2))
+        edge_states = dict()
+        for edge in edges:
+            # if not (f's{edge[0]}' in present_states and f's{edge[0]}' in present_states): continue
+            sn = f'e{edge[0]}_{edge[1]}'
+            estates_list = list()
+            for i in range(self.buffer):
+                estates_list.append(pg.State(distfun(*edge), name=f'e{edge[0]}_{edge[1]}_{i}'))
+                pg_gui_state_dict[f'{sn}_{i}'] = int(edge[0]) if i < left_buffer else int(edge[1])
+            edge_states[sn] = [estates_list, (f's{edge[0]}', f's{edge[1]}')]
+        return states, edge_states, pg_gui_state_dict
+
+    def get_main_dist(self, X):
+        return self.get_dist(X)
 
     @staticmethod
     def get_dist(data_vec):
@@ -182,17 +261,15 @@ class Classifier(object):
         labels_array = [self.data.label_dict[dd]
                         for dd in data_dict if self.data.manual_table.loc[dd, 'is_labeled']]
         nb_seqs = len(labels_array)
-        state_names = [f's{s}' for s in range(self.nb_states)]
-        trans_df = pd.DataFrame([], columns=state_names, index=state_names)
         if nb_seqs == 0:
             # Equal transition probs if no labeled sequences given
             ps_prior = 1.0 / self.nb_states
             t_prior = 1.0 / (self.nb_states + 1)
             pstart_dict = {f's{s}': ps_prior for s in range(self.nb_states)}
             pend_dict = {f's{s}': t_prior for s in range(self.nb_states)}
-            for perm in itertools.product(list(range(self.nb_states)), repeat=2):
-                trans_df.loc[f's{perm[0]}', f's{perm[1]}'] = t_prior
-            return trans_df, pstart_dict, pend_dict
+            out_dict = {(f's{perm[0]}', f's{perm[1]}'): t_prior
+                        for perm in itertools.product(list(range(self.nb_states)), repeat=2)}
+            return out_dict, pstart_dict, pend_dict
 
         # start prob matrix
         start_labels = np.array([tup[0] for tup in labels_array])
@@ -204,6 +281,7 @@ class Classifier(object):
         # transition matrix
         transition_dict = {perm: 0 for perm in list(itertools.product(list(range(self.nb_states)), repeat=2)) +
                            [(st, -1) for st in range(self.nb_states)]}
+        out_dict = dict()
         total_transitions = dict()
 
         # Count occurring transitions
@@ -222,14 +300,14 @@ class Classifier(object):
             if tra[1] == -1:
                 pend_dict[f's{tra[0]}'] = transition_dict[tra] / tt if tt != 0 else 0.0
             else:
-                trans_df.loc[f's{tra[0]}', f's{tra[1]}'] = transition_dict[tra] / tt if tt != 0 else 0.0
-        return trans_df, pstart_dict, pend_dict
+                out_dict[(f's{tra[0]}', f's{tra[1]}')] = transition_dict[tra] / tt if tt != 0 else 0.0
+        return out_dict, pstart_dict, pend_dict
 
     def predict(self, trace_df, hmm=None):
         """
         Predict labels for given indices.
 
-        :param idx: list of indices in self.data.data_clean for which to predict labels
+        :param idx: index [str] in self.data.data_clean for which to predict labels
         :returns:
         pred_list: list of numpy arrays of length len(idx) containing predicted labels
         logprob_list: list of floats of length len(idx) containing posterior log-probabilities
@@ -240,7 +318,6 @@ class Classifier(object):
         state_list = np.vectorize(self.gui_state_dict.__getitem__)([ts[0] for ts in trace_state_list[1:-1]])
         return state_list, logprob
 
-
     def get_matrix(self, df):
         """
         convert pandas dataframe to numpy array of shape [nb_sequences, nb_samples_per_sequence, nb_features]
@@ -250,23 +327,24 @@ class Classifier(object):
     # --- parameters and performance measures ---
     def get_data_tm(self, trace_dict, out_labels, nb_bootstrap_iters):
         """
-        Calculate bootstrapped confidence intervals on data-derived transition matrix values and convert to
-        continous transition rates
+        Calculate bootstrapped confidence intervals on data-derived transition matrix values
+        :return:
         """
         state_order_dict = {state.name: idx for idx, state in enumerate(self.trained.states)}
 
-        # actual estimate
+        # actual value
         actual_tm = self.tm_from_hmm(self.trained, state_order_dict)
 
         # CIs
         tm_array = []
         invalid_indices = [idx for idx, tup in self.data.manual_table.iterrows() if tup.is_junk]
-        idx_list = [idx for idx in self.data.index_table.index if idx not in invalid_indices]
+        idx_list = [idx for idx in trace_dict if idx not in invalid_indices]
         trace_dict = {tr: trace_dict[tr] for tr in trace_dict if tr in idx_list}
         for n in range(nb_bootstrap_iters):
             print(f'{datetime.now()}: bootstrap round {n}')
             hmm = self.get_trained_hmm(trace_dict, bootstrap=True)
             tm = self.tm_from_hmm(hmm, state_order_dict)
+            if tm is None: continue
             tm_array.append(tm)
             # seqs = [self.predict(trace_dict[idx], hmm)[0] for idx in idx_list]
             # cur_tm = discrete2continuous(self.tm_from_seq(seqs), self.framerate)
@@ -280,36 +358,38 @@ class Classifier(object):
         return actual_tm, ci_mat
 
     def tm_from_hmm(self, hmm, state_order_dict):
-        full_tm = hmm.dense_transition_matrix()
-        tm = np.zeros([self.nb_states, self.nb_states])
-        state_list = list(range(self.nb_states))
-        for s1, s2 in permutations(state_list, 2):
-            tm[s1, s2] = full_tm[state_order_dict[f's{s1}'], state_order_dict[f's{s2}']]
-        for s in state_list:
-            tm[s,s] = full_tm[state_order_dict[f's{s}'], state_order_dict[f's{s}']]
+        try:
+            full_tm = hmm.dense_transition_matrix()
+            tm = np.zeros([self.nb_states, self.nb_states])
+            state_list = list(range(self.nb_states))
+            for s1, s2 in permutations(state_list, 2):
+                tm[s1, s2] = full_tm[state_order_dict[f's{s1}'], state_order_dict[f'e{s1}_{s2}_0']]
+            for s in state_list:
+                tm[s,s] = full_tm[state_order_dict[f's{s}'], state_order_dict[f's{s}']]
+        except:
+            return None
         return discrete2continuous(tm, self.framerate)
 
     def tm_from_seq(self, seq_list):
-        # concatenate seqs with stop symbol in between
-        # seq = np.concatenate([seq + [99] for seq in seq_list])
         tm_out = np.zeros([self.nb_states, self.nb_states], dtype=int)
-        # inventory of transitions
         for seq in seq_list:
             for tr in zip(seq[:-1], seq[1:]):
                 tm_out[tr[0], tr[1]] += 1
         return tm_out / np.expand_dims(tm_out.sum(axis=1), -1)
 
     def get_states_mu(self, feature):
+        state_names = [f's{i}' for i in range(self.nb_states)]
         fidx = np.argwhere(feature == np.array(self.feature_list))[0,0]
         mu_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[0]
-                   for state in self.trained.states if not state.is_silent()}
+                   for state in self.trained.states if state.name in state_names}
         mu_list = [mu_dict[mk] for mk in sorted(list(mu_dict))]
         return mu_list
 
     def get_states_sd(self, feature):
+        state_names = [f's{i}' for i in range(self.nb_states)]
         fidx = np.argwhere(feature == np.array(self.feature_list))[0, 0]
         sd_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[1]
-                   for state in self.trained.states if not state.is_silent()}
+                   for state in self.trained.states if state.name in state_names}
         sd_list = [sd_dict[mk] for mk in sorted(list(sd_dict))]
         return sd_list
 
@@ -321,13 +401,13 @@ class Classifier(object):
         str2num_state_dict_txt = yaml.dump(self.str2num_state_dict)
         feature_txt = '\n'.join(self.feature_list)
         div = '\nSTART_NEW_SECTION\n'
-        out_txt = ('VanillaHmm'
+        out_txt = ('EdgeAwareHmm'
                    + div + mod_txt
                    + div + feature_txt
                    + div + gui_state_dict_txt
                    + div + pg_gui_state_dict_txt
                    + div + str2num_state_dict_txt
-                   + div + f'nb_states: {str(self.nb_states)}\ndbscan_epsilon: {self.data.eps}\nsupervision_influence: {self.supervision_influence}')
+                   + div + f'nb_states: {str(self.nb_states)}\nbuffer: {self.buffer}\ndbscan_epsilon: {self.data.eps}')
         return out_txt
 
     def load_params(self, file_contents):
@@ -338,12 +418,8 @@ class Classifier(object):
          pg_gui_state_dict_txt,
          str2num_state_dict_txt,
          misc_txt) = file_contents.split('\nSTART_NEW_SECTION\n')
-        if mod_check != 'VanillaHmm':
-            error_msg = '\nERROR: loaded model parameters are not for a Vanilla HMM!'
-            # if self.gui:
-            #     self.gui.notify(error_msg)
-            #     return
-            # else:
+        if mod_check != 'EdgeAwareHmm':
+            error_msg = '\nERROR: loaded model parameters are not for a substate HMM!'
             raise ValueError(error_msg)
         self.trained = pg.HiddenMarkovModel().from_yaml(model_txt)
         self.feature_list = feature_txt.split('\n')
@@ -353,6 +429,5 @@ class Classifier(object):
         misc_dict = yaml.load(misc_txt, Loader=yaml.SafeLoader)
         if misc_dict['dbscan_epsilon'] == 'nan': misc_dict['dbscan_epsilon'] = np.nan
         self.nb_states = misc_dict['nb_states']
+        self.buffer = misc_dict['buffer']
         self.data.eps = misc_dict['dbscan_epsilon']
-        self.supervision_influence = misc_dict['supervision_influence']
-        self.timestamp = numeric_timestamp()

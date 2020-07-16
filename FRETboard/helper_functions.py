@@ -270,9 +270,9 @@ def get_tuple(fc, eps, l, d, gamma):
 
 def get_edge_labels(labels, buffer_size):
     """
-    Encode transitions between differing states X and Y as strings of shape 'eXY'
+    Encode transitions between differing states X and Y as strings of shape 'eX_Y'
     """
-    edge_labels = np.zeros(labels.size, dtype='<U3')
+    edge_labels = np.zeros(labels.size, dtype='<U6')
     overhang_right = (buffer_size - 1) // 2
     overhang_left = (buffer_size - 1) - overhang_right
     oh_counter = 0
@@ -284,7 +284,7 @@ def get_edge_labels(labels, buffer_size):
                 edge_labels[li] = cur_edge
                 oh_counter -= 1
         else:
-            cur_edge = f'e{cur_label}{l}'
+            cur_edge = f'e{cur_label}_{l}'
             edge_labels[li-overhang_left:li+1] = cur_edge
             cur_label = l
             oh_counter = overhang_right
