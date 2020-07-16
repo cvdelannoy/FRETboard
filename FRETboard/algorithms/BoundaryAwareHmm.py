@@ -1,6 +1,7 @@
 import numpy as np
 import pomegranate as pg
 from pomegranate.kmeans import Kmeans
+from datetime import datetime
 from random import choices, sample
 import itertools
 from itertools import permutations
@@ -124,7 +125,7 @@ class Classifier(object):
         for li, l in enumerate(labels):
             if l[1:] == cur_label:
                 if oh_counter != 0:
-                    out_labels[li] = f'e{prev_label}{cur_label}_{self.buffer - oh_counter}'
+                    out_labels[li] = f'e{prev_label}_{cur_label}_{self.buffer - oh_counter}'
                     oh_counter -= 1
                 else:
                     try:
@@ -144,7 +145,7 @@ class Classifier(object):
                 prev_label = cur_label
                 cur_label = l[1:]
                 oh_counter = overhang_right
-                out_labels[li-overhang_left + 1:li + 1] = [f'e{prev_label}{cur_label}_{i}' for i in range(overhang_left)]
+                out_labels[li-overhang_left + 1:li + 1] = [f'e{prev_label}_{cur_label}_{i}' for i in range(overhang_left)]
         return [hmm.start.name] + out_labels + [hmm.end]
 
     def get_untrained_hmm(self, data_dict):
@@ -163,7 +164,7 @@ class Classifier(object):
         for k in pend_dict: pend_dict[k] = max(pend_dict[k], 0.000001)
 
         # Add states, self-transitions, transitions to start/end state
-        for sidx, s_name in enumerate(states):
+        for s_name in states:
             s = states[s_name]
             hmm.add_state(s)
             hmm.add_transition(hmm.start, s, pstart_dict[s_name], pseudocount=0)
@@ -213,7 +214,7 @@ class Classifier(object):
             y_edge = np.concatenate([get_edge_labels(self.data.label_dict[idx].astype(int), self.buffer)
                                      for idx in data_dict if idx in labeled_indices], 0)
             def distfun(s1, s2):
-                return self.get_dist(data_vec[y_edge == f'e{s1}{s2}', :].T)
+                return self.get_dist(data_vec[y_edge == f'e{s1}_{s2}', :].T)
 
         # Create states
         pg_gui_state_dict = dict()
@@ -229,14 +230,15 @@ class Classifier(object):
         present_states = list(states)
 
         # Create edge states
-        edges = list(permutations(np.unique(y.astype(int)), 2))
+        edges = list(permutations(range(self.nb_states), 2))
+        # edges = list(permutations(np.unique(y.astype(int)), 2))
         edge_states = dict()
         for edge in edges:
-            if not (f's{edge[0]}' in present_states and f's{edge[0]}' in present_states): continue
-            sn = f'e{edge[0]}{edge[1]}'
+            # if not (f's{edge[0]}' in present_states and f's{edge[0]}' in present_states): continue
+            sn = f'e{edge[0]}_{edge[1]}'
             estates_list = list()
             for i in range(self.buffer):
-                estates_list.append(pg.State(distfun(*edge), name=f'e{edge[0]}{edge[1]}_{i}'))
+                estates_list.append(pg.State(distfun(*edge), name=f'e{edge[0]}_{edge[1]}_{i}'))
                 pg_gui_state_dict[f'{sn}_{i}'] = int(edge[0]) if i < left_buffer else int(edge[1])
             edge_states[sn] = [estates_list, (f's{edge[0]}', f's{edge[1]}')]
         return states, edge_states, pg_gui_state_dict
@@ -338,9 +340,11 @@ class Classifier(object):
         invalid_indices = [idx for idx, tup in self.data.manual_table.iterrows() if tup.is_junk]
         idx_list = [idx for idx in trace_dict if idx not in invalid_indices]
         trace_dict = {tr: trace_dict[tr] for tr in trace_dict if tr in idx_list}
-        for _ in range(nb_bootstrap_iters):
+        for n in range(nb_bootstrap_iters):
+            print(f'{datetime.now()}: bootstrap round {n}')
             hmm = self.get_trained_hmm(trace_dict, bootstrap=True)
             tm = self.tm_from_hmm(hmm, state_order_dict)
+            if tm is None: continue
             tm_array.append(tm)
             # seqs = [self.predict(trace_dict[idx], hmm)[0] for idx in idx_list]
             # cur_tm = discrete2continuous(self.tm_from_seq(seqs), self.framerate)
@@ -354,13 +358,16 @@ class Classifier(object):
         return actual_tm, ci_mat
 
     def tm_from_hmm(self, hmm, state_order_dict):
-        full_tm = hmm.dense_transition_matrix()
-        tm = np.zeros([self.nb_states, self.nb_states])
-        state_list = list(range(self.nb_states))
-        for s1, s2 in permutations(state_list, 2):
-            tm[s1, s2] = full_tm[state_order_dict[f's{s1}'], state_order_dict[f'e{s1}{s2}_0']]
-        for s in state_list:
-            tm[s,s] = full_tm[state_order_dict[f's{s}'], state_order_dict[f's{s}']]
+        try:
+            full_tm = hmm.dense_transition_matrix()
+            tm = np.zeros([self.nb_states, self.nb_states])
+            state_list = list(range(self.nb_states))
+            for s1, s2 in permutations(state_list, 2):
+                tm[s1, s2] = full_tm[state_order_dict[f's{s1}'], state_order_dict[f'e{s1}_{s2}_0']]
+            for s in state_list:
+                tm[s,s] = full_tm[state_order_dict[f's{s}'], state_order_dict[f's{s}']]
+        except:
+            return None
         return discrete2continuous(tm, self.framerate)
 
     def tm_from_seq(self, seq_list):
