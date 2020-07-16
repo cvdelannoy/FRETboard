@@ -11,7 +11,7 @@ setup(
     install_requires=['cython==0.29.20',
                       'pandas==1.0.5',
                       'statsmodels==0.11.1',
-                      'pomegranate==0.13.3',
+                      'pomegranate==0.13.4',
                       'bokeh==1.4.0',
                       'cached-property==1.5.1',
                       'tabulate==0.8.3',
