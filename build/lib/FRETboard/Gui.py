@@ -14,6 +14,7 @@ from threading import Thread, Event
 import pickle
 from joblib import Parallel
 from sklearn import linear_model
+from datetime import datetime
 
 from cached_property import cached_property
 from bokeh.server.server import Server
@@ -28,6 +29,9 @@ from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Di
 from bokeh.models.widgets.panels import Panel, Tabs
 from tornado.ioloop import IOLoop
 from tornado import gen
+
+__location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
+sys.path.append(f'{__location__}/..')
 
 from FRETboard.SafeH5 import SafeH5
 from FRETboard.Predictor import Predictor
@@ -68,6 +72,8 @@ class Gui(object):
                              'correlation_coefficient', 'f_dex_dem', 'f_dex_aem']
         self.h5_dir = tempfile.mkdtemp()
         self.data = MainTable(0.1, np.nan, 0.0, 0.0, 1.0, 0, self.h5_dir, os.getpid()) # todo real param readout
+        self.file_parser_process = self.data.init_table()
+        self.app_is_up = True
 
         # --- Widgets ---
 
@@ -445,8 +451,6 @@ possible, and the error message below
 
             # update data in main table
             self.data.label_dict[self.cur_trace_idx][new] = self.sel_state_slider.value - 1
-            # todo edge label update
-            # self.data.set_value(self.cur_trace_idx, 'edge_labels', self.get_edge_labels(self.source.data['labels']))
 
     def revert_manual_labels(self):
         patch = {'labels': [(i, v) for i, v in enumerate(self.current_example.predicted)],
@@ -528,8 +532,8 @@ possible, and the error message below
                 'ys': [np.zeros(100, dtype=float)] * self.num_states_slider.value,
                 'color': self.curve_colors}
             return
-        mus = self.classifier.get_states_mu(feature)
-        sds = [sd if sd > 0.1 else 0.1 for sd in self.classifier.get_states_sd(feature)]
+        mus = self.classifier.get_mus(feature)
+        sds = [sd if sd > 0.1 else 0.1 for sd in self.classifier.get_sds(feature)]
         x_high = max([mu + sd * 3 for mu, sd in zip(mus, sds)])
         x_low = min([mu - sd * 3 for mu, sd in zip(mus, sds)])
         xs = [np.arange(x_low, x_high, (x_high - x_low) / 100)] * len(sds)
@@ -977,6 +981,7 @@ possible, and the error message below
         layout = row(widgets, graphs)
         doc.add_root(layout)
         doc.title = f'FRETboard v. {self.version}'
+        doc.on_session_destroyed(self.shutdown_gracefully)
         self.doc = doc
 
     def create_gui(self):
@@ -987,9 +992,9 @@ possible, and the error message below
         pred.run()
 
     def loop_update(self):
-        while self.main_thread.is_alive():
+        while self.app_is_up:
             self.data.update_index()
-            if len(self.data.index_table):
+            if len(self.data.index_table) and self.model_loaded:
                 self.update_example_list()
                 self.redraw_info_trigger()
             if not self.model_loaded and len(self.data.index_table):
@@ -998,21 +1003,34 @@ possible, and the error message below
                 if np.any(self.data.index_table.mod_timestamp == self.classifier.timestamp):
                     self.cur_trace_idx = self.data.index_table.index[self.data.index_table.mod_timestamp == self.classifier.timestamp][0]
                     self.new_example_trigger()
-            # else:
-            #     Event().wait(0.1)
+            Event().wait(10.0)
+        sys.exit(0)
 
     def start_threads(self):
         # Start background threads for prediction
         self.main_thread = threading.main_thread()
         self.loop_thread = Thread(target=self.loop_update, name='loop')
         self.loop_thread.start()
-        for p in range(1):
+        self.pred_processes = []
+        for p in range(2):
             pred_process = Process(target=self.start_predictor, name=f'predictor_{p}')
             pred_process.start()
+            self.pred_processes.append(pred_process)
+
+    def shutdown_gracefully(self, session_context):
+        self.app_is_up = False
+        for pp in self.pred_processes:
+            pp.terminate()
+            pp.join()
+        self.file_parser_process.terminate()
+        self.file_parser_process.join()
 
     def start_ioloop(self, port=0):
-        apps = {'/': Application(FunctionHandler(self.make_document))}
-        server = Server(apps, port=port, websocket_max_message_size=100000000)
+        doc = Application(FunctionHandler(self.make_document))
+        apps = {'/': doc}
+        server = Server(apps, port=port, websocket_max_message_size=100000000,
+                        # http_server_kwargs={'check_unused_sessions': 100}
+                        )
         server.show('/')
         self.loop = IOLoop.current()
         self.loop.start()

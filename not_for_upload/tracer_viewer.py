@@ -4,10 +4,10 @@ import re
 from bokeh.server.server import Server
 from bokeh.application import Application
 from bokeh.application.handlers.function import FunctionHandler
-from bokeh.layouts import column
+from bokeh.layouts import column, row
 from bokeh.plotting import figure
 from bokeh.models import ColumnDataSource, LinearColorMapper#, CustomJS
-from bokeh.models.widgets import Select
+from bokeh.models.widgets import Select, Slider, Button
 from tornado.ioloop import IOLoop
 
 import pandas as pd
@@ -66,15 +66,24 @@ class Viewer(object):
         self.path = path
         self.nb_states = nb_states
 
+        self.cur_example_df = None
+        self.cur_fn = None
+
 
         self.source = ColumnDataSource(data=dict(i_don=[], i_acc=[], time=[], labels=[],
                                          rect_height=[], rect_mid=[], labels_pct=[]))
+        self.source.selected.on_change('indices', self.update_classification)
 
         # widgets
         self.example_select = Select(title='Current example',
                                      value=list(self.trace_dict)[0],
                                      options=list(self.trace_dict))
-        self.ts = figure(tools='save,xwheel_zoom,xwheel_pan', plot_width=1000, plot_height=275)
+        self.sel_state_slider = Slider(title='Change selection to state  (num keys)', value=1, start=1,
+                                       end=nb_states, step=1, name='sel_state_slider')
+        self.next_button = Button(label='next', button_type='success')
+        self.next_button.on_click(self.next_example)
+
+        self.ts = figure(tools='save,xwheel_zoom,xwheel_pan,xbox_select', plot_width=1000, plot_height=275)
         self.ts.rect(x='time', y='rect_mid',
                      height='rect_height',
                      fill_color={'field': 'labels_pct', 'transform': LinearColorMapper(palette=colors,
@@ -102,16 +111,34 @@ class Viewer(object):
             trace_list = parse_input_path(path, pattern='*.dat')
             fn_list = [basename(tl) for tl in trace_list]
             trace_list = [tl for _,tl in sorted(zip(fn_list, trace_list))]
+            fn_list.sort()
             self.trace_dict = {basename(trace): trace for trace in trace_list}
+            self.tr2index_dict = {tr: tri for tri, tr in enumerate(fn_list)}
+            self.index2tr_dict = {self.tr2index_dict[k]: k for k in self.tr2index_dict}
         self._path = path
 
     # --- update rules ---
+    def next_example(self):
+        cur_idx = self.tr2index_dict[self.cur_fn]
+        if cur_idx + 1 >= len(self.tr2index_dict):
+            self.example_select.value = self.index2tr_dict[0]
+            # self.update_example(None, self.cur_fn, self.index2tr_dict[0])
+        else:
+            self.example_select.value = self.index2tr_dict[cur_idx+1]
+            # self.update_example(None, self.cur_fn, self.index2tr_dict[cur_idx+1])
+
+
     def update_example(self, attr, old, new):
         """
         Update the example currently on the screen.
         """
         if old == new:
             return
+        if self.cur_example_df is not None:
+            self.cur_example_df.label = self.cur_example_df.label + 1
+            self.cur_example_df.to_csv(self.trace_dict[self.cur_fn], sep='\t', header=True, index=False)
+
+
         new_df = self.get_df(new)
 
         nb_samples = len(new_df)
@@ -126,6 +153,19 @@ class Viewer(object):
                                 labels=new_df.labels, labels_pct=labels_pct,
                                 rect_height=np.repeat(rect_height, nb_samples),
                                 rect_mid=np.repeat(rect_mid, nb_samples))
+        self.cur_example_df = new_df.copy()
+        self.cur_fn = new
+
+    def update_classification(self, attr, old, new):
+        new.sort()
+        if len(new):
+            self.source.selected.indices = []
+            patch = {'labels': [(i, self.sel_state_slider.value - 1) for i in new],
+                     'labels_pct': [(i, (self.sel_state_slider.value - 1) * 1.0 / self.nb_states)
+                                    for i in new]}
+            self.source.patch(patch)
+
+            self.cur_example_df.loc[new, 'label'] = self.sel_state_slider.value - 1
 
     def get_df(self, new):
         if self.file_type == 'kinsoft':
@@ -149,7 +189,7 @@ class Viewer(object):
             return new_df
 
     def make_document(self, doc):
-        layout = column(self.example_select, self.ts)
+        layout = column(self.example_select, self.ts, row(self.sel_state_slider, self.next_button))
         doc.add_root(layout)
         doc.title = 'traceViewer'
 

@@ -7,6 +7,7 @@ from FRETboard.SafeH5 import SafeH5
 from FRETboard.SafeHDFStore import SafeHDFStore
 from FRETboard.FileParser import FileParser
 from FRETboard.helper_functions import numeric_timestamp, colnames_w_labels, colnames_alex_w_labels, df_empty
+from datetime import datetime
 
 
 class MainTable(object):
@@ -21,7 +22,9 @@ class MainTable(object):
         self.toparse_fn = h5_dir + 'to_parse.h5'
         self.label_dict = dict()
         self._eps, self._l, self._d, self._gamma, self._alex = eps, l, d, gamma, alex
-        self.init_table(framerate, alex)
+        self.framerate = framerate
+        # _ = self.init_table(framerate, alex)
+        # self.file_parser_process = self.init_table(framerate, alex)
 
     @property
     def eps(self):
@@ -83,7 +86,7 @@ class MainTable(object):
             fh.attrs['data_timestamp'] = self.data_timestamp
         self._gamma = gamma
 
-    def init_table(self, framerate, alex):
+    def init_table(self):
         # Create index table
         self.index_table = pd.DataFrame(
             columns=[
@@ -103,7 +106,8 @@ class MainTable(object):
             (fh.attrs['data_timestamp'],
              fh.attrs['framerate'], fh.attrs['eps'],
              fh.attrs['l'], fh.attrs['d'],
-             fh.attrs['gamma'], fh.attrs['alex']) = self.data_timestamp, framerate, self.eps, self.l, self.d, self.gamma, alex
+             fh.attrs['gamma'], fh.attrs['alex']) = (self.data_timestamp, self.framerate, self.eps, self.l, self.d,
+                                                     self.gamma, self.alex)
 
         # hdf5 file for transfer to predictor
         with SafeH5(self.predict_store_fn, 'w') as fh:
@@ -111,6 +115,7 @@ class MainTable(object):
         fp_process = Process(target=FileParser, args=(self.toparse_fn, self.traces_store_fn, self.main_process),
                              name='file_parser')
         fp_process.start()
+        return fp_process
 
     def get_trace(self, idx, await_labels=False):
         with SafeH5(self.traces_store_fn, 'r') as fh:

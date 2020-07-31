@@ -18,7 +18,7 @@ def parallel_predict(tup_list, mod):
     return logprob_list, state_list
 
 class Classifier(object):
-    """ HMM classifier that automatically adds 'edge states' to better recognize valid transitions between states.
+    """ fully connected HMM classifier with no extra tricks
     """
     def __init__(self, nb_states, data, **kwargs):
         """
@@ -141,7 +141,7 @@ class Classifier(object):
         """
         Return dicts of pomgranate states with initialized normal multivariate distributions
         """
-        if not any(self.data.manual_table.is_labeled):
+        if not any([self.data.manual_table.loc[dd, 'is_labeled'] for dd in data_dict]):
             # Estimate emission distributions (same as pomegranate does usually)
             data_vec = np.concatenate([dat.loc[:, self.feature_list].to_numpy() for dat in data_dict.values()], 0)
             if data_vec.shape[0] > 1000:  # avoid endless waiting for k-means guess in large dataset
@@ -299,14 +299,14 @@ class Classifier(object):
                 tm_out[tr[0], tr[1]] += 1
         return tm_out / np.expand_dims(tm_out.sum(axis=1), -1)
 
-    def get_states_mu(self, feature):
+    def get_mus(self, feature):
         fidx = np.argwhere(feature == np.array(self.feature_list))[0,0]
         mu_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[0]
                    for state in self.trained.states if not state.is_silent()}
         mu_list = [mu_dict[mk] for mk in sorted(list(mu_dict))]
         return mu_list
 
-    def get_states_sd(self, feature):
+    def get_sds(self, feature):
         fidx = np.argwhere(feature == np.array(self.feature_list))[0, 0]
         sd_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[1]
                    for state in self.trained.states if not state.is_silent()}

@@ -8,6 +8,7 @@ import psutil
 from FRETboard.H5Walker import H5Walker
 from FRETboard.helper_functions import get_tuple
 from FRETboard.SafeH5 import SafeH5
+from FRETboard.GracefulKiller import GracefulKiller
 from FRETboard.SafeHDFStore import SafeHDFStore
 
 class FileParser(object):
@@ -28,7 +29,8 @@ class FileParser(object):
         self.main_loop()
 
     def main_loop(self):
-        while psutil.pid_exists(self.main_pid):
+        killer = GracefulKiller()
+        while not killer.kill_now:
             # Check for new traces to parse
             h5w = H5Walker()
             to_parse_dict = {}

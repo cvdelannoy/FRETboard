@@ -9,6 +9,7 @@ FRET_board.egg-info/requires.txt
 FRET_board.egg-info/top_level.txt
 FRETboard/FileParser.py
 FRETboard/FretReport.py
+FRETboard/GracefulKiller.py
 FRETboard/Gui.py
 FRETboard/H5Walker.py
 FRETboard/MainTable.py
@@ -30,6 +31,7 @@ FRETboard/algorithms/BoundaryAwareHmm_v2.py
 FRETboard/algorithms/EdgeAwareHmm_sandbox.py
 FRETboard/algorithms/GmmHmm.py
 FRETboard/algorithms/GmmHmm_v2.py
+FRETboard/algorithms/SMACKS.py
 FRETboard/algorithms/SubstateHmm.py
 FRETboard/algorithms/SubstateHmm_sandbox.py
 FRETboard/algorithms/VanillaHmm.py

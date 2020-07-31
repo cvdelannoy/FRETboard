@@ -42,7 +42,7 @@ class Classifier(BoundaryAwareHmm.Classifier):
             bic_list.append(k * np.log(X.shape[0]) - 2 * p)
         return bic_list, dist_list
 
-    def get_states_mu(self, feature):
+    def get_mus(self, feature):
         state_names = [f's{i}' for i in range(self.nb_states)]
         fidx = np.argwhere(feature == np.array(self.feature_list))[0,0]
         mu_dict = {}
@@ -62,7 +62,7 @@ class Classifier(BoundaryAwareHmm.Classifier):
         mu_list = [mu_dict[mk] for mk in sorted(list(mu_dict))]
         return mu_list
 
-    def get_states_sd(self, feature):
+    def get_sds(self, feature):
         state_names = [f's{i}' for i in range(self.nb_states)]
         fidx = np.argwhere(feature == np.array(self.feature_list))[0, 0]
 

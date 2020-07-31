@@ -298,14 +298,14 @@ class Classifier(object):
                 tm_out[tr[0], tr[1]] += 1
         return tm_out / np.expand_dims(tm_out.sum(axis=1), -1)
 
-    def get_states_mu(self, feature):
+    def get_mus(self, feature):
         fidx = np.argwhere(feature == np.array(self.feature_list))[0,0]
         mu_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[0]
                    for state in self.trained.states if not state.is_silent()}
         mu_list = [mu_dict[mk] for mk in sorted(list(mu_dict))]
         return mu_list
 
-    def get_states_sd(self, feature):
+    def get_sds(self, feature):
         fidx = np.argwhere(feature == np.array(self.feature_list))[0, 0]
         sd_dict = {self.pg_gui_state_dict[state.name]: state.distribution.distributions[fidx].parameters[1]
                    for state in self.trained.states if not state.is_silent()}

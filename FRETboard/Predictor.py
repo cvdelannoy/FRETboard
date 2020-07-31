@@ -1,13 +1,10 @@
-from FRETboard.MainTable import MainTable
-import os
-import numpy as np
+import os, sys
 import pandas as pd
-from time import sleep
 from FRETboard.SafeHDFStore import SafeHDFStore
 from FRETboard.SafeH5 import SafeH5
+from FRETboard.GracefulKiller import GracefulKiller
 from FRETboard.helper_functions import colnames, colnames_alex
 import pickle
-
 
 class Predictor(object):
     def __init__(self, classifier, h5_dir, main_process):
@@ -24,8 +21,8 @@ class Predictor(object):
         # self.run()
 
     def run(self):
-        while self.main_process.is_alive:
-
+        killer = GracefulKiller()
+        while not killer.kill_now:
             self.check_mod_update()
             if self.classifier.trained is None: continue
 
@@ -58,6 +55,7 @@ class Predictor(object):
             with SafeHDFStore(self.traces_store_fn) as fh:
                 fh.remove('index_table', where='index in index_table.index') # todo check
                 fh.append('index_table', index_table, append=True, data_columns=True)
+        sys.exit(0)
 
     def check_mod_update(self):
         mod_list = [fn for fn in os.listdir(self.h5_dir) if fn.endswith('.mod')]

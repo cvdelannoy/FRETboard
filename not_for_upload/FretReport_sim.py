@@ -230,7 +230,7 @@ class FretReport(object):
         # plt.ylim(0, 1)
 
         if 'E_FRET' in self.classifier.feature_list:
-            mu_list = self.classifier.get_states_mu('E_FRET')
+            mu_list = self.classifier.get_mus('E_FRET')
             # sd_list = self.classifier.get_states_sd('E_FRET')
             for m in mu_list:
                 if np.isnan(m): continue
