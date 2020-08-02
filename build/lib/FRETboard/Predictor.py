@@ -46,7 +46,7 @@ class Predictor(object):
             index_table.mod_timestamp = self.classifier.timestamp
 
             # Save new predictions
-            with SafeH5(self.predict_store_fn) as fh:
+            with SafeH5(self.predict_store_fn, 'a') as fh:
                 for idx in state_seq_dict:
                     if idx in fh:
                         fh[idx][:] = state_seq_dict[idx]
