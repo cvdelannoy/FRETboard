@@ -1,4 +1,5 @@
 import os, sys
+sys.path.append('/tmp/')  # required for custom scripts
 import pandas as pd
 from FRETboard.SafeHDFStore import SafeHDFStore
 from FRETboard.SafeH5 import SafeH5
@@ -66,7 +67,7 @@ class Predictor(object):
         if mod_timestamp != self.classifier.timestamp:
             while True:
                 try:
-                    with open(f'{self.h5_dir}/{mod_fn}', 'rb') as fh:
+                    with open(f'{self.h5_dir}{mod_fn}', 'rb') as fh:
                         self.classifier = pickle.load(fh)
                 except:
                     continue

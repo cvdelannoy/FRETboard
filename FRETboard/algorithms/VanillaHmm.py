@@ -66,17 +66,17 @@ class Classifier(object):
         if bootstrap:
             labeled_seqs = [si for si in self.data.manual_table.query('is_labeled').index if si in data_dict]
             labeled_seqs = choices(labeled_seqs, k=nb_labeled)
-            if nb_unlabeled <= 100:
+            if nb_unlabeled <= 10:
                 # bootstrap size m == n
                 unlabeled_seqs = choices(unlabeled_idx, k=nb_unlabeled)
             else:
                 # subsampling, m = 100
-                unlabeled_seqs = sample(unlabeled_idx, k=100)
+                unlabeled_seqs = sample(unlabeled_idx, k=10)
             seq_idx = labeled_seqs + unlabeled_seqs
             data_dict = {si: data_dict[si] for si in seq_idx}
-        elif nb_unlabeled > 100:
+        elif nb_unlabeled > 10:
             labeled_seqs = self.data.manual_table.query('is_labeled').index.to_list()
-            unlabeled_seqs = sample(unlabeled_idx, k=100)
+            unlabeled_seqs = sample(unlabeled_idx, k=10)
             seq_idx = labeled_seqs + unlabeled_seqs
             data_dict = {si: data_dict[si] for si in seq_idx}
 

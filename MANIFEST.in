@@ -1,4 +1,5 @@
 include FRETboard/algorithms.yml
+include FRETboard/bokeh_serve_params.yml
 include FRETboard/js_widgets/*.js
 include FRETboard/templates/*.html
 include FRETboard/algorithms/*.py

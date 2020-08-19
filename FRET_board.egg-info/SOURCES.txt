@@ -21,6 +21,7 @@ FRETboard/SafeHDFStore.py
 FRETboard/__init__.py
 FRETboard/__main__.py
 FRETboard/algorithms.yml
+FRETboard/bokeh_serve_params.yml
 FRETboard/example_data.pkl
 FRETboard/helper_functions.py
 FRETboard/io_functions.py
@@ -41,6 +42,7 @@ FRETboard/js_widgets/download_model.js
 FRETboard/js_widgets/download_report.js
 FRETboard/js_widgets/download_ssfret.js
 FRETboard/js_widgets/upload.js
+FRETboard/js_widgets/upload_custom_script.js
 FRETboard/js_widgets/upload_model.js
 FRETboard/js_widgets/upload_old.js
 FRETboard/templates/index.html

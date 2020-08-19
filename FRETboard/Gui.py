@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import yaml
 import importlib
+import imp
 import traceback
 from multiprocessing import Process
 import threading
@@ -60,14 +61,16 @@ with open(f'{__location__}/js_widgets/download_datzip.js', 'r') as fh: download_
 with open(f'{__location__}/js_widgets/download_report.js', 'r') as fh: download_report_js = fh.read()
 with open(f'{__location__}/js_widgets/download_ssfret.js', 'r') as fh: download_ssfret_js = fh.read()
 with open(f'{__location__}/js_widgets/download_model.js', 'r') as fh: download_csv_js = fh.read()
+with open(f'{__location__}/js_widgets/upload_custom_script.js', 'r') as fh: upload_custom_script_js = fh.read()
 
 
 class Gui(object):
-    def __init__(self, nb_states=3, data=[]):
+    def __init__(self, nb_processes=3, nb_states=2, allow_custom_scripts=False, data=[]):
         installThreadExcepthook()
         self.version = '0.0.3'
         self.cur_trace_idx = None
-        self.nb_threads = 8
+        self.nb_processes = nb_processes
+        self.allow_custom_scripts = allow_custom_scripts
         self.feature_list = ['E_FRET', 'E_FRET_sd', 'i_sum', 'i_sum_sd',
                              'correlation_coefficient', 'f_dex_dem', 'f_dex_aem']
         self.h5_dir = tempfile.mkdtemp()
@@ -102,6 +105,7 @@ class Gui(object):
         self.report_holder = PreText(text='', css_classes=['hidden'])  # hidden holder to generate js callbacks
         self.datzip_holder = PreText(text='', css_classes=['hidden'])
         self.ssfret_holder = PreText(text='', css_classes=['hidden'])
+        self.custom_script_holder = PreText(text='', css_classes=['hidden'])
         self.keystroke_holder = PreText(text='', css_classes=['hidden'], name='keystroke_holder')
         self.features_checkboxes = CheckboxGroup(labels=[''] * len(self.feature_list), active=[5, 6])
         self.state_radio = RadioGroup(labels=[''] * len(self.feature_list), active=0)
@@ -146,6 +150,7 @@ class Gui(object):
                       ys=[np.zeros(100, dtype=float)] * self.num_states_slider.value,
                       color=self.curve_colors))
         self.loaded_model_source = ColumnDataSource(data=dict(file_contents=[]))
+        self.custom_script_source = ColumnDataSource(data=dict(file_contents=[]))
         self.classifier_source = ColumnDataSource(data=dict(params=[]))
         self.html_source = ColumnDataSource(data=dict(html_text=[]))
         self.ssfret_source = ColumnDataSource(data=dict(ssfret_text=[]))
@@ -161,6 +166,15 @@ class Gui(object):
         self.total_redraw_activated = False
         self.partial_redraw_activated = False
         self.fn_buffer = []
+
+    @property
+    def nb_processes(self):
+        return self._nb_processes
+
+    @nb_processes.setter
+    def nb_processes(self, nb):
+        if nb < 3: raise ValueError('Need at least 3 processes to function')
+        self._nb_processes = nb
 
     @property
     def alex(self):
@@ -548,16 +562,38 @@ possible, and the error message below
         self.state_source.data = {'ys': ys, 'xs': xs, 'color': curve_colors}
 
     def update_algo(self, attr, old, new):
-        if old == new:
+        if old == new and new is not 'custom':
             return
         algo = algo_dict.get(new, new)
-        self.classifier_class = algo
+        if algo == 'custom':
+            if not self.allow_custom_scripts:
+                self.notify('Custom scripts are disabled by default to limit the risk of code injection! Consult the '
+                            'manual if you would like to turn it on.')
+                self.algo_select.value = old
+                return
+            self.custom_script_holder.text += ' '
+            return
+        else:
+            self.classifier_class = algo
+        self.reload_classifier()
+
+    def reload_classifier(self):
         cur_timestamp = self.classifier.timestamp
         cur_features = self.classifier.feature_list
         self.classifier = self.classifier_class(nb_states=self.num_states_slider.value, data=self.data,
                                                 supervision_influence=self.supervision_slider.value,
                                                 features=cur_features, buffer=self.buffer_slider.value)
         self.classifier.timestamp = cur_timestamp
+
+    def load_custom_script(self, attr, old, new):
+        raw_contents = new['file_contents'][0]
+        # remove the prefix that JS adds
+        _, b64_contents = raw_contents.split(",", 1)
+        file_contents = base64.b64decode(b64_contents).decode('utf-8')
+        custom_fn = tempfile.NamedTemporaryFile(delete=False, suffix='.py').name
+        with open(custom_fn, 'w') as fh: fh.write(file_contents)
+        self._classifier_class = imp.load_source(os.path.splitext(os.path.basename(custom_fn))[0], custom_fn).Classifier
+        self.reload_classifier()
 
     def update_num_states(self, attr, old, new):
         if new != self.classifier.nb_states:
@@ -918,6 +954,7 @@ possible, and the error message below
         # self.source.on_change('data', lambda attr,old, new: self.redraw_info_trigger())
         self.new_source.on_change('data', self.buffer_data)
         self.loaded_model_source.on_change('data', self.load_params)
+        self.custom_script_source.on_change('data', self.load_custom_script)
         self.example_select.on_change('value', self.update_example)
         train_button.on_click(self.train_trigger)
         self.guess_toggle.on_click(self.guess_trigger)
@@ -941,6 +978,8 @@ possible, and the error message below
                                                          code=download_ssfret_js))
         self.datzip_holder.js_on_change('text', CustomJS(args=dict(file_source=self.datzip_source),
                                                          code=download_datzip_js))
+        self.custom_script_holder.js_on_change('text', CustomJS(args=dict(file_source=self.custom_script_source),
+                                                             code=upload_custom_script_js))
         self.keystroke_holder.on_change('text', self.process_keystroke)
 
         # --- Build layout ---
@@ -977,7 +1016,7 @@ possible, and the error message below
                         stats_text,
                         Div(text='Notifications: ', width=100, height=15),
                         self.notification,
-                        self.report_holder, self.datzip_holder, self.ssfret_holder)
+                        self.report_holder, self.datzip_holder, self.ssfret_holder, self.custom_script_holder)
         layout = row(widgets, graphs)
         doc.add_root(layout)
         doc.title = f'FRETboard v. {self.version}'
@@ -1012,7 +1051,7 @@ possible, and the error message below
         self.loop_thread = Thread(target=self.loop_update, name='loop')
         self.loop_thread.start()
         self.pred_processes = []
-        for p in range(2):
+        for p in range(self.nb_processes - 2):
             pred_process = Process(target=self.start_predictor, name=f'predictor_{p}')
             pred_process.start()
             self.pred_processes.append(pred_process)
