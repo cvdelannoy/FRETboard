@@ -68,14 +68,17 @@ def condense_seq(labels, values):
     seq_condensed[-1][3] = np.nanmedian(seq_condensed[-1][3])
     return seq_condensed
 
-def get_transitions(labels):
+
+def get_transitions(labels, target_states):
     out_list = []
     cur_label = labels[0]
     for label in labels:
         if label != cur_label:
             out_list.append((cur_label, label))
             cur_label = label
+    out_list = [ol for ol in out_list if ol[0] in target_states and ol[1] in target_states]
     return out_list
+
 
 def condense_df(seq, manual):
     """
@@ -147,6 +150,19 @@ def parse_output_dir(out_dir, clean=False):
     pathlib.Path(out_dir).mkdir(parents=True, exist_ok=True)
     return out_dir
 
+def discrete2continuous(tm, framerate):
+    """
+    Convert discrete transition matrix such as output by HMMs to continous transition rates estimates
+    """
+    assert tm.ndim == 2
+    assert tm.shape[0] == tm.shape[1]
+    nb_states = tm.shape[0]
+    rm = np.eye(nb_states) + framerate * logm(tm)
+    rm[rm < 0] = 0.0  # correct small negative values
+    rm[np.eye(nb_states, dtype=bool)] -= 1
+    return rm
+
+
 parser = argparse.ArgumentParser(description='Compare FRETboard output to labels of kinSoft traces.')
 parser.add_argument('--fb', type=str, required=True, help='FRETboard results dir')
 parser.add_argument('--manual', type=str, required=True, help='manual dir')
@@ -164,7 +180,6 @@ parser.add_argument('--categories', type=str, nargs='+', default=[''],
 args = parser.parse_args()
 
 
-target_states_str = np.array(args.target_states, dtype=str)
 fb_files = parse_input_path(args.fb, pattern='*.dat')
 manual_files = parse_input_path(args.manual, pattern='*.dat')
 manual_dict = {basename(mf): mf for mf in manual_files}
@@ -183,24 +198,22 @@ target_states_w_ground = copy(args.target_states)
 if 1 not in target_states_w_ground: target_states_w_ground += [1]
 midx = pd.MultiIndex.from_tuples(list(permutations(target_states_w_ground, 2)), names=['from', 'to'])
 transition_df = pd.DataFrame(0, columns=['nb_samples', 'nb_transitions'], index=midx)
-# transition_df = pd.DataFrame(0, columns=['nb_samples', 'nb_transitions'], index=[f'{ts[0]}{ts[1]}' for ts in permutations(target_states_w_ground, 2)])
 framerate_list = []
 confusion_list = []
 tdp_list = []
 
 loader_fun = dict(matlab=matlab_load_fun, fretboard=fretboard_load_fun)[args.manual_type]
 
-nb_classes = len(args.target_states) + 1
+nb_classes = len(target_states_w_ground)
 acc_list = []
 acc_df = pd.DataFrame(0, columns=['correct', 'total'], index=args.categories)
 total_pts = 0
 correct_pts = 0
 max_state = 0
 plt.rcParams.update({'font.size': 30})  # large text for trace plots
-efret_dict = {cat:{st: [] for st in args.target_states + [1]} for cat in args.categories}
-efret_pred_dict = {cat:{st: [] for st in args.target_states + [1]} for cat in args.categories}
+efret_dict = {cat:{st: [] for st in target_states_w_ground} for cat in args.categories}
+efret_pred_dict = {cat:{st: [] for st in target_states_w_ground} for cat in args.categories}
 for fb in fb_files:
-    # try:
         cat = [cat for cat in args.categories if cat in fb]
         if not len(cat): continue
         elif len(cat) > 1: raise ValueError(f'trace {fb} falls in multiple categories, redefine categories')
@@ -212,52 +225,27 @@ for fb in fb_files:
 
         # load manual labels
         manual_df = loader_fun(manual_dict[fb_base])
-
         dat_df.loc[:, 'manual'] = manual_df.label.astype(int)
-        dat_df.loc[np.invert(np.in1d(dat_df.manual, args.target_states + [1])), 'manual'] = 1
-        for lab in dat_df.manual.unique():
-            efret_dict[cat][lab].append(dat_df.query(f'manual=={lab}').E_FRET)
-        for lab in dat_df.manual.unique():
-            efret_pred_dict[cat][lab].append(dat_df.query(f'predicted=={lab}').E_FRET)
-        # if args.remove_last_event:
-        #     ground_state = dat_df.predicted.min()
-        #     nb_rows = len(dat_df) - 1
-        #     ground_bool = dat_df.predicted == ground_state
-        #     state_found = False
-        #     for gi, gb in enumerate(ground_bool[::-1]):
-        #         if not gb:
-        #             state_found = True
-        #             dat_df.loc[nb_rows-gi, 'predicted'] = ground_state.astype(int)
-        #         elif state_found:
-        #             break
-        #     dat_df.predicted = dat_df.predicted.astype(int)
 
-        # Add EFRET
-        i_sum = np.sum((dat_df.f_dex_dem, dat_df.f_dex_aem), axis=0)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            E_FRET = np.divide(dat_df.f_dex_aem, i_sum)
-        E_FRET[i_sum == 0] = np.nan  # set to nan where i_don and i_acc after background correction cancel out
-        dat_df.loc[:, "E_FRET"] = E_FRET
+        # dat_df = dat_df.loc[np.in1d(dat_df.manual, target_states_w_ground), :]
+
+        # Store E_FRET per predicted & ground truth state
+        present_states_manual = [lab for lab in dat_df.manual.unique() if lab in target_states_w_ground]
+        present_states_pred = [lab for lab in dat_df.predicted.unique() if lab in target_states_w_ground]
+        for lab in present_states_manual:
+            efret_dict[cat][lab].append(dat_df.query(f'manual=={lab}').E_FRET)
+        for lab in present_states_pred:
+            efret_pred_dict[cat][lab].append(dat_df.query(f'predicted=={lab}').E_FRET)
 
         # Update transitions data
-        transition_list = get_transitions(dat_df.manual)
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore')
-            for trl in transition_list:
-                if trl[0] == 3 and trl[1] == 2:
-                    cp=1
-                transition_df.loc[trl, 'nb_transitions'] += 1
-            for ul in dat_df.manual.unique():
-                transition_df.loc[(ul,), 'nb_samples'] = transition_df.loc[(ul,), 'nb_samples'].to_numpy()[0] + np.sum(dat_df.manual == ul)
-        # for trl in transition_list:
-        #     if not any(np.in1d(target_states_str, list(trl))): continue
-        #     if trl in transition_df.index:
-        #         transition_df.loc[trl[0], 'nb_samples'] += trl[1]
-        #         transition_df.loc[trl[0], 'nb_transitions'] += 1
-        #     else:
-        #         transition_df.loc[trl[0], 'nb_samples'] = trl[1]
-        #         transition_df.loc[trl[0], 'nb_transitions'] = 1
+        transition_list = get_transitions(dat_df.manual, target_states_w_ground)
+        if len(transition_list):
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                for trl in transition_list:
+                    transition_df.loc[trl, 'nb_transitions'] += 1
+                for ul in present_states_manual:
+                    transition_df.loc[(ul,), 'nb_samples'] = transition_df.loc[(ul,), 'nb_samples'].to_numpy()[0] + np.sum(dat_df.manual == ul)
         framerate_list.append(1 / (dat_df.time[1:].to_numpy() - dat_df.time[:-1].to_numpy()).mean())
 
         # make condensed df
@@ -267,15 +255,17 @@ for fb in fb_files:
         condensed_df.loc[:, 'abs_overlap'] = np.nan
         condensed_df = condensed_df.loc[np.in1d(condensed_df.label, args.target_states)].reset_index().drop('index', axis=1)
         condensed_pred_df = condense_df(dat_df, 'predicted')
+        condensed_pred_df.loc[:, 'category'] = cat
         tdp_list.append(pd.DataFrame({'departure_efret': condensed_pred_df.E_FRET.iloc[:-1].to_numpy(),
                                'arrival_efret': condensed_pred_df.E_FRET.iloc[1:].to_numpy(), 'category': cat}))
-        condensed_pred_df.loc[np.invert(np.in1d(condensed_pred_df.label, args.target_states)), 'label'] = 1
-        condensed_pred_df.loc[:, 'category'] = cat
 
         # Compare actual events vs predicted events
+        # condensed_pred_df.loc[np.invert(np.in1d(condensed_pred_df.label, args.target_states)), 'label'] = None
         verified_predicted_events = []
         confusion_idx = pd.MultiIndex.from_product([args.categories, args.target_states])
         confusion_df = pd.DataFrame(columns=['tp', 'fp', 'fn'], index=confusion_idx, data=0)
+
+        # Loop over ground truth events find tp and fn
         for ti, tup in condensed_df.iterrows():
             manual_range = np.arange(tup.start, tup.end)
             overlaps = condensed_pred_df.apply(lambda x: np.sum(np.in1d(np.arange(x.start, x.end), manual_range)), axis=1)
@@ -287,7 +277,6 @@ for fb in fb_files:
             condensed_df.loc[ti, 'abs_overlap'] = overlaps.max()
             # Collect classifier performance measures. Taking into account:
             # - 1 predicted event cannot be counted doubly if covering two actual events; take the longest
-            # if pred_event.duration > 10 * tup.duration and pred_event.label != 1 and tup.label != 1:
 
             if pred_idx in condensed_df.pred_idx.values:
                 # The predicted event was matched to a previous actual event
@@ -307,23 +296,29 @@ for fb in fb_files:
                 confusion_df.loc[(cat, tup.label), 'fn'] += 1
                 condensed_df.drop(ti, inplace=True)
         confusion_list.append(confusion_df)
+
+        # Loop over predicted events, record fp
         for ti, tup in condensed_pred_df.iterrows():
             if ti in condensed_df.pred_idx.values: continue
-            if tup.label != 1: confusion_df.loc[(cat, tup.label), 'fp'] += 1
+            if tup.label in args.target_states: confusion_df.loc[(cat, tup.label), 'fp'] += 1
 
-        eventstats_pred_list.append(condensed_pred_df)
+        # Calculate coverage
         if len(condensed_df):
             condensed_df.loc[:, 'coverage'] = (condensed_df.pred_duration) / condensed_df.duration * 100.0
             eventstats_list.append(condensed_df)
 
-        # Record accuracy
-        correct = (dat_df.predicted == dat_df.manual).sum()
-        acc_list.append(correct / dat_df.shape[0])
-        total_pts += dat_df.shape[0]
-        correct_pts += correct
+        # Store predicted events df
+        eventstats_pred_list.append(condensed_pred_df)
 
+        # Record accuracy
+        dat_df_target_only = dat_df.loc[np.in1d(dat_df.manual, args.target_states), :]
+        if not len(dat_df_target_only): continue
+        correct = len(dat_df_target_only.query('predicted == manual'))
+        acc_list.append(correct / len(dat_df_target_only))
+        total_pts += len(dat_df_target_only)
+        correct_pts += correct
         acc_df.loc[cat, 'correct'] = acc_df.loc[cat, 'correct'] + correct
-        acc_df.loc[cat, 'total'] = acc_df.loc[cat, 'total'] + dat_df.shape[0]
+        acc_df.loc[cat, 'total'] = acc_df.loc[cat, 'total'] + len(dat_df_target_only)
 
         # plot trace
         plot_dict = {
@@ -332,12 +327,10 @@ for fb in fb_files:
             'data': dat_df.loc[:, ['f_dex_dem', 'f_dex_aem']].to_numpy(),
             'label': dat_df.loc[:, ['predicted', 'manual']].to_numpy()
         }
-        plot_obj = plot_trace(plot_dict, nb_classes, dat_df.loc[:, 'time'])
+        plot_obj = plot_trace(plot_dict, dat_df.manual.max(), dat_df.loc[:, 'time'])
         plot_obj.savefig(f'{trace_dir_dict[cat]}{splitext(basename(fb))[0]}.svg')
         dat_df.to_csv(f'{trace_csv_dir_dict[cat]}{splitext(basename(fb))[0]}.csv', sep='\t', header=True, index=True)
         plt.close()
-    # except:
-    #     continue
 transition_df.index = [f'{str(idx[0])}_{str(idx[1])}' for idx in transition_df.index.to_flat_index()]
 plt.rcParams.update({'font.size': 15})  # smaller text for summary plots
 acc_df.loc[:, 'accuracy'] = acc_df.correct / acc_df.total
@@ -392,6 +385,7 @@ lgd = plt.gca().legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.) # plt.
 plt.savefig(f'{summary_dir}/precision_recall.svg', bbox_extra_artists=(lgd, ), bbox_inches='tight')
 plt.savefig(f'{summary_dir}/precision_recall.svg', bbox_inches='tight')
 plt.clf()
+
 # plot transition rates
 tr_files = parse_input_path(args.fb, pattern='*FRETboard_data_transition_rates.csv')
 if tr_files:
@@ -403,8 +397,6 @@ if tr_files:
     transition_df.loc[:, 'rate'] = 0
     tb = transition_df.nb_transitions != 0
 
-    # transition_df.loc[tb, 'rate'] = transition_df.loc[tb, 'nb_transitions'] / transition_df.loc[tb, 'nb_samples'] * framerate
-
     # correct discrete --> continuous
     tm = np.zeros((nb_classes, nb_classes))
     for ti, tup in transition_df.iterrows():
@@ -413,8 +405,7 @@ if tr_files:
     for i in range(nb_classes):
         tm[i,i] = 1 - np.sum(tm[i,:])
 
-    tm_rate = np.eye(nb_classes) + framerate * logm(tm)
-    tm_rate[tm_rate<0] = 0.0
+    tm_rate = discrete2continuous(tm, framerate)
     for tdi in transition_df.index:
         i1, i2 = [int(ii) for ii in tdi.split('_')]
         transition_df.loc[tdi, 'rate'] = tm_rate[int(i1) - 1, int(i2) - 1]
@@ -431,8 +422,8 @@ if tr_files:
         tr_cur_df.loc[:, 'category'] = cat
         tr_df_list.append(tr_cur_df)
     tr_df = pd.concat(tr_df_list)
-    target_states_list = np.array(args.target_states + [1], dtype=str)
-    tr_df = tr_df.loc[tr_df.transition.apply(lambda x: np.all(np.in1d(list(x.split('_')), target_states_list))), :]
+    target_states_str = np.array(target_states_w_ground, dtype=str)
+    tr_df = tr_df.loc[tr_df.transition.apply(lambda x: np.all(np.in1d(list(x.split('_')), target_states_str))), :]
 
     tr_df.loc[:, 'transition'] = tr_df.transition.astype(str)
     tr_df.sort_values(['category', 'transition'], inplace=True)
@@ -479,43 +470,32 @@ eventstats_df = pd.concat(eventstats_list)
 eventstats_pred_df = pd.concat(eventstats_pred_list)
 eventstats_pred_df = copy(eventstats_pred_df.loc[np.in1d(eventstats_pred_df.label, args.target_states), :])
 for cat in args.categories:
-    ttest_df = pd.DataFrame(np.nan, columns=['t', 'p_t', 'ks', 'p_ks', 'p_sw_pred', 'p_sw_true', 'nb_events_pred', 'nb_events_true'],
+    ttest_df = pd.DataFrame(np.nan, columns=['ttost_p', 'nb_events_pred', 'nb_events_true'],
                             index=pd.MultiIndex.from_product((args.categories, args.target_states), names=['category', 'state']))
 
-
-    # for ts in args.target_states:
-    #     col = colmap(ts / max(args.target_states))
-    #     epdf = eventstats_pred_df.loc[np.logical_and(eventstats_pred_df.label == ts, eventstats_pred_df.category == cat), 'E_FRET']
-    #     edf = eventstats_df.loc[np.logical_and(eventstats_df.label == ts, eventstats_df.category == cat), 'E_FRET']
-    #     plt.hist(epdf, hatch='//', histtype='step', facecolor=None, edgecolor=col, bins=100, range=[0,1])
-    #     plt.hist(edf, hatch='\\\\', histtype='step', facecolor=None, edgecolor=col, bins=100, range=[0,1])
-    #     plt.xlabel('$E_{FRET}$')
-    #     plt.ylabel('count')
-    #     plt.tight_layout()
-    #     plt.savefig(f'{summary_dir}/event_counts_{cat}_{ts}.svg')
-    #     plt.clf()
     for ts in args.target_states:
         efret_pred_dict[cat][ts] = np.concatenate(efret_pred_dict[cat][ts])
+        efret_pred_dict[cat][ts] = efret_pred_dict[cat][ts][np.invert(np.isnan(efret_pred_dict[cat][ts]))]
         efret_dict[cat][ts] = np.concatenate(efret_dict[cat][ts])
+        efret_dict[cat][ts] = efret_dict[cat][ts][np.invert(np.isnan(efret_dict[cat][ts]))]
         epdf = efret_pred_dict[cat][ts]
         edf = efret_dict[cat][ts]
-        # epdf = eventstats_pred_df.loc[np.logical_and(eventstats_pred_df.label == ts, eventstats_pred_df.category == cat), 'E_FRET']
-        # edf = eventstats_df.loc[np.logical_and(eventstats_df.label == ts, eventstats_df.category == cat), 'E_FRET']
+        epdf[epdf < 0] = 0.0
+        edf[edf < 0] = 0.0
+
         col = colmap(ts / max(args.target_states))
-        sns.kdeplot(epdf, color=col, legend=False)
-        sns.kdeplot(edf, color=col, linestyle='--', legend=False)
+        sns.kdeplot(epdf, color=col, legend=False, bw=0.1)
+        sns.kdeplot(edf, color=col, linestyle='--', legend=False, bw=0.1)
         ttest_df.loc[(cat, ts), ('nb_events_pred', 'nb_events_true')] = len(epdf), len(edf)
         if len(edf) and len(epdf):
-            ttest_df.loc[(cat, ts), ('t', 'p_t')] = ttest_ind(epdf, edf)
-            ttest_df.loc[(cat, ts), ('ks', 'p_ks')] = ks_2samp(epdf, edf)
             ttest_df.loc[(cat, ts), 'ttost_p'] = ttost_ind(epdf, edf, low=-0.025, upp=0.025, usevar='unequal')[0]
-            ttest_df.loc[(cat, ts), 'p_sw_pred'] = shapiro(epdf)[1]
-            ttest_df.loc[(cat, ts), 'p_sw_true'] = shapiro(edf)[1]
     ttest_df.to_csv(f'{summary_dir}/ttest_results_{cat}.tsv', sep='\t')
+    plt.xlim(0.0, 1.2)
     plt.xlabel('$E_{FRET}$')
     plt.ylabel('count')
     plt.savefig(f'{summary_dir}/event_counts_kde_{cat}.svg')
-    eventstats_pred_df.loc[eventstats_pred_df.category == cat, :].drop('category', axis=1).to_csv(f'{summary_dir}/event_counts_kde_{cat}.tsv', sep='\t', header=True, index=False)
+    eventstats_pred_df.loc[eventstats_pred_df.category == cat, :].drop('category', axis=1).to_csv(
+        f'{summary_dir}/event_counts_kde_{cat}.tsv', sep='\t', header=True, index=False)
     plt.clf()
 eventstats_df.to_csv(f'{summary_dir}/event_counts_kde_true.tsv', sep='\t', header=True, index=False)
 

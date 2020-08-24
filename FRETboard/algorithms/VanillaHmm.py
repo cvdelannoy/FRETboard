@@ -91,7 +91,7 @@ class Classifier(object):
             labels = []
             for li in data_dict:
                 if self.data.manual_table.loc[li, 'is_labeled']:
-                    labs = [hmm.start.name] + [f's{lab}' for lab in self.data.label_dict[li]] + [hmm.end.name]
+                    labs = [hmm.start.name] + [f's{int(lab)}' for lab in self.data.label_dict[li]] + [hmm.end.name]
                     labels.append(labs)
                 else:
                     labels.append(None)

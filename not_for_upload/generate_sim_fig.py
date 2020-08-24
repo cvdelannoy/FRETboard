@@ -58,10 +58,10 @@ kde_dict = {re.search(cat_str, fn).group(0): pd.read_csv(fn, sep='\t', header=0)
 
 efret_dict = {}
 for pkl in efret_pkl:
-    with open(pkl, 'rb') as fh: efret_dict[re.search(cat_str, pkl).group(0)] = pickle.load(fh)
+    with open(pkl, 'rb') as fh: efret_dict[re.search(cat_str, pkl).group(0)] = list(pickle.load(fh).values())[0]
 efret_pred_dict = {}
 for pkl in efret_pred_pkl:
-        with open(pkl, 'rb') as fh: efret_pred_dict[re.search(cat_str, pkl).group(0)] = pickle.load(fh)
+        with open(pkl, 'rb') as fh: efret_pred_dict[re.search(cat_str, pkl).group(0)] = list(pickle.load(fh).values())[0]
 
 plot_types = ['kde', 'transition']
 nb_cats = len(args.cat_names)

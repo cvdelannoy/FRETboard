@@ -83,7 +83,7 @@ class Gui(object):
         # 1. Load
         self.example_collector = pd.DataFrame(columns=['example'])
         self.algo_select = Select(title='Algorithm:', value=list(algo_dict)[0], options=list(algo_dict))
-        self.num_states_slider = Slider(title='Number of states', value=nb_states, start=2, end=10, step=1,
+        self.num_states_slider = Slider(title='Number of states', value=nb_states, start=2, end=11, step=1,
                                         name='num_states_slider')
         self.bg_checkbox = CheckboxGroup(labels=[''], active=[])
 
@@ -107,7 +107,7 @@ class Gui(object):
         self.ssfret_holder = PreText(text='', css_classes=['hidden'])
         self.custom_script_holder = PreText(text='', css_classes=['hidden'])
         self.keystroke_holder = PreText(text='', css_classes=['hidden'], name='keystroke_holder')
-        self.features_checkboxes = CheckboxGroup(labels=[''] * len(self.feature_list), active=[5, 6])
+        self.features_checkboxes = CheckboxGroup(labels=[''] * len(self.feature_list), active=[0, 1, 2, 3, 4])
         self.state_radio = RadioGroup(labels=[''] * len(self.feature_list), active=0)
 
         # Settings
@@ -116,8 +116,8 @@ class Gui(object):
         self.framerate_spinner = Spinner(value=10, step=1)
         self.remove_last_checkbox = CheckboxGroup(labels=[''], active=[])
         self.supervision_slider = Slider(title='Influence supervision', value=1.0, start=0.0, end=1.0, step=0.01)
-        self.buffer_slider = Slider(title='Buffer', value=3, start=0, end=20, step=1)
-        self.bootstrap_size_spinner = Spinner(value=10, step=1)
+        self.buffer_slider = Slider(title='Buffer', value=1, start=1, end=20, step=1)
+        self.bootstrap_size_spinner = Spinner(value=100, step=1)
         self.alex_checkbox = CheckboxGroup(labels=[''], active=[])
         self.gamma_factor_spinner = Spinner(value=1.0, step=0.001)
         self.l_spinner = Spinner(value=0.0, step=0.001)
@@ -547,10 +547,14 @@ possible, and the error message below
                 'color': self.curve_colors}
             return
         mus = self.classifier.get_mus(feature)
+        if any([mu is None for mu in mus]): return
         sds = [sd if sd > 0.1 else 0.1 for sd in self.classifier.get_sds(feature)]
         x_high = max([mu + sd * 3 for mu, sd in zip(mus, sds)])
         x_low = min([mu - sd * 3 for mu, sd in zip(mus, sds)])
-        xs = [np.arange(x_low, x_high, (x_high - x_low) / 100)] * len(sds)
+        try:
+            xs = [np.arange(x_low, x_high, (x_high - x_low) / 100)] * len(sds)
+        except:
+            return
         sdps = [-(xs[0] - mu) ** 2 / (2 * sd ** 2) for mu, sd in zip (mus, sds)]
         ys = []
         for sd, sdp in zip(sds, sdps):
@@ -660,14 +664,15 @@ possible, and the error message below
         tfh = tempfile.TemporaryDirectory()
         for fn in trace_dict:
             if fn in self.data.label_dict:
-                labels = self.data.label_dict[fn]
+                labels = self.data.label_dict[fn].astype(int) + 1
                 sm_test = self.data.label_dict[fn]
             else:
-                labels = [None] * len(trace_dict[fn])  # todo check if labels require +1
+                labels = [None] * len(trace_dict[fn])
                 sm_test = trace_dict[fn].predicted
             sm_bool = [True for sm in self.saveme_checkboxes.active if sm in sm_test]
             if not any(sm_bool): continue
             trace_dict[fn].loc[:, 'label'] = labels
+            trace_dict[fn].loc[:, 'predicted'] = trace_dict[fn].predicted.astype(int) + 1  # change to 1-based integers todo: set to integer upstream someday
             trace_dict[fn].to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
         zip_dir = tempfile.TemporaryDirectory()
         zip_fn = shutil.make_archive(f'{zip_dir.name}/dat_files', 'zip', tfh.name)
@@ -910,7 +915,6 @@ possible, and the error message below
                 self.buffer_slider,
                 row(Div(text='Remove last event before analysis: ', height=15, width=250), self.remove_last_checkbox, width=500),
                 row(Div(text='CI bootstrap iterations: ', height=15, width=200), widgetbox(self.bootstrap_size_spinner, width=100)),
-                   Div(text='note: model is retrained every iteration, keep low for slow models!'),
                    ssfret_button,
                    self.keystroke_holder,
                 width=500)

@@ -124,13 +124,6 @@ class FretReport(object):
         tm_vec, ci_vecs = self.classifier.get_data_tm(self.tr_dict, self.out_labels,
                                                       self.gui.bootstrap_size_spinner.value)
 
-        # translate prob to transition rate
-        for s in np.arange(self.classifier.nb_states):
-            tm_vec[s, s] -= 1
-            ci_vecs[s, s, :] -= 1
-        tm_vec *= self.frame_rate
-        ci_vecs *= self.frame_rate
-
         # make df for csv file
         state_list = [str(nb + 1) for nb in range(self.classifier.nb_states)]
         transition_list = ['_'.join(it) for it in itertools.permutations(state_list, 2)]

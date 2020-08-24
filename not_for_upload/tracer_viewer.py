@@ -47,7 +47,7 @@ def parse_input_path(location, pattern=None):
 parser = argparse.ArgumentParser(description='View kinsoft traces files')
 parser.add_argument('in_dir', type=str,
                     help='input directory containing kinsoft files')
-parser.add_argument('--type', type=str, default='kinsoft',choices=['kinsoft','fretboard'],
+parser.add_argument('--type', type=str, default='kinsoft',choices=['kinsoft','fretboard', 'fretboard_unlabeled'],
                     help='type of input dat files')
 parser.add_argument('--nb-states', type=int,
                     help='Number of states to expect in files.')
@@ -83,7 +83,7 @@ class Viewer(object):
         self.next_button = Button(label='next', button_type='success')
         self.next_button.on_click(self.next_example)
 
-        self.ts = figure(tools='save,xwheel_zoom,xwheel_pan,xbox_select', plot_width=1000, plot_height=275)
+        self.ts = figure(tools='save,xwheel_zoom,pan,xbox_select', plot_width=1000, plot_height=275)
         self.ts.rect(x='time', y='rect_mid',
                      height='rect_height',
                      fill_color={'field': 'labels_pct', 'transform': LinearColorMapper(palette=colors,
@@ -91,6 +91,8 @@ class Viewer(object):
                 source=self.source, **rect_opts)
         self.ts.line('time', 'i_don', color='#4daf4a', source=self.source, **line_opts)
         self.ts.line('time', 'i_acc', color='#e41a1c', source=self.source, **line_opts)
+        self.x_range = self.ts.x_range
+        self.y_range = self.ts.y_range
 
         # update behavior
         self.example_select.on_change('value', self.update_example)
@@ -107,7 +109,7 @@ class Viewer(object):
             self.state_dict = {re.search('[0-9]+(?=.txt)', basename(fn)).group(0): fn for fn in state_list}
             self.trace_dict = {basename(trace): [trace, re.search('[0-9]+(?=.txt)', basename(trace)).group(0)] for trace in
                                trace_list}
-        elif self.file_type == 'fretboard':
+        elif self.file_type == 'fretboard' or self.file_type == 'fretboard_unlabeled':
             trace_list = parse_input_path(path, pattern='*.dat')
             fn_list = [basename(tl) for tl in trace_list]
             trace_list = [tl for _,tl in sorted(zip(fn_list, trace_list))]
@@ -132,12 +134,13 @@ class Viewer(object):
         """
         Update the example currently on the screen.
         """
-        if old == new:
-            return
+        # if old == new:
+        #     return
         if self.cur_example_df is not None:
-            self.cur_example_df.label = self.cur_example_df.label + 1
+            self.cur_example_df.loc[:, 'label'] = self.cur_example_df.labels + 1
+            self.cur_example_df.loc[:, 'predicted'] = self.cur_example_df.labels + 1
+            self.cur_example_df.drop(['labels'], axis=1, inplace=True)
             self.cur_example_df.to_csv(self.trace_dict[self.cur_fn], sep='\t', header=True, index=False)
-
 
         new_df = self.get_df(new)
 
@@ -153,6 +156,8 @@ class Viewer(object):
                                 labels=new_df.labels, labels_pct=labels_pct,
                                 rect_height=np.repeat(rect_height, nb_samples),
                                 rect_mid=np.repeat(rect_mid, nb_samples))
+        self.y_range.start = all_ts.min()
+        self.y_range.end = all_ts.max()
         self.cur_example_df = new_df.copy()
         self.cur_fn = new
 
@@ -165,7 +170,7 @@ class Viewer(object):
                                     for i in new]}
             self.source.patch(patch)
 
-            self.cur_example_df.loc[new, 'label'] = self.sel_state_slider.value - 1
+            self.cur_example_df.loc[new, 'labels'] = self.sel_state_slider.value - 1
 
     def get_df(self, new):
         if self.file_type == 'kinsoft':
@@ -181,11 +186,15 @@ class Viewer(object):
         elif self.file_type == 'fretboard':
             new_df = pd.read_csv(self.trace_dict[new], sep='\t', header=0)
             if new_df.label.isna().any():
-                new_df.labels = new_df.predicted
+                new_df.loc[:, 'labels'] = new_df.predicted
             else:
-                new_df.labels = new_df.label
+                new_df.loc[:, 'labels'] = new_df.label
             new_df.drop(['predicted', 'label'], axis=1, inplace=True)
             new_df.labels -= 1  # labels must be 0-based
+            return new_df
+        elif self.file_type == 'fretboard_unlabeled':
+            new_df = pd.read_csv(self.trace_dict[new], sep='\t', header=None, names=['time', 'i_don', 'i_acc'])
+            new_df.loc[:, 'labels'] = 0
             return new_df
 
     def make_document(self, doc):
