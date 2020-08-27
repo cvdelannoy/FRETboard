@@ -123,6 +123,7 @@ class Gui(object):
         self.l_spinner = Spinner(value=0.0, step=0.001)
         self.d_spinner = Spinner(value=0.0, step=0.001)
         self.d_only_state_spinner = Spinner(value=1, step=1)
+        self.a_only_state_spinner = Spinner(value=2, step=1)
         self.alex_corr_button = Button(label='Apply')
         self.alex_estimate_button = Button(label='Estimate parameters')
 
@@ -719,29 +720,44 @@ possible, and the error message below
         elif new == 'w': self.train_trigger()
         elif new == 'e': self.new_example()
 
+    def collect_samples_for_state(self, trace_dict, num_state):
+        ldf_list = []
+        for idx in trace_dict:
+            ldf_list.append(trace_dict[idx].loc[self.data.label_dict[idx] == num_state - 1,
+                                                ('f_aex_dem_raw', 'f_dex_dem_raw')])
+        return pd.concat(ldf_list)
+
     def estimate_crosstalk_params(self):
+
+        # Input checks
         if not self.data.alex:
             self.notify('Cannot estimate l/d/gamma parameters without ALEX data!')
             return
         trace_dict = self.data.get_trace_dict(labeled_only=True)
+        if self.d_only_state_spinner.value == self.a_only_state_spinner.value:
+            self.notify('One state cannot be Donor-only and Acceptor-only simultaneously!')
+            return
+        if self.num_states_slider.value < 4:
+            self.notify('estimating correction parameters requires at least 4 states: D-only, A-only and two other'
+                        'FRET states.')
+            return
 
-        # Retrieve D-only state measurements
-        ldf_list = []
-        for idx in trace_dict:
-            ldf_list.append(trace_dict[idx].loc[self.data.label_dict[idx] == self.d_only_state_spinner.value - 1,
-                                ('f_aex_dem_raw', 'f_dex_dem_raw')])
-        ldf = pd.concat(ldf_list)
-        if not len(ldf):
+        # Retrieve D and A-only state measurements
+        ddf = self.collect_samples_for_state(trace_dict, self.d_only_state_spinner.value -1)
+        adf = self.collect_samples_for_state(trace_dict, self.a_only_state_spinner.value - 1)
+        if not len(ddf):
+            self.notify('No points in labeled examples belonging to dedicated D-only state')
+            return
+        if not len(adf):
             self.notify('No points in labeled examples belonging to dedicated D-only state')
             return
         total_df = pd.concat(trace_dict.values())
 
         # leakage
-        l = (ldf.f_aex_dem_raw / ldf.f_dex_dem_raw).mean()
+        l = (ddf.f_aex_dem_raw / ddf.f_dex_dem_raw).mean()
 
         # direct excitation
-        d_array = (total_df.f_dex_aem_raw - l * total_df.f_dex_dem_raw) / total_df.f_aex_aem_raw
-        d = np.mean(d_array[~np.isinf(d_array)])
+        d = (adf.f_dex_aem_raw / adf.f_aex_aem_raw).mean()
 
         # gamma
         total_df.loc[:, 'f_fret'] = total_df.f_dex_aem_raw - l * total_df.f_dex_dem_raw - d * total_df.f_aex_aem_raw
@@ -893,12 +909,12 @@ possible, and the error message below
         settings_panel = Panel(child=widgetbox(row(
             column(
                 Div(text='<b>Data format options</b>', height=15, width=200),
-                row(Div(text='Load ALEX traces: ', height=15, width=200), self.alex_checkbox, width=500),
                 row(Div(text='Frame rate .trace files (Hz): ', height=15, width=200),widgetbox(self.framerate_spinner, width=75)),
 
                 Div(text='<b>Filtering options</b>', height=15, width=200),
                 row(Div(text='DBSCAN filter epsilon: ', height=15, width=200), widgetbox(self.eps_spinner, width=75), widgetbox(self.bg_button, width=65), width=500),
-                Div(text='<b>ALEX-based corrections</b>', height=15, width=200),
+                Div(text='<b>ALEX (experimental!)</b>', height=15, width=200),
+                row(Div(text='Load ALEX traces: ', height=15, width=200), self.alex_checkbox, width=500),
                 row(
                     Div(text='gamma: ', height=15, width=80), widgetbox(self.gamma_factor_spinner, width=75),
                     Div(text='<i>l</i>: ', height=15, width=35), widgetbox(self.l_spinner, width=75),
@@ -906,15 +922,20 @@ possible, and the error message below
                     widgetbox(self.alex_corr_button, height=15, width=30)),
                 row(Div(text='<i>D</i>-only state: ', height=15, width=80),
                     widgetbox(self.d_only_state_spinner, width=75),
-                    self.alex_estimate_button),
+                    Div(text='<i>A</i>-only state: ', height=15, width=80),
+                    widgetbox(self.a_only_state_spinner, width=75),
+                    self.alex_estimate_button, width=200),
                 width=500),
             column(Div(text=' ', height=15, width=250), width=75),
             column(
                 Div(text='<b>Training options</b>', height=15, width=200),
                 self.supervision_slider,
                 self.buffer_slider,
+                row(Div(text='CI bootstrap iterations: ', height=15, width=200),
+                    widgetbox(self.bootstrap_size_spinner, width=100)),
+                Div(text='<b>Miscellaneous</b>', height=15, width=200),
                 row(Div(text='Remove last event before analysis: ', height=15, width=250), self.remove_last_checkbox, width=500),
-                row(Div(text='CI bootstrap iterations: ', height=15, width=200), widgetbox(self.bootstrap_size_spinner, width=100)),
+
                    ssfret_button,
                    self.keystroke_holder,
                 width=500)
