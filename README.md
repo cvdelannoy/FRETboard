@@ -104,7 +104,16 @@ The following data formats are accepted:
 Examples are stored in the data_format_examples directory. 
 
 ## Setting up your own server
-
+The easiest way to set up your own FRETboard server would be to make use of the docker image. First start up the container in interactive mode:
+```
+docker run -p 0.0.0.0:5102:5102/tcp -it cvdelannoy/fretboard /bin/bash
+```
+FRETboard is best served using the bokeh package on which the user interface is built. In the container run:
+```
+bokeh serve --num-procs 1 --check-unused-sessions 1000 --port=5102 --address=0.0.0.0 FRETboard/FRETboard
+```
+If you expose the GUI through a certain website, you may need to add `--allow-websocket-origin=www.mywebsite.com` .
+For more options, see the bokeh documentation on running a server [here](https://docs.bokeh.org/en/latest/docs/user_guide/server.html#deployment-scenarios). 
 
 ## Writing new algorithms
 If you would like to introduce a new (semi-)supervised algorithm to FRETboard, you can do so easily; follow the 
