@@ -318,7 +318,7 @@ class Classifier(object):
         logprob, trace_state_list = hmm.viterbi(np.split(trace_df.loc[:, self.feature_list].to_numpy(),
                                                          len(trace_df), axis=0))
         if trace_state_list is None:  # sequence is impossible, logprob -inf
-            return np.ones(len(trace_df)), 1E-90
+            return np.zeros(len(trace_df)), 1E-90
         state_list = np.vectorize(self.gui_state_dict.__getitem__)([ts[0] for ts in trace_state_list[1:-1]])
         return state_list, logprob
 

@@ -9,19 +9,27 @@ import BoundaryAwareHmm
 class Classifier(BoundaryAwareHmm.Classifier):
 
     def get_main_dist(self, X):
-        nd=3
         if X.size == 0:
             # No prior model and no examples assigned --> initialize dummy with 0 and diagonal cov matrix
-            dist_list = []
-            for _ in range(nd):
-                dist_list.append(pg.IndependentComponentsDistribution([pg.NormalDistribution(0,1) for _ in range(len(self.feature_list))]))
-            return pg.GeneralMixtureModel(dist_list, weights=[1/nd] * nd)
+            return self.get_blank_distribution()
 
         # Determine number of components using BIC
         X = X.T.copy()
         bic_list, dist_list = self.select_distribution(X)
+        if not len(bic_list):
+            # Data was impossible under all distributions --> initialize dummy with 0 and diagonal cov matrix
+            return self.get_blank_distribution()
         return dist_list[np.argmin(bic_list)]
         # return pg.GeneralMixtureModel.from_samples([pg.NormalDistribution for _ in range(len(self.feature_list))], n_components=nd, X=X.T.copy())
+
+    def get_blank_distribution(self):
+        nd = 3
+        dist_list = []
+        for _ in range(nd):
+            dist_list.append(pg.IndependentComponentsDistribution(
+                [pg.NormalDistribution(0, 1) for _ in range(len(self.feature_list))]))
+        return pg.GeneralMixtureModel(dist_list, weights=[1 / nd] * nd)
+
 
     def select_distribution(self, X):
         bic_list, dist_list = [], []
@@ -38,8 +46,9 @@ class Classifier(BoundaryAwareHmm.Classifier):
                     n_components=nc, X=X, n_init=3)
                 p = dist.log_probability(X).sum()
                 k = (len(self.feature_list) * 2 + 1) * nc
-            dist_list.append(dist)
-            bic_list.append(k * np.log(X.shape[0]) - 2 * p)
+            if not np.isnan(p):
+                dist_list.append(dist)
+                bic_list.append(k * np.log(X.shape[0]) - 2 * p)
         return bic_list, dist_list
 
     def get_mus(self, feature):

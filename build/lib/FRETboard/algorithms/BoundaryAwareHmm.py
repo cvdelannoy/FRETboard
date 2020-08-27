@@ -53,7 +53,7 @@ class Classifier(object):
         self.timestamp = numeric_timestamp()
 
     def get_trained_hmm(self, data_dict, bootstrap=False):
-        nb_subsample = 10
+        nb_subsample = 100
         if self.framerate is None:
             self.framerate = 1 / np.concatenate([data_dict[tr].time.iloc[1:].to_numpy() -
                                                  data_dict[tr].time.iloc[:-1].to_numpy() for tr in data_dict]).mean()
@@ -318,7 +318,7 @@ class Classifier(object):
         logprob, trace_state_list = hmm.viterbi(np.split(trace_df.loc[:, self.feature_list].to_numpy(),
                                                          len(trace_df), axis=0))
         if trace_state_list is None:  # sequence is impossible, logprob -inf
-            return np.ones(len(trace_df)), 1E-90
+            return np.zeros(len(trace_df)), 1E-90
         state_list = np.vectorize(self.gui_state_dict.__getitem__)([ts[0] for ts in trace_state_list[1:-1]])
         return state_list, logprob
 

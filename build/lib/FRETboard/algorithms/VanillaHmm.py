@@ -52,7 +52,7 @@ class Classifier(object):
         self.timestamp = numeric_timestamp()
 
     def get_trained_hmm(self, data_dict, bootstrap=False):
-
+        nb_subsample = 100
         if self.framerate is None:
             self.framerate = 1 / np.concatenate([data_dict[tr].time.iloc[1:].to_numpy() -
                                                  data_dict[tr].time.iloc[:-1].to_numpy() for tr in data_dict]).mean()
@@ -66,17 +66,17 @@ class Classifier(object):
         if bootstrap:
             labeled_seqs = [si for si in self.data.manual_table.query('is_labeled').index if si in data_dict]
             labeled_seqs = choices(labeled_seqs, k=nb_labeled)
-            if nb_unlabeled <= 10:
+            if nb_unlabeled <= nb_subsample:
                 # bootstrap size m == n
                 unlabeled_seqs = choices(unlabeled_idx, k=nb_unlabeled)
             else:
                 # subsampling, m = 100
-                unlabeled_seqs = sample(unlabeled_idx, k=10)
+                unlabeled_seqs = sample(unlabeled_idx, k=nb_subsample)
             seq_idx = labeled_seqs + unlabeled_seqs
             data_dict = {si: data_dict[si] for si in seq_idx}
-        elif nb_unlabeled > 10:
+        elif nb_unlabeled > nb_subsample:
             labeled_seqs = self.data.manual_table.query('is_labeled').index.to_list()
-            unlabeled_seqs = sample(unlabeled_idx, k=10)
+            unlabeled_seqs = sample(unlabeled_idx, k=nb_subsample)
             seq_idx = labeled_seqs + unlabeled_seqs
             data_dict = {si: data_dict[si] for si in seq_idx}
 
@@ -105,9 +105,9 @@ class Classifier(object):
             # nsi = 1 - si
             # weights = [nsi if lab is None else si for lab in labels]
 
-            hmm.fit(X, weights=weights, labels=labels, use_pseudocount=True, algorithm='viterbi', max_iterations=100)
+            hmm.fit(X, weights=weights, labels=labels, use_pseudocount=True, algorithm='baum-welch', max_iterations=100)
         elif not any(self.data.manual_table.is_labeled):
-            hmm.fit(X, use_pseudocount=True, algorithm='viterbi', max_iterations=100)
+            hmm.fit(X, use_pseudocount=True, algorithm='baum-welch', max_iterations=100)
         return hmm
 
     def get_untrained_hmm(self, data_dict):
@@ -120,10 +120,10 @@ class Classifier(object):
         # Get emission distributions & transition probs
         dists, pg_gui_state_dict = self.get_states(data_dict)
         trans_df, pstart_dict, pend_dict = self.get_transitions(data_dict)
-        trans_df.replace(0, 0.000001, inplace=True)
+        # trans_df.replace(0, 0.000001, inplace=True)
         # for k in tm_dict: tm_dict[k] = max(tm_dict[k], 0.000001)  # reset 0-prob transitions to essentially 0, avoids nans on edges
-        for k in pstart_dict: pstart_dict[k] = max(pstart_dict[k], 0.000001)
-        for k in pend_dict: pend_dict[k] = max(pend_dict[k], 0.000001)
+        # for k in pstart_dict: pstart_dict[k] = max(pstart_dict[k], 0.000001)
+        # for k in pend_dict: pend_dict[k] = max(pend_dict[k], 0.000001)
 
         state_names = list(dists)
         tm_mat = trans_df.loc[state_names, state_names].to_numpy()
@@ -141,7 +141,8 @@ class Classifier(object):
         """
         Return dicts of pomgranate states with initialized normal multivariate distributions
         """
-        if not any([self.data.manual_table.loc[dd, 'is_labeled'] for dd in data_dict]):
+        if not any([self.data.manual_table.loc[dd, 'is_labeled'] and not self.data.manual_table.loc[dd, 'is_junk']
+                    for dd in data_dict]):
             # Estimate emission distributions (same as pomegranate does usually)
             data_vec = np.concatenate([dat.loc[:, self.feature_list].to_numpy() for dat in data_dict.values()], 0)
             if data_vec.shape[0] > 1000:  # avoid endless waiting for k-means guess in large dataset
@@ -152,7 +153,7 @@ class Classifier(object):
             y = km.predict(data_vec)
         else:
             # Estimate emission distributions from given class labels
-            labeled_indices = self.data.manual_table.query('is_labeled').index
+            labeled_indices = self.data.manual_table.query('is_labeled and not is_junk').index
             data_vec = np.concatenate([data_dict[idx].loc[:, self.feature_list].to_numpy()
                                        for idx in data_dict if idx in labeled_indices], 0)
             y = np.concatenate([self.data.label_dict[idx]
@@ -179,8 +180,8 @@ class Classifier(object):
         return pg.IndependentComponentsDistribution(dist_list)
 
     def get_transitions(self, data_dict):
-        labels_array = [self.data.label_dict[dd]
-                        for dd in data_dict if self.data.manual_table.loc[dd, 'is_labeled']]
+        labeled_indices = self.data.manual_table.query('is_labeled and not is_junk').index
+        labels_array = [self.data.label_dict[dd] for dd in data_dict if dd in labeled_indices]
         nb_seqs = len(labels_array)
         state_names = [f's{s}' for s in range(self.nb_states)]
         trans_df = pd.DataFrame([], columns=state_names, index=state_names)
@@ -237,6 +238,8 @@ class Classifier(object):
         if hmm is None: hmm = self.trained
         logprob, trace_state_list = hmm.viterbi(np.split(trace_df.loc[:, self.feature_list].to_numpy(),
                                                          len(trace_df), axis=0))
+        if trace_state_list is None:  # sequence is impossible, logprob -inf
+            return np.zeros(len(trace_df)), 1E-90
         state_list = np.vectorize(self.gui_state_dict.__getitem__)([ts[0] for ts in trace_state_list[1:-1]])
         return state_list, logprob
 
@@ -256,7 +259,9 @@ class Classifier(object):
         state_order_dict = {state.name: idx for idx, state in enumerate(self.trained.states)}
 
         # actual estimate
-        actual_tm = self.tm_from_hmm(self.trained, state_order_dict)
+        trace_list = list(trace_dict.values())
+        nb_traces = len(trace_list)
+        actual_tm = self.tm_from_seq(trace_list)
 
         # CIs
         tm_array = []
@@ -265,12 +270,11 @@ class Classifier(object):
         trace_dict = {tr: trace_dict[tr] for tr in trace_dict if tr in idx_list}
         for n in range(nb_bootstrap_iters):
             print(f'{datetime.now()}: bootstrap round {n}')
-            hmm = self.get_trained_hmm(trace_dict, bootstrap=True)
-            tm = self.tm_from_hmm(hmm, state_order_dict)
+            # hmm = self.get_trained_hmm(trace_dict, bootstrap=True)
+            # tm = self.tm_from_hmm(hmm, state_order_dict)
+            bs_idx = np.random.choice(nb_traces, size=nb_traces)
+            tm = self.tm_from_seq([trace_list[it] for it in bs_idx])
             tm_array.append(tm)
-            # seqs = [self.predict(trace_dict[idx], hmm)[0] for idx in idx_list]
-            # cur_tm = discrete2continuous(self.tm_from_seq(seqs), self.framerate)
-            # tm_array.append(cur_tm)
         tm_mat = np.stack(tm_array, axis=-1)
         sd_mat = np.std(tm_mat, axis=-1)
         mu_mat = np.mean(tm_mat, axis=-1)
@@ -290,14 +294,12 @@ class Classifier(object):
         return discrete2continuous(tm, self.framerate)
 
     def tm_from_seq(self, seq_list):
-        # concatenate seqs with stop symbol in between
-        # seq = np.concatenate([seq + [99] for seq in seq_list])
         tm_out = np.zeros([self.nb_states, self.nb_states], dtype=int)
-        # inventory of transitions
         for seq in seq_list:
-            for tr in zip(seq[:-1], seq[1:]):
+            seq_pred = seq.predicted.astype(int)
+            for tr in zip(seq_pred[:-1], seq_pred[1:]):
                 tm_out[tr[0], tr[1]] += 1
-        return tm_out / np.expand_dims(tm_out.sum(axis=1), -1)
+        return discrete2continuous(tm_out / np.expand_dims(tm_out.sum(axis=1), -1), self.framerate)
 
     def get_mus(self, feature):
         fidx = np.argwhere(feature == np.array(self.feature_list))[0,0]

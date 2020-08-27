@@ -107,7 +107,7 @@ class Gui(object):
         self.ssfret_holder = PreText(text='', css_classes=['hidden'])
         self.custom_script_holder = PreText(text='', css_classes=['hidden'])
         self.keystroke_holder = PreText(text='', css_classes=['hidden'], name='keystroke_holder')
-        self.features_checkboxes = CheckboxGroup(labels=[''] * len(self.feature_list), active=[0, 1, 2, 3, 4])
+        self.features_checkboxes = CheckboxGroup(labels=[''] * len(self.feature_list), active=[0, 2, 3, 4])
         self.state_radio = RadioGroup(labels=[''] * len(self.feature_list), active=0)
 
         # Settings
@@ -302,7 +302,7 @@ possible, and the error message below
             valid_idx = [vi for vi in valid_idx if vi not in manual_invalid_idx]
 
             if not len(valid_idx):
-                self.notify('No new traces with states of interest left')
+                self.notify('Just a moment, classifying traces...')
                 return
             # if np.all(np.isnan(self.data.index_table.loc[valid_idx, 'logprob'])):
             #     self.notify('No valid unpredicted traces left. Try to train before choosing next example.')
