@@ -48,13 +48,6 @@ A few more options are available to you in this stage:
 which features you want to use in the bottom right of your screen, and then click `Train` to see the effect on accuracy. Current models train
 generally quickly, so you can play around to see what works for you. The feature distrubtions per state displayed in the screen can give
 an indication of whether a feature is helpful (i.e. some separation in displayed curves) or not.
-
-##### Note!
-By default models are trained fully supervised, as this is much faster and sufficient for
-low-complexity traces. However often semi-supervision may increase your accuracy, 
-as patterns only present in unseen data can then be accounted for too. To switch to semi-supervision,
-go to the `settings` tab and use the slider on the top right. 1 denotes fully supervised training, 0 means that 
-supervised examples play no role at all during training.
  
 #### 3. Save
 You may now download the classified traces on your machine using the 'Data' button. Produce a 
