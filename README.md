@@ -35,8 +35,10 @@ Tick the `DBSCAN background subtraction` box if your traces suffer from high bac
 trace will be detected using the DBSCAN algorithm and set to zero.
 
 #### 2. Teach
-After loading your data you are presented with an example trace that the model found hard to classify. Caught an error? Slide the 'Change selection' 
-slider to the state you would like to introduce or expand and click-drag over the trace in your screen. You have now 
+After loading your data you are presented with an example trace that the model found hard to classify. 
+Clicking the symbols to the right of the trace lets you switch between panning and zooming with your scroll wheel.
+Caught an error? Slide the 'Change selection' 
+slider or press a number key on your keyboard to set the state to which you would like to change classifications and click-drag over the trace in your screen. You have now 
 adapted the labeling of that trace. Once you are satisfied with the current trace, click `Train` to retrain 
 the algorithm using the modifications you just made as a guideline. Once done, click `New` to go to the next trace 
 and repeat the process, until you're satisfied with the classification result. 
@@ -104,6 +106,8 @@ Examples are stored in the data_format_examples directory.
 ## Known issues
 - Please note that FRETboard cannot (yet) handle traces longer than 100k data points. This is mainly a 
 grahical issue, so we expect to be able to fix this rather soon.
+- Currently keystrokes to change the state slider and perform the next/train/delete actions only work in 
+server mode. 
 
 ## Setting up your own server
 The easiest way to set up your own FRETboard server would be to make use of the docker image. First start up the container in interactive mode:
