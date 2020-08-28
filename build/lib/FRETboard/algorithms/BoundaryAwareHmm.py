@@ -348,7 +348,7 @@ class Classifier(object):
         idx_list = [idx for idx in trace_dict if idx not in invalid_indices]
         trace_dict = {tr: trace_dict[tr] for tr in trace_dict if tr in idx_list}
         for n in range(nb_bootstrap_iters):
-            print(f'{datetime.now()}: bootstrap round {n}')
+            # print(f'{datetime.now()}: bootstrap round {n}')
             # hmm = self.get_trained_hmm(trace_dict, bootstrap=True)
             # tm = self.tm_from_hmm(hmm, state_order_dict)
             bs_idx = np.random.choice(nb_traces, size=nb_traces)

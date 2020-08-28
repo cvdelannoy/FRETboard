@@ -45,6 +45,9 @@ A few more options are available to you in this stage:
 - You can `Delete` the current trace, omitting it from further supervision and analysis.
 - Number of states: changes how many states the HMM will try to fit. Note that changing this value will reset your model!
 - Active features: depending on your data and goals, features may contribute valuable information or just noise. You can change
+- Guess trace: if your current trace is very long, correct classification in a short stretch and click this button.
+Then select your correctly classified stretch and a tiny HMM will be trained to guess the correct classification for the 
+rest of this particular trace to save you a bit of time.
 which features you want to use in the bottom right of your screen, and then click `Train` to see the effect on accuracy. Current models train
 generally quickly, so you can play around to see what works for you. The feature distrubtions per state displayed in the screen can give
 an indication of whether a feature is helpful (i.e. some separation in displayed curves) or not.

@@ -459,13 +459,14 @@ possible, and the error message below
                 patch = {'labels': [(i, self.sel_state_slider.value - 1) for i in new],
                          'labels_pct': [(i, (self.sel_state_slider.value - 1) * 1.0 / (self.num_states_slider.value - 1))
                                         for i in new]}
+                # update data in main table
+                self.data.label_dict[self.cur_trace_idx][new] = self.sel_state_slider.value - 1
+
             self.source.patch(patch)
 
             self.update_accuracy_hist()
             self.update_stats_text()
 
-            # update data in main table
-            self.data.label_dict[self.cur_trace_idx][new] = self.sel_state_slider.value - 1
 
     def revert_manual_labels(self):
         patch = {'labels': [(i, v) for i, v in enumerate(self.current_example.predicted)],

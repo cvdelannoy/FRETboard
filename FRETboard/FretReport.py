@@ -56,7 +56,7 @@ class FretReport(object):
     def outlier_free_event_df(self):
         df_list = []
         for st, df in self.event_df.groupby('state'):
-            if st == 0: continue
+            if st not in self.gui.saveme_checkboxes.active: continue
             ef_sd3 = df.E_FRET.std() * 3
             ef_lb, ef_hb = df.E_FRET.mean() - ef_sd3, df.E_FRET.mean() + ef_sd3
             ef_bool = np.logical_and(df.E_FRET > ef_lb, df.E_FRET < ef_hb)
@@ -69,12 +69,15 @@ class FretReport(object):
 
     @cached_property
     def transition_df(self):
+        active_states = self.gui.saveme_checkboxes.active
         before = []
         after = []
         state_before = []
         state_after = []
         for r in self.condensed_seq_df:
             r_array = np.array(r)
+            r_array = r_array[np.logical_and(np.in1d(r_array[:, 0], active_states),
+                                             np.in1d(r_array[:, 1], active_states)), :]
             before.extend(r_array[:-1, 2])
             after.extend(r_array[1:, 2])
             state_before.extend(r_array[:-1, 0])
@@ -108,9 +111,11 @@ class FretReport(object):
 
     @cached_property
     def data_efret_stats(self):
-        state_list = [str(nb + 1) for nb in range(self.classifier.nb_states)]
+        active_states = list(self.gui.saveme_checkboxes.active)
+        state_list = [str(nb + 1) for nb in active_states]
         state_list_bold = [f'<b>{s}</b>' for s in state_list]
-        table = tabulate({'mu': self.data_states_mu, 'sd': self.data_states_sd},
+        table = tabulate({'mu': [mu for mi, mu in enumerate(self.data_states_mu) if mi in active_states],
+                          'sd': [sd for si, sd in enumerate(self.data_states_sd) if si in active_states]},
                          tablefmt='html', headers=['mean E_FRET', 'sd E_FRET'], showindex=state_list_bold,
                          numalign='center', stralign='center')
         return table
@@ -123,15 +128,18 @@ class FretReport(object):
     def get_data_tm(self):
         tm_vec, ci_vecs = self.classifier.get_data_tm(self.tr_dict, self.out_labels,
                                                       self.gui.bootstrap_size_spinner.value)
+        asi = self.gui.saveme_checkboxes.active
+        tm_vec = tm_vec.take(asi, axis=0).take(asi, axis=1)
+        ci_vecs = ci_vecs.take(asi, axis=0).take(asi, axis=1)
 
         # make df for csv file
-        state_list = [str(nb + 1) for nb in range(self.classifier.nb_states)]
+        state_list = [str(nb + 1) for nb in asi]
         transition_list = ['_'.join(it) for it in itertools.permutations(state_list, 2)]
-        msk = np.invert(np.eye(self.classifier.nb_states, dtype=bool))
+        msk = np.invert(np.eye(len(asi), dtype=bool))
         csv_df = pd.DataFrame({'rate': tm_vec[msk],
                                'low_bound': ci_vecs[:, :, 0][msk],
                                'high_bound': ci_vecs[:, :, 1][msk]}, index=transition_list)
-        return self.transition_np_to_html(tm_vec, ci_vecs), csv_df.to_csv().replace('\n', '\\n')
+        return self.transition_np_to_html(tm_vec, ci_vecs, state_list), csv_df.to_csv().replace('\n', '\\n')
 
     @staticmethod
     def condense_sequence(seq):
@@ -245,6 +253,7 @@ class FretReport(object):
         unique_labels = np.unique(self.out_label_vec)
         colors = sns.color_palette('Blues', len(unique_labels))
         for li, lab in enumerate(unique_labels):
+            if lab not in self.gui.saveme_checkboxes.active: continue
             cur_vec = self.efret_vec[self.out_label_vec == lab]
             cur_vec = cur_vec[~np.isnan(cur_vec)]
             ax = sns.distplot(cur_vec, kde=False, bins=100, color=colors[li], ax=ax)
@@ -288,9 +297,10 @@ class FretReport(object):
     #     # todo: accuracy/posterior probability estimates: hist + text
     #     # todo: gauss curves per model
 
-    def transition_np_to_html(self, tm_trained, ci_vecs):
-        nb_states = self.classifier.nb_states
-        state_list = [str(nb + 1) for nb in range(self.classifier.nb_states)]
+    def transition_np_to_html(self, tm_trained, ci_vecs, state_list):
+        # nb_states = self.classifier.nb_states
+        nb_states = len(state_list)
+        # state_list = [str(nb + 1) for nb in range(self.classifier.nb_states)]
         state_list_bold = [f'<b>{s}</b>' for s in state_list]
         tm1 = np.char.array(tm_trained.round(3).astype(str))
         tm_newline = np.tile(np.char.array('<br/>'), (nb_states, nb_states))
