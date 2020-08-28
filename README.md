@@ -1,5 +1,7 @@
 # FRETboard: supervise your FRET detection algorithm
 
+[![DOI](https://zenodo.org/badge/213605221.svg)](https://zenodo.org/badge/latestdoi/213605221)
+
 FRETboard helps you train algorithms for the detection of Förster resonance energy transfer events in a 
 (semi-)supervised manner.
 
