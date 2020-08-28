@@ -1,10 +1,12 @@
 import os
+from os.path import splitext
 import numpy as np
 import warnings
 import pandas as pd
 import base64
 import h5py
 import psutil
+import io
 from FRETboard.H5Walker import H5Walker
 from FRETboard.helper_functions import get_tuple
 from FRETboard.SafeH5 import SafeH5
@@ -48,6 +50,8 @@ class FileParser(object):
                         self.parse_trace_file(fn, to_parse_dict[fn])
                     elif fn.endswith('.dat'):
                         self.parse_dat_file(fn, to_parse_dict[fn])
+                    elif fn.endswith('.hdf5') or fn.endswith('h5'):
+                        self.parse_photonhdf5(to_parse_dict[fn])
 
             # Check for traces requiring update to data
             with SafeHDFStore(self.traces_store_fn, 'r') as fh:
@@ -113,6 +117,45 @@ class FileParser(object):
                 chunk_lim += self.chunk_size
         if len(out_dict):
             self.write_away_traces(out_dict)
+
+    def parse_photonhdf5(self, file_contents):
+        out_dict = {}
+        chunk_lim = self.chunk_size - 1
+        with io.BytesIO(file_contents) as fh:
+            h5f = h5py.File(fh, mode='r')
+
+            fn_base = splitext(h5f['identity']['filename'][()].decode())[0]
+
+            # Collect keys for spot groups
+            pd_list = [fn for fn in h5f.keys() if 'photon_data' in fn]
+
+            # pixel ID to detector specification dict
+            for fi, pdn in enumerate(pd_list):
+                pd = h5f[pdn]
+                ds = pd['measurement_specs']['detectors_specs']
+                if not('spectral_ch1' in ds and 'spectral_ch2' in ds):
+                    continue
+
+                raw_data = pd['timestamps'][()]
+                detector = pd['detectors'][()]
+
+                # split out raw data per detector, write away
+                don = raw_data[detector == ds['spectral_ch1']]
+                acc = raw_data[detector == ds['spectral_ch2']]
+                seqlen = min(len(don), len(acc))
+                f = np.row_stack((don[:seqlen], acc[:seqlen]))
+                time = np.arange(seqlen) * pd['timestamps_specs']['timestamps_unit']
+                ft = np.row_stack((time, f))
+
+                out_dict[f'{fn_base}_{pdn}'] = get_tuple(ft, self.eps, self.l, self.d, self.gamma)
+                if fi >= chunk_lim:
+                    self.write_away_traces(out_dict)
+                    out_dict = {}
+                    chunk_lim += self.chunk_size
+
+            if len(out_dict):
+                self.write_away_traces(out_dict)
+
 
     def update_filter_params(self, fh):
         """

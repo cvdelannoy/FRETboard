@@ -92,9 +92,13 @@ The following data formats are accepted:
 |-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------|
 | plain text  | Three tab-separated columns: time (s), donor intensity, acceptor intensity.  No header.                                                                                                       | .dat      |
 | binary      | 16-bits, only equal-duration traces. First three numbers are trace duration,  any (unused placeholder), number of traces. Time step size and ALEX/non-ALEX must be set in the `settings` tab. | .traces   |
-| photon-HDF5 | As defined [here](https://photon-hdf5.readthedocs.io/)                                                                                                                                 | .hdf5     |
+| photon-HDF5 | As defined [here](https://photon-hdf5.readthedocs.io/). Donor and acceptor pixel ID should be stored as `spectral_ch1` and `spectral_ch2`. Each `photon_data` group is treated as a separate trace. | .hdf5     |
 
 Examples are stored in the data_format_examples directory. 
+
+## Known issues
+- Please note that FRETboard cannot (yet) handle traces longer than 100k data points. This is mainly a 
+grahical issue, so we expect to be able to fix this rather soon.
 
 ## Setting up your own server
 The easiest way to set up your own FRETboard server would be to make use of the docker image. First start up the container in interactive mode:

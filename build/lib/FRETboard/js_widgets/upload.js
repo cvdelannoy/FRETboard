@@ -14,7 +14,7 @@ function read_file(filename, idx) {
     // readAsDataURL represents the file's data as a base64 encoded string
     var re = /(?:\.([^.]+))?$/g;
     var ext = (re.exec(input.files[idx].name))[1];
-    if (ext === "dat" || ext === "traces"){
+    if (ext === "dat" || ext === "traces" || ext === "hdf5" || ext === "h5" ){
         reader.readAsDataURL(filename);
     } else{ alert(ext + " extension found, only .dat and .traces files accepted for now")}
 }
