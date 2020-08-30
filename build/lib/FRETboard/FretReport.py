@@ -165,17 +165,18 @@ class FretReport(object):
         ed_scatter = self.draw_Efret_duration_plot()
         tdp = self.draw_transition_density_plot()
         efret_hist = self.draw_efret_histograms()
+        dwelltime_hist, dwelltime_df = self.draw_dwelltime_histogram()
         # tm_table, em_table, tm_str = self.get_param_tables()
-
         data_tm, data_tm_csv = self.get_data_tm()
 
-        # kinetic_table = self.get_stats_tables()
         with open(f'{__location__}/templates/report_template.html', 'r') as fh:
             template = Template(fh.read())
         # thh, thd = components(tdp_hex)
         return template.render(ed_scatter=ed_scatter,
                                transition_density_plot=tdp,
                                efret_hist=efret_hist,
+                               dwelltime_hist=dwelltime_hist,
+                               dwelltime_csv=dwelltime_df,
                                data_efret_stats=self.data_efret_stats,
                                data_tm_div=data_tm,
                                # tm_table_div=tm_table,
@@ -266,6 +267,28 @@ class FretReport(object):
         plt.clf()
         return f.getvalue()
 
+    def draw_dwelltime_histogram(self):
+        #construct plot
+        fig = plt.figure()
+        ax = fig.gca()
+        unique_labels = np.unique(self.out_label_vec)
+        colors = sns.color_palette('Blues', len(unique_labels))
+        for li, lab in enumerate(unique_labels):
+            if lab not in self.gui.saveme_checkboxes.active: continue
+            ax = sns.distplot(self.event_df.query(f'state == {lab}').duration / self.frame_rate,
+                              kde=True, bins=100, color=colors[li], ax=ax)
+
+        ax.set_xlabel('dwell time (s)')
+        ax.set_ylabel('count')
+
+        f = io.StringIO()
+        plt.savefig(f, format='svg')
+        plt.clf()
+
+        # construct csv
+        edf = self.event_df.drop(['state_pct'], axis=1).sort_values(['state'])
+        edf.state = edf.state + 1
+        return f.getvalue(), edf.to_csv(index=False).replace('\n', '\\n')
 
     # def get_param_tables(self):
     #

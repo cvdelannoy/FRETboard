@@ -77,7 +77,7 @@ def multi_joint_plot(col_x, col_y, col_k, df, scatter_alpha=.5, palette='Blues')
     colors = sns.color_palette(palette, len(unique_labels))
     legends = []
     for ui, ul in enumerate(unique_labels):
-        legends.append(ul)
+        legends.append(ul+1)
         df_group = df.loc[df.loc[:, col_k] == ul, :]
         color = colors[ui]
         g.plot_joint(colored_scatter(df_group[col_x], df_group[col_y], color))

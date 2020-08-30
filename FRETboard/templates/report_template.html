@@ -57,7 +57,6 @@ Note: these statistics are derived from the actual dataset, not the model
             }
         // Start file download.
         document.getElementById("dwn-data-tm-btn").addEventListener("click", function(){
-        // Generate download of hello.txt file with some content
         var text = "{{ data_tm_csv }}";
         var filename = "FRETboard_data_transition_rates.csv";
         download(filename, text);
@@ -85,7 +84,6 @@ Note: these statistics are derived from the actual dataset, not the model
 {#            }#}
 {#        // Start file download.#}
 {#        document.getElementById("dwn-btn").addEventListener("click", function(){#}
-{#        // Generate download of hello.txt file with some content#}
 {#        var text = "{{ transition_csv }}";#}
 {#        var filename = "FRETboard_transition_rates.csv";#}
 {#        download(filename, text);#}
@@ -94,6 +92,29 @@ Note: these statistics are derived from the actual dataset, not the model
 
 <h3>Sample fret efficiency per state</h3>
 {{ efret_hist }}
+
+<h3>Sample dwell time per state</h3>
+{{ dwelltime_hist }}
+
+<input type="button" id="dwn-data-dwelltimes-btn" value="Download csv"/>
+<script>
+        function download(filename, text) {
+            var element = document.createElement('a');
+            element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+            element.setAttribute('download', filename);
+            element.style.display = 'none';
+            document.body.appendChild(element);
+            element.click();
+            document.body.removeChild(element);
+            }
+        // Start file download.
+        document.getElementById("dwn-data-dwelltimes-btn").addEventListener("click", function(){
+        var text = "{{ dwelltime_csv }}";
+        var filename = "FRETboard_data_dwelltimes.csv";
+        download(filename, text);
+        }, false);
+</script>
+
 
 <h3>Fret efficiency vs event duration</h3>
 {{ ed_scatter }}
