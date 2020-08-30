@@ -13,9 +13,8 @@ from multiprocessing import Process
 import threading
 from threading import Thread, Event
 import pickle
-from joblib import Parallel
 from sklearn import linear_model
-from datetime import datetime
+from jinja2 import Template
 
 from cached_property import cached_property
 from bokeh.server.server import Server
@@ -63,6 +62,7 @@ with open(f'{__location__}/js_widgets/download_ssfret.js', 'r') as fh: download_
 with open(f'{__location__}/js_widgets/download_model.js', 'r') as fh: download_csv_js = fh.read()
 with open(f'{__location__}/js_widgets/upload_custom_script.js', 'r') as fh: upload_custom_script_js = fh.read()
 
+with open(f'{__location__}/templates/index.html', 'r') as fh: template = Template(fh.read())
 
 class Gui(object):
     def __init__(self, nb_processes=3, nb_states=2, allow_custom_scripts=False, data=[]):
@@ -316,7 +316,6 @@ possible, and the error message below
         # remove the prefix that JS adds
         _, b64_contents = raw_contents.split(",", 1)
         file_contents = base64.b64decode(b64_contents).decode('utf-8')
-        # file_contents = base64.b64decode(b64_contents).decode('utf-8').split('\n')[1:-1]
         self.algo_select.value = algo_inv_dict.get(file_contents.split('\n')[0], 'custom')
         self.classifier.load_params(file_contents)
         self.num_states_slider.value = self.classifier.nb_states
@@ -391,10 +390,6 @@ possible, and the error message below
 
     def _redraw_all(self):
         self.total_redraw_activated = False
-        if not self.data.index_table.loc[self.cur_trace_idx, 'mod_timestamp'] == self.classifier.timestamp:
-            pass # todo predict if not done so yet
-            # self.data.cur.at[self.cur_trace_idx, 'labels'] = self.data.data.loc[self.cur_trace_idx, 'prediction']
-            # self.data.index_table.loc[self.cur_trace_idx, 'is_labeled'] = True
         nb_samples = len(self.current_example)
         all_ts = self.current_example.loc[:, ('f_dex_dem', 'f_dex_aem')].to_numpy()
         ts_range = all_ts.max() - all_ts.min()
@@ -835,7 +830,6 @@ possible, and the error message below
 
         # timeseries tools
         self.xbox_select = BoxSelectTool(dimensions='width')
-        # self.save = SaveTool()
         self.xwheel_zoom = WheelZoomTool(dimensions='width')
         self.xwheel_pan = WheelPanTool(dimension='width')
         self.pan = PanTool()
@@ -843,7 +837,7 @@ possible, and the error message below
 
         # Main timeseries
         ts = figure(tools=tool_list, plot_width=1075, plot_height=275,
-                    active_drag=self.xbox_select, name='ts',
+                    active_drag=self.xbox_select, name='ts', active_scroll=self.xwheel_zoom,
                     x_axis_label='Time (s)', y_axis_label='Intensity')
         ts.rect(x='time', y='rect_mid', width='rect_width', height='rect_height', fill_color={'field': 'labels_pct',
                                                                       'transform': self.col_mapper},
@@ -989,8 +983,6 @@ possible, and the error message below
         self.bg_button.on_click(self.update_eps)
         self.alex_checkbox.on_change('active', self.update_alex_checkbox)
         self.alex_estimate_button.on_click(self.estimate_crosstalk_params)
-        # self.bg_button.on_click(self.subtract_background)
-        # self.bg_test_button.on_click(self.subtract_test)
         self.num_states_slider.on_change('value', self.update_num_states)
         self.alex_corr_button.on_click(self.update_crosstalk)
         self.state_radio.on_change('active', lambda attr, old, new: self.update_state_curves())
@@ -1047,6 +1039,7 @@ possible, and the error message below
         doc.add_root(layout)
         doc.title = f'FRETboard v. {self.version}'
         doc.on_session_destroyed(self.shutdown_gracefully)
+        doc.template = template
         self.doc = doc
 
     def create_gui(self):
@@ -1091,11 +1084,9 @@ possible, and the error message below
         self.file_parser_process.join()
 
     def start_ioloop(self, port=0):
-        doc = Application(FunctionHandler(self.make_document))
-        apps = {'/': doc}
-        server = Server(apps, port=port, websocket_max_message_size=100000000,
-                        # http_server_kwargs={'check_unused_sessions': 100}
-                        )
+        app = Application(FunctionHandler(self.make_document))
+        apps = {'/': app}
+        server = Server(apps, port=port, websocket_max_message_size=100000000)
         server.show('/')
         self.loop = IOLoop.current()
         self.loop.start()

@@ -1,13 +1,18 @@
 import sys
 import argparse
 from FRETboard.Gui import Gui
+from bokeh.command.util import build_single_handler_application
+from bokeh.server.server import Server
+from bokeh.application.handlers import DirectoryHandler
+import os
+__location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 
 def main(args=None):
     if args is None:
         args = sys.argv[1:]
 
     parser = argparse.ArgumentParser(prog='FRETboard', description='Supervise FRET event detection algorithms')
-    parser.add_argument('-n', '--nb-states', type=int, default=3,
+    parser.add_argument('-n', '--nb-states', type=int, default=2,
                         help='Number of states to detect initially.')
     parser.add_argument('-c', '--nb-cores', type=int, default=4,
                         help='Number of cores (processes) to use.')
