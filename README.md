@@ -7,10 +7,10 @@ FRETboard helps you train algorithms for the detection of Förster resonance ene
 
 ## Running
 FRETboard is available as web application on [our server at Wageningen University](https://www.bioinformatics.nl/FRETboard/), or can be installed on your own 
-system using pip:
+Linux or MacOS system using pip:
 
 ```
-pip install git+https://github.com/cvdelannoy/poreTally.git
+pip install git+https://github.com/cvdelannoy/FRETboard.git
 ```
 FRETboard is then started from the command line as:
 
