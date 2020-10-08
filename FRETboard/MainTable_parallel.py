@@ -27,6 +27,10 @@ class MainTable(object):
         # self.file_parser_process = self.init_table(framerate, alex)
 
     @property
+    def framerate(self):
+        return self._framerate
+
+    @property
     def eps(self):
         return self._eps
 
@@ -45,6 +49,14 @@ class MainTable(object):
     @property
     def alex(self):
         return self._alex
+
+    @framerate.setter
+    def framerate(self, framerate):
+        self.data_timestamp = numeric_timestamp()
+        with SafeH5(self.toparse_fn, 'a') as fh:
+            fh.attrs['framerate'] = framerate
+            fh.attrs['data_timestamp'] = self.data_timestamp
+        self._framerate = framerate
 
     @alex.setter
     def alex(self, alex):

@@ -74,7 +74,7 @@ class Gui(object):
         self.feature_list = ['E_FRET', 'E_FRET_sd', 'i_sum', 'i_sum_sd',
                              'correlation_coefficient', 'f_dex_dem', 'f_dex_aem']
         self.h5_dir = tempfile.mkdtemp()
-        self.data = MainTable(0.1, np.nan, 0.0, 0.0, 1.0, 0, self.h5_dir, os.getpid()) # todo real param readout
+        self.data = MainTable(10.0, np.nan, 0.0, 0.0, 1.0, 0, self.h5_dir, os.getpid())
         self.file_parser_process = self.data.init_table()
         self.app_is_up = True
 
@@ -390,6 +390,7 @@ possible, and the error message below
 
     def _redraw_all(self):
         self.total_redraw_activated = False
+        if self.cur_trace_idx is None: return
         nb_samples = len(self.current_example)
         all_ts = self.current_example.loc[:, ('f_dex_dem', 'f_dex_aem')].to_numpy()
         ts_range = all_ts.max() - all_ts.min()
@@ -494,6 +495,7 @@ possible, and the error message below
             self.redraw_trigger()
 
     def refilter_current_example(self):
+        if self.cur_trace_idx is None: return
         if self.alex:
             cur_array = self.current_example.loc[:, ('time', 'f_dex_dem_raw', 'f_dex_aem_raw', 'f_aex_dem_raw', 'f_aex_dem_raw')].to_numpy(copy=True).T
         else:
@@ -722,6 +724,10 @@ possible, and the error message below
             ldf_list.append(trace_dict[idx].loc[self.data.label_dict[idx] == num_state - 1,
                                                 ('f_aex_dem_raw', 'f_dex_dem_raw')])
         return pd.concat(ldf_list)
+
+    def update_framerate(self, attr, old, new):
+        if old == new: return
+        self.data.framerate = new
 
     def estimate_crosstalk_params(self):
 
@@ -982,6 +988,7 @@ possible, and the error message below
         self.bg_checkbox.on_change('active', lambda attr, old, new: self.update_eps())
         self.bg_button.on_click(self.update_eps)
         self.alex_checkbox.on_change('active', self.update_alex_checkbox)
+        self.framerate_spinner.on_change('value', self.update_framerate)
         self.alex_estimate_button.on_click(self.estimate_crosstalk_params)
         self.num_states_slider.on_change('value', self.update_num_states)
         self.alex_corr_button.on_click(self.update_crosstalk)
