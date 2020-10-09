@@ -220,6 +220,7 @@ class FretReport(object):
 
     def draw_transition_density_plot(self):
         fig = plt.figure()
+        if len(self.transition_df) < 3: return "Not enough events"
         ax = sns.kdeplot(self.transition_df.E_FRET_before, self.transition_df.E_FRET_after, shade=True, cmap="coolwarm", ax=fig.gca())
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)

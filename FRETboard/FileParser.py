@@ -91,20 +91,29 @@ class FileParser(object):
             self.write_away_traces(self.dat_dict)
             self.dat_dict = dict()
 
-
-    def parse_trace_file(self, fn, file_contents):
+    def parse_trace_file(self, fn, fc):
         self.nb_files -= 1
-        nb_frames, _, nb_traces = np.frombuffer(file_contents, dtype=np.int16, count=3)
-        nb_colors = 4 if self.alex else 2
-        nb_samples = nb_traces // nb_colors
-        traces_vec = np.frombuffer(file_contents, dtype=np.int16)
-        traces_vec = traces_vec[3:]
+        # nb_frames, _, nb_traces = np.frombuffer(file_contents, dtype=np.int16, count=3)
+        traces_vec = np.frombuffer(fc, dtype=np.int16)
+        nb_frames, nb_traces, traces_vec = traces_vec[0], traces_vec[2], traces_vec[3:]
+        if self.alex:
+            nb_frames = nb_frames // 2
+            nb_colors = 4
+        else:
+            nb_colors = 2
+        nb_samples = nb_traces // 2
         nb_points_expected = nb_colors * nb_samples * nb_frames
         traces_vec = traces_vec[:nb_points_expected]
         file_contents = traces_vec.reshape((nb_colors, nb_samples, nb_frames), order='F')
+        sampling_freq = 1.0 / self.framerate
+        if self.alex:
+            # file_contents = file_contents[[0, 2, 1, 3], :, :]
+            file_contents = file_contents[[1, 3, 0, 2], :, :]
+            sampling_freq *= 2
+            # file_contents = file_contents[[2, 3, 0, 1], :, :]
         fn_clean = os.path.splitext(fn)[0]
         fn_list = [f'{fn_clean}_{it}.dat' for it in range(nb_samples)]
-        sampling_freq = 1.0 / self.framerate
+
         chunk_lim = self.chunk_size - 1
         out_dict = {}
         for fi, f in enumerate(np.hsplit(file_contents, file_contents.shape[1])):

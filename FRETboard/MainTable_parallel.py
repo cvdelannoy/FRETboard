@@ -141,7 +141,7 @@ class MainTable(object):
             # sleep(0.1)
         # if not self.manual_table.loc[idx, 'is_labeled']:
         #     self.label_dict[idx] = pred
-        return pd.DataFrame(data=np.vstack((tup, pred)).T, columns=colnames_alex_w_labels if self.alex else colnames_w_labels)
+        return pd.DataFrame(data=np.vstack((tup, pred)).T, columns=colnames_alex_w_labels)
 
     def get_trace_dict(self, labeled_only=False):
         out_dict = {}

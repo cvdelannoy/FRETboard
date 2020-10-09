@@ -140,6 +140,7 @@ class Gui(object):
                                                  correlation_coefficient=[], E_FRET_sd=[], i_sum=[], time=[],
                                                  rect_height=[], rect_height_half=[], rect_mid=[], rect_mid_up=[], rect_mid_down=[], rect_width=[],
                                                  i_sum_height=[], i_sum_mid=[],
+                                                 f_aex_dem=[], f_aex_aem=[],
                                                  labels=[], labels_pct=[], prediction_pct=[]))
         ahb = np.arange(start=0, stop=100, step=5)
         self.new_source = ColumnDataSource({'file_contents': [], 'file_name': []})
@@ -411,6 +412,7 @@ possible, and the error message below
                                 rect_width=np.repeat(rect_width, nb_samples),
                                 i_sum_height=np.repeat(self.current_example.i_sum.max(), nb_samples),
                                 i_sum_mid=np.repeat(self.current_example.i_sum.mean(), nb_samples),
+                                f_aex_dem=self.current_example.f_aex_dem, f_aex_aem=self.current_example.f_aex_aem,
                                 labels=self.data.label_dict[self.cur_trace_idx],
                                 labels_pct=self.data.label_dict[self.cur_trace_idx] / (self.num_states_slider.value - 1),
                                 prediction_pct=self.current_example.predicted / (self.num_states_slider.value - 1))
@@ -501,7 +503,7 @@ possible, and the error message below
         else:
             cur_array = self.current_example.loc[:, ('time', 'f_dex_dem_raw', 'f_dex_aem_raw')].to_numpy(copy=True).T
         out_array = get_tuple(cur_array, self.data.eps, self.data.l, self.data.d, self.data.gamma)
-        self.current_example.loc[:, colnames_alex if self.alex else colnames] = out_array.T
+        self.current_example.loc[:, colnames_alex] = out_array.T
 
     def update_accuracy_hist(self):
         acc_counts = np.histogram(self.data.accuracy[0], bins=np.linspace(5, 100, num=20))[0]
@@ -641,6 +643,7 @@ possible, and the error message below
             return
         trace_dict = self.data.get_trace_dict()
         ssdf = pd.DataFrame(columns=['mu', 'sd', 'srsd', 'n_points'])
+        self.notify('Generating FRET X peaks, please wait...')
         for fn in trace_dict:
             sm_bool = [True for sm in self.saveme_checkboxes.active if sm in trace_dict[fn].predicted]
             if not any(sm_bool): continue
@@ -890,6 +893,19 @@ possible, and the error message below
         ts_i_sum.toolbar = self.ts_toolbar
         i_sum_panel = Panel(child=ts_i_sum, title='I sum')
 
+        # ALEX series
+        ts_alex = figure(tools=tool_list, plot_width=1075, plot_height=275,
+                          active_drag=self.xbox_select, x_range=ts.x_range,
+                          x_axis_label='Time (s)', y_axis_label='Intensity')
+        ts_alex.rect(x='time', y='rect_mid', width='rect_width', height='rect_height', fill_color={'field': 'labels_pct',
+                                                                                              'transform': self.col_mapper},
+                source=self.source, **rect_opts)
+        ts_alex.line('time', 'f_dex_dem', color='#4daf4a', source=self.source, **line_opts)
+        ts_alex.line('time', 'f_dex_aem', color='#e41a1c', source=self.source, **line_opts)
+        ts_alex.line('time', 'f_aex_dem', color='#b6edb4', source=self.source, **line_opts)
+        ts_alex.line('time', 'f_aex_aem', color='#f0a5a6', source=self.source, **line_opts)
+        alex_panel = Panel(child=ts_alex, title='ALEX')
+
         # manual and predicted timeseries
         # old tools: 'xbox_select,save,xwheel_zoom,xwheel_pan,pan'
         ts_manual = figure(tools=tool_list, plot_width=1075, plot_height=275,
@@ -941,7 +957,7 @@ possible, and the error message below
                    self.keystroke_holder,
                 width=500)
             , width=1075)), title='Settings')
-        tabs = Tabs(tabs=[ts_panel, efret_panel, corr_panel, i_sum_panel, pred_vs_manual_panel, settings_panel])
+        tabs = Tabs(tabs=[ts_panel, efret_panel, corr_panel, i_sum_panel, pred_vs_manual_panel, alex_panel, settings_panel])
 
         # accuracy histogram
         acc_hist = figure(toolbar_location=None, plot_width=275, plot_height=275, x_range=[0, 100],

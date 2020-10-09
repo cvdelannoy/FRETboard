@@ -264,7 +264,9 @@ def get_tuple(fc, eps, l, d, gamma):
                           f_aex_dem_raw, f_aex_aem_raw, f_aex_dem, f_aex_aem,
                           E_FRET, E_FRET_sd, i_sum, i_sum_sd, correlation_coefficient])
     else:
+        dummy = np.zeros_like(f_dex_dem_raw)
         return np.vstack([time, f_dex_dem_raw, f_dex_aem_raw, f_dex_dem, f_dex_aem,
+                          dummy.copy(), dummy.copy(), dummy.copy(), dummy.copy(),
                           E_FRET, E_FRET_sd, i_sum, i_sum_sd, correlation_coefficient])
 
 
