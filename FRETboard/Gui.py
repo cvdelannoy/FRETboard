@@ -499,7 +499,7 @@ possible, and the error message below
     def refilter_current_example(self):
         if self.cur_trace_idx is None: return
         if self.alex:
-            cur_array = self.current_example.loc[:, ('time', 'f_dex_dem_raw', 'f_dex_aem_raw', 'f_aex_dem_raw', 'f_aex_dem_raw')].to_numpy(copy=True).T
+            cur_array = self.current_example.loc[:, ('time', 'f_dex_dem_raw', 'f_dex_aem_raw', 'f_aex_dem_raw', 'f_aex_aem_raw')].to_numpy(copy=True).T
         else:
             cur_array = self.current_example.loc[:, ('time', 'f_dex_dem_raw', 'f_dex_aem_raw')].to_numpy(copy=True).T
         out_array = get_tuple(cur_array, self.data.eps, self.data.l, self.data.d, self.data.gamma)
