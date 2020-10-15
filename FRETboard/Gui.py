@@ -119,6 +119,7 @@ class Gui(object):
         self.buffer_slider = Slider(title='Buffer', value=1, start=1, end=20, step=1)
         self.bootstrap_size_spinner = Spinner(value=100, step=1)
         self.alex_checkbox = CheckboxGroup(labels=[''], active=[])
+        self.traceswitch_checkbox = CheckboxGroup(labels=[''], active=[])
         self.gamma_factor_spinner = Spinner(value=1.0, step=0.001)
         self.l_spinner = Spinner(value=0.0, step=0.001)
         self.d_spinner = Spinner(value=0.0, step=0.001)
@@ -502,7 +503,7 @@ possible, and the error message below
             cur_array = self.current_example.loc[:, ('time', 'f_dex_dem_raw', 'f_dex_aem_raw', 'f_aex_dem_raw', 'f_aex_aem_raw')].to_numpy(copy=True).T
         else:
             cur_array = self.current_example.loc[:, ('time', 'f_dex_dem_raw', 'f_dex_aem_raw')].to_numpy(copy=True).T
-        out_array = get_tuple(cur_array, self.data.eps, self.data.l, self.data.d, self.data.gamma)
+        out_array = get_tuple(cur_array, self.data.eps, self.data.l, self.data.d, self.data.gamma, self.data.traceswitch)
         self.current_example.loc[:, colnames_alex] = out_array.T
 
     def update_accuracy_hist(self):
@@ -537,6 +538,15 @@ possible, and the error message below
             self.data.alex = 1
         else:
             self.data.alex = 0
+
+    def update_traceswitch_checkbox(self, attr, old, new):
+        if len(self.traceswitch_checkbox.active):
+            self.data.traceswitch = 1
+        else:
+            self.data.traceswitch = 0
+        if old != new:
+            self.refilter_current_example()
+            self.redraw_trigger()
 
     def update_state_curves(self):
         feature = self.feature_list[self.state_radio.active]
@@ -931,7 +941,8 @@ possible, and the error message below
                 Div(text='<b>Filtering options</b>', height=15, width=200),
                 row(Div(text='DBSCAN filter epsilon: ', height=15, width=200), widgetbox(self.eps_spinner, width=75), widgetbox(self.bg_button, width=65), width=500),
                 Div(text='<b>ALEX (experimental!)</b>', height=15, width=200),
-                row(Div(text='Load ALEX traces: ', height=15, width=200), self.alex_checkbox, width=500),
+                row(Div(text='Load ALEX traces: ', height=15, width=130), widgetbox(self.alex_checkbox, width=30),
+                    Div(text='Switch order lasers: ', height=15, width=130), widgetbox(self.traceswitch_checkbox, width=30), width=500),
                 row(
                     Div(text='gamma: ', height=15, width=80), widgetbox(self.gamma_factor_spinner, width=75),
                     Div(text='<i>l</i>: ', height=15, width=35), widgetbox(self.l_spinner, width=75),
@@ -1004,6 +1015,7 @@ possible, and the error message below
         self.bg_checkbox.on_change('active', lambda attr, old, new: self.update_eps())
         self.bg_button.on_click(self.update_eps)
         self.alex_checkbox.on_change('active', self.update_alex_checkbox)
+        self.traceswitch_checkbox.on_change('active', self.update_traceswitch_checkbox)
         self.framerate_spinner.on_change('value', self.update_framerate)
         self.alex_estimate_button.on_click(self.estimate_crosstalk_params)
         self.num_states_slider.on_change('value', self.update_num_states)

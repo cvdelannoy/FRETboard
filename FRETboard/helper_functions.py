@@ -177,17 +177,27 @@ def series_to_array(df):
     return np.concatenate([dv for dv in df.values if len(dv)])
 
 
-def bg_filter_trace(tr, eps):
+def bg_filter_trace(tr, eps, f_aex=None):
     if np.isnan(eps):
-        return np.copy(tr)
+        if f_aex is None:
+            return np.copy(tr)
+        return tr, f_aex
     min_clust = 10
-    pc10 = np.percentile(tr, 20)
-    tr_pc10 = tr[tr < pc10]
+    if f_aex is not None:
+        tr_joined = np.concatenate((tr, f_aex))
+    else:
+        tr_joined = tr
+    pc10 = np.percentile(tr_joined, 20)
+    tr_pc10 = tr_joined[tr_joined < pc10]
     clust = DBSCAN(eps=eps, min_samples=min_clust).fit(tr_pc10.reshape(-1, 1)).labels_
     if np.sum(np.unique(clust) != -1) == 0:
-        return tr - tr.min()
-    med_list = np.array([np.median(tr_pc10[clust == lab]) for lab in np.unique(clust)])
-    return tr - np.min(med_list)
+        bg = np.min(tr_joined)
+    else:
+        med_list = np.array([np.median(tr_pc10[clust == lab]) for lab in np.unique(clust)])
+        bg = np.min(med_list)
+    if f_aex is None:
+        return tr - bg
+    return tr - bg, f_aex - bg
 
 
 def df_empty(columns, dtypes, index=None):
@@ -225,7 +235,7 @@ def get_derived_features(i_don, i_acc, f_acc_don_raw, f_acc_acc_raw, gamma=1.0, 
     i_sum_sd[ss:-ss] = rolling_var(i_sum, window)
     return E_FRET, E_FRET_sd, i_sum, i_sum_sd, correlation_coefficient
 
-def get_tuple(fc, eps, l, d, gamma):
+def get_tuple(fc, eps, l, d, gamma, traceswitch):
     """
     construct tuple from numpy file content array. Tuple measures [nb_features x len(trace)]
     """
@@ -235,15 +245,20 @@ def get_tuple(fc, eps, l, d, gamma):
     time = fc[0, :].astype(np.float64)
     f_dex_dem_raw = fc[1, :].astype(np.float64)
     f_dex_aem_raw = fc[2, :].astype(np.float64)
-    f_dex_dem = bg_filter_trace(f_dex_dem_raw, eps)
-    f_dex_aem = bg_filter_trace(f_dex_aem_raw, eps)
-    cross_correct = 0
     if fc.shape[0] == 5:
         f_aex_dem_raw = fc[3, :].astype(np.float64)
         f_aex_aem_raw = fc[4, :].astype(np.float64)
-        f_aex_dem = bg_filter_trace(f_aex_dem_raw, eps)
-        f_aex_aem = bg_filter_trace(f_aex_aem_raw, eps)
+        f_dex_dem, f_aex_dem = bg_filter_trace(f_dex_dem_raw, eps, f_aex_dem_raw)
+        f_dex_aem, f_aex_aem = bg_filter_trace(f_dex_aem_raw, eps, f_aex_aem_raw)
+        if traceswitch:
+            f_dex_dem, f_aex_dem, f_dex_aem, f_aex_aem = f_aex_dem, f_dex_dem, f_aex_aem, f_dex_aem
+        # f_aex_dem = bg_filter_trace(f_aex_dem_raw, eps)
+        # f_aex_aem = bg_filter_trace(f_aex_aem_raw, eps)
         cross_correct = l * f_dex_dem + d * f_aex_aem
+    else:
+        f_dex_dem = bg_filter_trace(f_dex_dem_raw, eps)
+        f_dex_aem = bg_filter_trace(f_dex_aem_raw, eps)
+        cross_correct = 0
     f_fret = f_dex_aem - cross_correct
     i_sum = gamma * f_dex_dem + f_fret
     with warnings.catch_warnings():
