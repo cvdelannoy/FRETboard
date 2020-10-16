@@ -72,7 +72,8 @@ class Gui(object):
         self.nb_processes = nb_processes
         self.allow_custom_scripts = allow_custom_scripts
         self.feature_list = ['E_FRET', 'E_FRET_sd', 'i_sum', 'i_sum_sd',
-                             'correlation_coefficient', 'f_dex_dem', 'f_dex_aem']
+                             'correlation_coefficient', 'f_dex_dem', 'f_dex_aem',
+                             'f_aex_dem', 'f_aex_aem']
         self.h5_dir = tempfile.mkdtemp()
         self.data = MainTable(10.0, np.nan, 0.0, 0.0, 1.0, 0, self.h5_dir, os.getpid())
         self.file_parser_process = self.data.init_table()
@@ -624,6 +625,9 @@ possible, and the error message below
             self.saveme_checkboxes.labels = showme_states
             self.saveme_checkboxes.active = showme_idx
 
+            self.alex_fret_checkboxes.labels = showme_states
+            self.alex_fret_checkboxes.active = []
+
             # Update widget: selected state slider
             self.sel_state_slider.end = new
             if self.sel_state_slider.value > new: self.sel_state_slider.value = new
@@ -752,14 +756,14 @@ possible, and the error message below
         if self.d_only_state_spinner.value == self.a_only_state_spinner.value:
             self.notify('One state cannot be Donor-only and Acceptor-only simultaneously!')
             return
-        if self.num_states_slider.value < 4:
-            self.notify('estimating correction parameters requires at least 4 states: D-only, A-only and two other'
-                        'FRET states.')
-            return
+        if self.d_only_state_spinner.value -1 in self.alex_fret_checkboxes.active or \
+                self.a_only_state_spinner.value - 1 in self.alex_fret_checkboxes.active:
+            self.notify('D/A-only states cannot simulateously be a FRET state!')
 
         # Retrieve D and A-only state measurements
-        ddf = self.collect_samples_for_state(trace_dict, self.d_only_state_spinner.value -1)
+        ddf = self.collect_samples_for_state(trace_dict, self.d_only_state_spinner.value - 1)
         adf = self.collect_samples_for_state(trace_dict, self.a_only_state_spinner.value - 1)
+        fret_list = [self.collect_samples_for_state(trace_dict, fs) for fs in self.alex_fret_checkboxes.active]
         if not len(ddf):
             self.notify('No points in labeled examples belonging to dedicated D-only state')
             return
@@ -769,23 +773,27 @@ possible, and the error message below
         total_df = pd.concat(trace_dict.values())
 
         # leakage
-        l = (ddf.f_aex_dem_raw / ddf.f_dex_dem_raw).mean()
+        l = (ddf.f_aex_dem / ddf.f_dex_dem).mean()
 
         # direct excitation
-        d = (adf.f_dex_aem_raw / adf.f_aex_aem_raw).mean()
+        d = (adf.f_dex_aem / adf.f_aex_aem).mean()
 
         # gamma
-        total_df.loc[:, 'f_fret'] = total_df.f_dex_aem_raw - l * total_df.f_dex_dem_raw - d * total_df.f_aex_aem_raw
-        total_df.loc[:, 'f_sum'] = total_df.f_dex_dem_raw + total_df.f_fret
-        e_pr = (total_df.f_fret / (total_df.f_fret + total_df.f_dex_dem_raw)).to_numpy()
-        s_inv = ((total_df.f_sum + total_df.f_aex_aem_raw)/ total_df.f_sum).to_numpy()
-        s_mean = s_inv.mean(); s_sd = s_inv.std()
-        e_mean = e_pr.mean(); e_sd = e_pr.std()
-        sb = np.logical_and(np.logical_and(s_inv > s_mean - 2 * s_sd, s_inv < s_mean + 2 * s_sd),
-                            np.logical_and(e_pr > e_mean - 2 * e_sd, e_pr < e_mean + 2 * e_sd))
-        lm = linear_model.LinearRegression().fit(X=e_pr[sb].reshape(-1, 1), y=s_inv[sb].reshape(-1, 1))
-        omega, sigma = lm.coef_[0, 0], lm.intercept_[0]
-        gamma = (omega - 1) / (omega + sigma - 1)
+        if len(self.alex_fret_checkboxes.active) < 2:
+            self.notify('Skipping gamma estimation as it requires at least two FRET states.')
+            gamma = 1.0
+        else:
+            total_df.loc[:, 'f_fret'] = total_df.f_dex_aem - l * total_df.f_dex_dem - d * total_df.f_aex_aem
+            total_df.loc[:, 'f_sum'] = total_df.f_dex_dem + total_df.f_fret
+            e_pr = (total_df.f_fret / (total_df.f_fret + total_df.f_dex_dem)).to_numpy()
+            s_inv = ((total_df.f_sum + total_df.f_aex_aem)/ total_df.f_sum).to_numpy()
+            s_mean = s_inv.mean(); s_sd = s_inv.std()
+            e_mean = e_pr.mean(); e_sd = e_pr.std()
+            sb = np.logical_and(np.logical_and(s_inv > s_mean - 2 * s_sd, s_inv < s_mean + 2 * s_sd),
+                                np.logical_and(e_pr > e_mean - 2 * e_sd, e_pr < e_mean + 2 * e_sd))
+            lm = linear_model.LinearRegression().fit(X=e_pr[sb].reshape(-1, 1), y=s_inv[sb].reshape(-1, 1))
+            omega, sigma = lm.coef_[0, 0], lm.intercept_[0]
+            gamma = (omega - 1) / (omega + sigma - 1)
 
         self.l_spinner.value = l
         self.d_spinner.value = d
@@ -933,6 +941,11 @@ possible, and the error message below
         pred_vs_manual_panel = Panel(child=widgetbox(column(ts_manual,revert_labels_button)), title='Predicted')
 
         # Additional settings panel
+        self.alex_fret_checkboxes = CheckboxButtonGroup(labels=showme_states, active=[])
+        alex_fret_col = column(Div(text='FRET states (for gamma estimation):', width=300, height=16),
+                            self.alex_fret_checkboxes,
+                            height=80, width=300)
+
         settings_panel = Panel(child=widgetbox(row(
             column(
                 Div(text='<b>Data format options</b>', height=15, width=200),
@@ -943,16 +956,17 @@ possible, and the error message below
                 Div(text='<b>ALEX (experimental!)</b>', height=15, width=200),
                 row(Div(text='Load ALEX traces: ', height=15, width=130), widgetbox(self.alex_checkbox, width=30),
                     Div(text='Switch order lasers: ', height=15, width=130), widgetbox(self.traceswitch_checkbox, width=30), width=500),
-                row(
-                    Div(text='gamma: ', height=15, width=80), widgetbox(self.gamma_factor_spinner, width=75),
-                    Div(text='<i>l</i>: ', height=15, width=35), widgetbox(self.l_spinner, width=75),
-                    Div(text='<i>d</i>: ', height=15, width=35), widgetbox(self.d_spinner, width=75),
-                    widgetbox(self.alex_corr_button, height=15, width=30)),
+                alex_fret_col,
                 row(Div(text='<i>D</i>-only state: ', height=15, width=80),
                     widgetbox(self.d_only_state_spinner, width=75),
                     Div(text='<i>A</i>-only state: ', height=15, width=80),
                     widgetbox(self.a_only_state_spinner, width=75),
                     self.alex_estimate_button, width=200),
+                row(
+                    Div(text='gamma: ', height=15, width=80), widgetbox(self.gamma_factor_spinner, width=75),
+                    Div(text='<i>l</i>: ', height=15, width=35), widgetbox(self.l_spinner, width=75),
+                    Div(text='<i>d</i>: ', height=15, width=35), widgetbox(self.d_spinner, width=75),
+                    widgetbox(self.alex_corr_button, height=15, width=30)),
                 width=500),
             column(Div(text=' ', height=15, width=250), width=75),
             column(
