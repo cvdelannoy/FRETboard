@@ -87,7 +87,7 @@ class FileParser(object):
         file_contents = fc.tostring().decode('utf-8')
         file_contents = np.column_stack([np.fromstring(n, sep=' ') for n in file_contents.split('\n') if len(n)])
         if not len(file_contents): return
-        self.dat_dict[fn] = get_tuple(file_contents, self.eps, self.l, self.d, self.gamma)
+        self.dat_dict[fn] = get_tuple(file_contents, self.eps, self.l, self.d, self.gamma, self.traceswitch)
         if len(self.dat_dict) > self.chunk_size or self.nb_files == 0:
             self.write_away_traces(self.dat_dict)
             self.dat_dict = dict()
@@ -164,7 +164,7 @@ class FileParser(object):
                 time = np.arange(seqlen) * pd['timestamps_specs']['timestamps_unit']
                 ft = np.row_stack((time, f))
 
-                out_dict[f'{fn_base}_{pdn}'] = get_tuple(ft, self.eps, self.l, self.d, self.gamma)
+                out_dict[f'{fn_base}_{pdn}'] = get_tuple(ft, self.eps, self.l, self.d, self.gamma, self.traceswitch)
                 if fi >= chunk_lim:
                     self.write_away_traces(out_dict)
                     out_dict = {}
