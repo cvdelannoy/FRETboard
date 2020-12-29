@@ -103,11 +103,11 @@ class FretReport(object):
 
     @cached_property
     def data_states_mu(self):
-        return [np.mean(self.efret_vec[self.out_label_vec==yn]) for yn in np.arange(self.classifier.nb_states)]
+        return [np.nanmean(self.efret_vec[self.out_label_vec==yn]) for yn in np.arange(self.classifier.nb_states)]
 
     @cached_property
     def data_states_sd(self):
-        return [np.std(self.efret_vec[self.out_label_vec == yn]) for yn in np.arange(self.classifier.nb_states)]
+        return [np.nanstd(self.efret_vec[self.out_label_vec == yn]) for yn in np.arange(self.classifier.nb_states)]
 
     @cached_property
     def data_efret_stats(self):
