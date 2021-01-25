@@ -15,6 +15,7 @@ from threading import Thread, Event
 import pickle
 from sklearn import linear_model
 from jinja2 import Template
+from datetime import datetime
 
 from cached_property import cached_property
 from bokeh.server.server import Server
@@ -330,6 +331,7 @@ possible, and the error message below
         self.l_spinner.value, self.d_spinner.value, self.gamma_factor_spinner.value = self.data.l, self.data.d, self.data.gamma
 
         self.model_loaded = True
+        self.classifier.timestamp = int(datetime.now().strftime('%H%M%S%f'))
         with open(f'{self.h5_dir}/{self.classifier.timestamp}.mod', 'wb') as fh:
             pickle.dump(self.classifier, fh, pickle.HIGHEST_PROTOCOL)
         self.notify('Model loaded')

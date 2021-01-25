@@ -340,6 +340,8 @@ class Classifier(object):
         # actual_tm = self.tm_from_hmm(self.trained, state_order_dict)
         trace_list = list(trace_dict.values())
         nb_traces = len(trace_list)
+        if self.framerate is None:  # todo occurs when model is loaded, never retrained. Find better solution
+            self.framerate = np.mean(trace_list[0].time[1:].to_numpy() - trace_list[0].time[:-1].to_numpy())
         actual_tm = self.tm_from_seq(trace_list)
 
         # CIs
