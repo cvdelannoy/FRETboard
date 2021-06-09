@@ -705,8 +705,11 @@ possible, and the error message below
             self.notify('Select correctly labeled area...')
 
     def guess_labels(self, label_idx):
-        ohmm = OneshotHmm(self.num_states_slider.value, self.current_example.loc[label_idx, self.feature_list],  # todo feature list ok?
-                          self.data.label_dict[self.cur_trace_idx][label_idx])  # todo indexing like this does not error?
+        ohmm = OneshotHmm(self.num_states_slider.value, self.current_example.loc[label_idx,
+                                                                                 self.feature_list
+                                                                                 # [f for i, f in enumerate(self.feature_list) if i in self.features_checkboxes.active],
+        ],
+                          self.data.label_dict[self.cur_trace_idx][label_idx])
         return ohmm.predict(self.current_example.loc[:, self.feature_list])
 
 

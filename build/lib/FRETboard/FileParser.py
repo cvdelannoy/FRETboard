@@ -18,6 +18,7 @@ class FileParser(object):
         self.nb_files = 0
         self.dat_dict = {}
         self.alex = None
+        self.traceswitch = None
         self.framerate = None
         self.l = None
         self.d = None
@@ -71,9 +72,9 @@ class FileParser(object):
             with SafeH5(self.traces_store_fn, 'r') as fh:
                 trace_old = fh['/traces/' + idx][()]  # todo fn right?
             if self.alex:
-                trace_new = get_tuple(trace_old[(0, 1, 2, 5, 6), :], self.eps, self.l, self.d, self.gamma)  # todo indexing works here?
+                trace_new = get_tuple(trace_old[(0, 1, 2, 5, 6), :], self.eps, self.l, self.d, self.gamma, self.traceswitch)  # todo indexing works here?
             else:
-                trace_new = get_tuple(trace_old[(0, 1, 2), :], self.eps, self.l, self.d, self.gamma)
+                trace_new = get_tuple(trace_old[(0, 1, 2), :], self.eps, self.l, self.d, self.gamma, self.traceswitch)
             out_dict[idx] = trace_new
             if ii >=chunk_limit:
                 self.write_away_traces(out_dict)
@@ -86,7 +87,7 @@ class FileParser(object):
         file_contents = fc.tostring().decode('utf-8')
         file_contents = np.column_stack([np.fromstring(n, sep=' ') for n in file_contents.split('\n') if len(n)])
         if not len(file_contents): return
-        self.dat_dict[fn] = get_tuple(file_contents, self.eps, self.l, self.d, self.gamma)
+        self.dat_dict[fn] = get_tuple(file_contents, self.eps, self.l, self.d, self.gamma, self.traceswitch)
         if len(self.dat_dict) > self.chunk_size or self.nb_files == 0:
             self.write_away_traces(self.dat_dict)
             self.dat_dict = dict()
@@ -104,13 +105,20 @@ class FileParser(object):
         nb_samples = nb_traces // 2
         nb_points_expected = nb_colors * nb_samples * nb_frames
         traces_vec = traces_vec[:nb_points_expected]
-        file_contents = traces_vec.reshape((nb_colors, nb_samples, nb_frames), order='F')
         sampling_freq = 1.0 / self.framerate
         if self.alex:
-            # file_contents = file_contents[[0, 2, 1, 3], :, :]
-            file_contents = file_contents[[1, 3, 0, 2], :, :]
+            # todo direct copy of procedure in matlab script
+            Data = traces_vec.reshape((nb_traces, nb_frames * 2), order='F')
+            GRem = Data[np.arange(0, nb_traces, 2), :]
+            REem = Data[np.arange(0, nb_traces, 2) + 1, :]
+            GRexGRem = GRem[:, np.arange(0, GRem.shape[1], 2)]
+            REexGRem = GRem[:, np.arange(0, GRem.shape[1], 2) + 1]
+            GRexREem = REem[:, np.arange(0, REem.shape[1], 2)]
+            REexREem = REem[:, np.arange(0, REem.shape[1], 2) + 1]
+            file_contents = np.stack((GRexGRem, GRexREem, REexGRem, REexREem), axis=0)
             sampling_freq *= 2
-            # file_contents = file_contents[[2, 3, 0, 1], :, :]
+        else:
+            file_contents = traces_vec.reshape((nb_colors, nb_samples, nb_frames), order='F')
         fn_clean = os.path.splitext(fn)[0]
         fn_list = [f'{fn_clean}_{it}.dat' for it in range(nb_samples)]
 
@@ -119,7 +127,7 @@ class FileParser(object):
         for fi, f in enumerate(np.hsplit(file_contents, file_contents.shape[1])):
             f = f.squeeze()
             time = np.arange(f.shape[1]) * sampling_freq
-            out_dict[fn_list[fi]] = get_tuple(np.row_stack((time, f)), self.eps, self.l, self.d, self.gamma)
+            out_dict[fn_list[fi]] = get_tuple(np.row_stack((time, f)), self.eps, self.l, self.d, self.gamma, self.traceswitch)
             if fi >= chunk_lim:
                 self.write_away_traces(out_dict)
                 out_dict = {}
@@ -156,7 +164,7 @@ class FileParser(object):
                 time = np.arange(seqlen) * pd['timestamps_specs']['timestamps_unit']
                 ft = np.row_stack((time, f))
 
-                out_dict[f'{fn_base}_{pdn}'] = get_tuple(ft, self.eps, self.l, self.d, self.gamma)
+                out_dict[f'{fn_base}_{pdn}'] = get_tuple(ft, self.eps, self.l, self.d, self.gamma, self.traceswitch)
                 if fi >= chunk_lim:
                     self.write_away_traces(out_dict)
                     out_dict = {}
@@ -172,9 +180,9 @@ class FileParser(object):
         """
         (self.data_timestamp, self.framerate,
          self.l, self.d, self.gamma,
-         self.eps, self.alex) = (fh.attrs['data_timestamp'], fh.attrs['framerate'],
+         self.eps, self.alex, self.traceswitch) = (fh.attrs['data_timestamp'], fh.attrs['framerate'],
                                  fh.attrs['l'], fh.attrs['d'], fh.attrs['gamma'],
-                                 fh.attrs['eps'], fh.attrs['alex'])
+                                 fh.attrs['eps'], fh.attrs['alex'], fh.attrs['traceswitch'])
 
     def write_away_traces(self, out_dict):
         # note: mod_timestamp set to -1 to signify nan integer

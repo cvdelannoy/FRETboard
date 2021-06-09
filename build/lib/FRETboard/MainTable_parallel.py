@@ -21,7 +21,7 @@ class MainTable(object):
         self.predict_store_fn = h5_dir + 'predict_store_fn.h5'
         self.toparse_fn = h5_dir + 'to_parse.h5'
         self.label_dict = dict()
-        self._eps, self._l, self._d, self._gamma, self._alex = eps, l, d, gamma, alex
+        self._eps, self._l, self._d, self._gamma, self._alex, self._traceswitch = eps, l, d, gamma, alex, 0
         self.framerate = framerate
         # _ = self.init_table(framerate, alex)
         # self.file_parser_process = self.init_table(framerate, alex)
@@ -50,6 +50,10 @@ class MainTable(object):
     def alex(self):
         return self._alex
 
+    @property
+    def traceswitch(self):
+        return self._traceswitch
+
     @framerate.setter
     def framerate(self, framerate):
         self.data_timestamp = numeric_timestamp()
@@ -65,6 +69,14 @@ class MainTable(object):
             fh.attrs['alex'] = alex
             fh.attrs['data_timestamp'] = self.data_timestamp
         self._alex = alex
+
+    @traceswitch.setter
+    def traceswitch(self, traceswitch):
+        self.data_timestamp = numeric_timestamp()
+        with SafeH5(self.toparse_fn, 'a') as fh:
+            fh.attrs['traceswitch'] = traceswitch
+            fh.attrs['data_timestamp'] = self.data_timestamp
+        self._traceswitch = traceswitch
 
     @eps.setter
     def eps(self, eps):
@@ -118,8 +130,9 @@ class MainTable(object):
             (fh.attrs['data_timestamp'],
              fh.attrs['framerate'], fh.attrs['eps'],
              fh.attrs['l'], fh.attrs['d'],
-             fh.attrs['gamma'], fh.attrs['alex']) = (self.data_timestamp, self.framerate, self.eps, self.l, self.d,
-                                                     self.gamma, self.alex)
+             fh.attrs['gamma'], fh.attrs['alex'],
+             fh.attrs['traceswitch']) = (self.data_timestamp, self.framerate, self.eps, self.l, self.d,
+                                                     self.gamma, self.alex, self.traceswitch)
 
         # hdf5 file for transfer to predictor
         with SafeH5(self.predict_store_fn, 'w') as fh:

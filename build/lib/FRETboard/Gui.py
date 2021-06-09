@@ -15,6 +15,7 @@ from threading import Thread, Event
 import pickle
 from sklearn import linear_model
 from jinja2 import Template
+from datetime import datetime
 
 from cached_property import cached_property
 from bokeh.server.server import Server
@@ -72,7 +73,8 @@ class Gui(object):
         self.nb_processes = nb_processes
         self.allow_custom_scripts = allow_custom_scripts
         self.feature_list = ['E_FRET', 'E_FRET_sd', 'i_sum', 'i_sum_sd',
-                             'correlation_coefficient', 'f_dex_dem', 'f_dex_aem']
+                             'correlation_coefficient', 'f_dex_dem', 'f_dex_aem',
+                             'f_aex_dem', 'f_aex_aem']
         self.h5_dir = tempfile.mkdtemp()
         self.data = MainTable(10.0, np.nan, 0.0, 0.0, 1.0, 0, self.h5_dir, os.getpid())
         self.file_parser_process = self.data.init_table()
@@ -119,6 +121,7 @@ class Gui(object):
         self.buffer_slider = Slider(title='Buffer', value=1, start=1, end=20, step=1)
         self.bootstrap_size_spinner = Spinner(value=100, step=1)
         self.alex_checkbox = CheckboxGroup(labels=[''], active=[])
+        self.traceswitch_checkbox = CheckboxGroup(labels=[''], active=[])
         self.gamma_factor_spinner = Spinner(value=1.0, step=0.001)
         self.l_spinner = Spinner(value=0.0, step=0.001)
         self.d_spinner = Spinner(value=0.0, step=0.001)
@@ -328,6 +331,7 @@ possible, and the error message below
         self.l_spinner.value, self.d_spinner.value, self.gamma_factor_spinner.value = self.data.l, self.data.d, self.data.gamma
 
         self.model_loaded = True
+        self.classifier.timestamp = int(datetime.now().strftime('%H%M%S%f'))
         with open(f'{self.h5_dir}/{self.classifier.timestamp}.mod', 'wb') as fh:
             pickle.dump(self.classifier, fh, pickle.HIGHEST_PROTOCOL)
         self.notify('Model loaded')
@@ -499,10 +503,10 @@ possible, and the error message below
     def refilter_current_example(self):
         if self.cur_trace_idx is None: return
         if self.alex:
-            cur_array = self.current_example.loc[:, ('time', 'f_dex_dem_raw', 'f_dex_aem_raw', 'f_aex_dem_raw', 'f_aex_dem_raw')].to_numpy(copy=True).T
+            cur_array = self.current_example.loc[:, ('time', 'f_dex_dem_raw', 'f_dex_aem_raw', 'f_aex_dem_raw', 'f_aex_aem_raw')].to_numpy(copy=True).T
         else:
             cur_array = self.current_example.loc[:, ('time', 'f_dex_dem_raw', 'f_dex_aem_raw')].to_numpy(copy=True).T
-        out_array = get_tuple(cur_array, self.data.eps, self.data.l, self.data.d, self.data.gamma)
+        out_array = get_tuple(cur_array, self.data.eps, self.data.l, self.data.d, self.data.gamma, self.data.traceswitch)
         self.current_example.loc[:, colnames_alex] = out_array.T
 
     def update_accuracy_hist(self):
@@ -537,6 +541,15 @@ possible, and the error message below
             self.data.alex = 1
         else:
             self.data.alex = 0
+
+    def update_traceswitch_checkbox(self, attr, old, new):
+        if len(self.traceswitch_checkbox.active):
+            self.data.traceswitch = 1
+        else:
+            self.data.traceswitch = 0
+        if old != new:
+            self.refilter_current_example()
+            self.redraw_trigger()
 
     def update_state_curves(self):
         feature = self.feature_list[self.state_radio.active]
@@ -614,6 +627,9 @@ possible, and the error message below
             self.saveme_checkboxes.labels = showme_states
             self.saveme_checkboxes.active = showme_idx
 
+            self.alex_fret_checkboxes.labels = showme_states
+            self.alex_fret_checkboxes.active = []
+
             # Update widget: selected state slider
             self.sel_state_slider.end = new
             if self.sel_state_slider.value > new: self.sel_state_slider.value = new
@@ -689,8 +705,11 @@ possible, and the error message below
             self.notify('Select correctly labeled area...')
 
     def guess_labels(self, label_idx):
-        ohmm = OneshotHmm(self.num_states_slider.value, self.current_example.loc[label_idx, self.feature_list],  # todo feature list ok?
-                          self.data.label_dict[self.cur_trace_idx][label_idx])  # todo indexing like this does not error?
+        ohmm = OneshotHmm(self.num_states_slider.value, self.current_example.loc[label_idx,
+                                                                                 self.feature_list
+                                                                                 # [f for i, f in enumerate(self.feature_list) if i in self.features_checkboxes.active],
+        ],
+                          self.data.label_dict[self.cur_trace_idx][label_idx])
         return ohmm.predict(self.current_example.loc[:, self.feature_list])
 
 
@@ -742,14 +761,14 @@ possible, and the error message below
         if self.d_only_state_spinner.value == self.a_only_state_spinner.value:
             self.notify('One state cannot be Donor-only and Acceptor-only simultaneously!')
             return
-        if self.num_states_slider.value < 4:
-            self.notify('estimating correction parameters requires at least 4 states: D-only, A-only and two other'
-                        'FRET states.')
-            return
+        if self.d_only_state_spinner.value -1 in self.alex_fret_checkboxes.active or \
+                self.a_only_state_spinner.value - 1 in self.alex_fret_checkboxes.active:
+            self.notify('D/A-only states cannot simulateously be a FRET state!')
 
         # Retrieve D and A-only state measurements
-        ddf = self.collect_samples_for_state(trace_dict, self.d_only_state_spinner.value -1)
+        ddf = self.collect_samples_for_state(trace_dict, self.d_only_state_spinner.value - 1)
         adf = self.collect_samples_for_state(trace_dict, self.a_only_state_spinner.value - 1)
+        fret_list = [self.collect_samples_for_state(trace_dict, fs) for fs in self.alex_fret_checkboxes.active]
         if not len(ddf):
             self.notify('No points in labeled examples belonging to dedicated D-only state')
             return
@@ -759,23 +778,27 @@ possible, and the error message below
         total_df = pd.concat(trace_dict.values())
 
         # leakage
-        l = (ddf.f_aex_dem_raw / ddf.f_dex_dem_raw).mean()
+        l = (ddf.f_aex_dem / ddf.f_dex_dem).mean()
 
         # direct excitation
-        d = (adf.f_dex_aem_raw / adf.f_aex_aem_raw).mean()
+        d = (adf.f_dex_aem / adf.f_aex_aem).mean()
 
         # gamma
-        total_df.loc[:, 'f_fret'] = total_df.f_dex_aem_raw - l * total_df.f_dex_dem_raw - d * total_df.f_aex_aem_raw
-        total_df.loc[:, 'f_sum'] = total_df.f_dex_dem_raw + total_df.f_fret
-        e_pr = (total_df.f_fret / (total_df.f_fret + total_df.f_dex_dem_raw)).to_numpy()
-        s_inv = ((total_df.f_sum + total_df.f_aex_aem_raw)/ total_df.f_sum).to_numpy()
-        s_mean = s_inv.mean(); s_sd = s_inv.std()
-        e_mean = e_pr.mean(); e_sd = e_pr.std()
-        sb = np.logical_and(np.logical_and(s_inv > s_mean - 2 * s_sd, s_inv < s_mean + 2 * s_sd),
-                            np.logical_and(e_pr > e_mean - 2 * e_sd, e_pr < e_mean + 2 * e_sd))
-        lm = linear_model.LinearRegression().fit(X=e_pr[sb].reshape(-1, 1), y=s_inv[sb].reshape(-1, 1))
-        omega, sigma = lm.coef_[0, 0], lm.intercept_[0]
-        gamma = (omega - 1) / (omega + sigma - 1)
+        if len(self.alex_fret_checkboxes.active) < 2:
+            self.notify('Skipping gamma estimation as it requires at least two FRET states.')
+            gamma = 1.0
+        else:
+            total_df.loc[:, 'f_fret'] = total_df.f_dex_aem - l * total_df.f_dex_dem - d * total_df.f_aex_aem
+            total_df.loc[:, 'f_sum'] = total_df.f_dex_dem + total_df.f_fret
+            e_pr = (total_df.f_fret / (total_df.f_fret + total_df.f_dex_dem)).to_numpy()
+            s_inv = ((total_df.f_sum + total_df.f_aex_aem)/ total_df.f_sum).to_numpy()
+            s_mean = s_inv.mean(); s_sd = s_inv.std()
+            e_mean = e_pr.mean(); e_sd = e_pr.std()
+            sb = np.logical_and(np.logical_and(s_inv > s_mean - 2 * s_sd, s_inv < s_mean + 2 * s_sd),
+                                np.logical_and(e_pr > e_mean - 2 * e_sd, e_pr < e_mean + 2 * e_sd))
+            lm = linear_model.LinearRegression().fit(X=e_pr[sb].reshape(-1, 1), y=s_inv[sb].reshape(-1, 1))
+            omega, sigma = lm.coef_[0, 0], lm.intercept_[0]
+            gamma = (omega - 1) / (omega + sigma - 1)
 
         self.l_spinner.value = l
         self.d_spinner.value = d
@@ -923,6 +946,11 @@ possible, and the error message below
         pred_vs_manual_panel = Panel(child=widgetbox(column(ts_manual,revert_labels_button)), title='Predicted')
 
         # Additional settings panel
+        self.alex_fret_checkboxes = CheckboxButtonGroup(labels=showme_states, active=[])
+        alex_fret_col = column(Div(text='FRET states (for gamma estimation):', width=300, height=16),
+                            self.alex_fret_checkboxes,
+                            height=80, width=300)
+
         settings_panel = Panel(child=widgetbox(row(
             column(
                 Div(text='<b>Data format options</b>', height=15, width=200),
@@ -931,17 +959,19 @@ possible, and the error message below
                 Div(text='<b>Filtering options</b>', height=15, width=200),
                 row(Div(text='DBSCAN filter epsilon: ', height=15, width=200), widgetbox(self.eps_spinner, width=75), widgetbox(self.bg_button, width=65), width=500),
                 Div(text='<b>ALEX (experimental!)</b>', height=15, width=200),
-                row(Div(text='Load ALEX traces: ', height=15, width=200), self.alex_checkbox, width=500),
-                row(
-                    Div(text='gamma: ', height=15, width=80), widgetbox(self.gamma_factor_spinner, width=75),
-                    Div(text='<i>l</i>: ', height=15, width=35), widgetbox(self.l_spinner, width=75),
-                    Div(text='<i>d</i>: ', height=15, width=35), widgetbox(self.d_spinner, width=75),
-                    widgetbox(self.alex_corr_button, height=15, width=30)),
+                row(Div(text='Load ALEX traces: ', height=15, width=130), widgetbox(self.alex_checkbox, width=30),
+                    Div(text='Switch order lasers: ', height=15, width=130), widgetbox(self.traceswitch_checkbox, width=30), width=500),
+                alex_fret_col,
                 row(Div(text='<i>D</i>-only state: ', height=15, width=80),
                     widgetbox(self.d_only_state_spinner, width=75),
                     Div(text='<i>A</i>-only state: ', height=15, width=80),
                     widgetbox(self.a_only_state_spinner, width=75),
                     self.alex_estimate_button, width=200),
+                row(
+                    Div(text='gamma: ', height=15, width=80), widgetbox(self.gamma_factor_spinner, width=75),
+                    Div(text='<i>l</i>: ', height=15, width=35), widgetbox(self.l_spinner, width=75),
+                    Div(text='<i>d</i>: ', height=15, width=35), widgetbox(self.d_spinner, width=75),
+                    widgetbox(self.alex_corr_button, height=15, width=30)),
                 width=500),
             column(Div(text=' ', height=15, width=250), width=75),
             column(
@@ -1004,6 +1034,7 @@ possible, and the error message below
         self.bg_checkbox.on_change('active', lambda attr, old, new: self.update_eps())
         self.bg_button.on_click(self.update_eps)
         self.alex_checkbox.on_change('active', self.update_alex_checkbox)
+        self.traceswitch_checkbox.on_change('active', self.update_traceswitch_checkbox)
         self.framerate_spinner.on_change('value', self.update_framerate)
         self.alex_estimate_button.on_click(self.estimate_crosstalk_params)
         self.num_states_slider.on_change('value', self.update_num_states)

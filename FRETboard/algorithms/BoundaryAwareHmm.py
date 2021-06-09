@@ -320,7 +320,7 @@ class Classifier(object):
         if trace_state_list is None:  # sequence is impossible, logprob -inf
             return np.zeros(len(trace_df)), 1E-90
         state_list = np.vectorize(self.gui_state_dict.__getitem__)([ts[0] for ts in trace_state_list[1:-1]])
-        return state_list, logprob
+        return state_list, logprob / len(trace_df)
 
     def get_matrix(self, df):
         """

@@ -28,11 +28,8 @@ FRETboard/io_functions.py
 FRETboard/main.py
 FRETboard/algorithms/BaseHmm.py
 FRETboard/algorithms/BoundaryAwareHmm.py
-FRETboard/algorithms/BoundaryAwareHmm_v2.py
 FRETboard/algorithms/EdgeAwareHmm_sandbox.py
 FRETboard/algorithms/GmmHmm.py
-FRETboard/algorithms/GmmHmm_v2.py
-FRETboard/algorithms/SMACKS.py
 FRETboard/algorithms/SubstateHmm.py
 FRETboard/algorithms/SubstateHmm_sandbox.py
 FRETboard/algorithms/VanillaHmm.py

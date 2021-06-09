@@ -320,7 +320,7 @@ class Classifier(object):
         if trace_state_list is None:  # sequence is impossible, logprob -inf
             return np.zeros(len(trace_df)), 1E-90
         state_list = np.vectorize(self.gui_state_dict.__getitem__)([ts[0] for ts in trace_state_list[1:-1]])
-        return state_list, logprob
+        return state_list, logprob / len(trace_df)
 
     def get_matrix(self, df):
         """
@@ -340,6 +340,8 @@ class Classifier(object):
         # actual_tm = self.tm_from_hmm(self.trained, state_order_dict)
         trace_list = list(trace_dict.values())
         nb_traces = len(trace_list)
+        if self.framerate is None:  # todo occurs when model is loaded, never retrained. Find better solution
+            self.framerate = np.mean(trace_list[0].time[1:].to_numpy() - trace_list[0].time[:-1].to_numpy())
         actual_tm = self.tm_from_seq(trace_list)
 
         # CIs
