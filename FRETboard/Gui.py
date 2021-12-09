@@ -323,6 +323,8 @@ possible, and the error message below
         self.algo_select.value = algo_inv_dict.get(file_contents.split('\n')[0], 'custom')
         self.classifier.load_params(file_contents)
         self.num_states_slider.value = self.classifier.nb_states
+        self.saveme_checkboxes.labels = [str(n) for n in range(1, self.classifier.nb_states + 1)]
+        self.saveme_checkboxes.active = list(range(self.classifier.nb_states))
         if np.isnan(self.data.eps):
             self.bg_checkbox.active = []
         else:
