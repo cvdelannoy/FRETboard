@@ -276,8 +276,12 @@ class FretReport(object):
         colors = sns.color_palette('Blues', len(unique_labels))
         for li, lab in enumerate(unique_labels):
             if lab not in self.gui.saveme_checkboxes.active: continue
-            ax = sns.distplot(self.event_df.query(f'state == {lab}').duration / self.frame_rate,
-                              kde=True, bins=100, color=colors[li], ax=ax)
+            try:
+                ax = sns.distplot(self.event_df.query(f'state == {lab}').duration / self.frame_rate,
+                                  kde=True, bins=100, color=colors[li], ax=ax)
+            except RuntimeError:  # if bandwidth approaches 0 kde errors out
+                ax = sns.distplot(self.event_df.query(f'state == {lab}').duration / self.frame_rate,
+                                  kde=False, bins=100, color=colors[li], ax=ax)
 
         ax.set_xlabel('dwell time (s)')
         ax.set_ylabel('count')
