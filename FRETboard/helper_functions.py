@@ -335,7 +335,7 @@ def discrete2continuous(tm, framerate):
     assert tm.ndim == 2
     assert tm.shape[0] == tm.shape[1]
     nb_states = tm.shape[0]
-    rm = np.eye(nb_states) + framerate * logm(tm)
+    rm = np.eye(nb_states) + framerate * logm(np.nan_to_num(tm, 0.0))
     rm[rm < 0] = 0.0  # correct small negative values
     rm[np.eye(nb_states, dtype=bool)] -= 1
     return rm
