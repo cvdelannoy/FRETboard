@@ -2,14 +2,14 @@ numpy
 cython==0.29.20
 pandas==1.0.5
 pomegranate==0.13.4
-bokeh==1.4.0
+bokeh==2.4.2
 tornado
 scikit-learn
 seaborn
 matplotlib
 cached-property
 tabulate
-joblib==0.13.2
+joblib==0.14.1
 jinja2
 pyyaml
 psutil

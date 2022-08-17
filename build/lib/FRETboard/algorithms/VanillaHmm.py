@@ -262,14 +262,12 @@ class Classifier(object):
         trace_list = list(trace_dict.values())
         nb_traces = len(trace_list)
         actual_tm = self.tm_from_seq(trace_list)
-        if self.framerate is None:  # todo occurs when model is loaded, never retrained. Find better solution
-            self.framerate = np.mean(trace_list[0].time[1:].to_numpy() - trace_list[0].time[:-1].to_numpy())
 
         # CIs
         tm_array = []
-        invalid_indices = [idx for idx, tup in self.data.manual_table.iterrows() if tup.is_junk]
-        idx_list = [idx for idx in self.data.index_table.index if idx not in invalid_indices]
-        trace_dict = {tr: trace_dict[tr] for tr in trace_dict if tr in idx_list}
+        # invalid_indices = [idx for idx, tup in self.data.manual_table.iterrows() if tup.is_junk]
+        # idx_list = [idx for idx in self.data.index_table.index if idx not in invalid_indices]
+        # trace_dict = {tr: trace_dict[tr] for tr in trace_dict if tr in idx_list}
         for n in range(nb_bootstrap_iters):
             # print(f'{datetime.now()}: bootstrap round {n}')
             # hmm = self.get_trained_hmm(trace_dict, bootstrap=True)
@@ -331,7 +329,10 @@ class Classifier(object):
                    + div + gui_state_dict_txt
                    + div + pg_gui_state_dict_txt
                    + div + str2num_state_dict_txt
-                   + div + f'nb_states: {str(self.nb_states)}\ndbscan_epsilon: {self.data.eps}\nsupervision_influence: {self.supervision_influence}')
+                   + div + f'nb_states: {str(self.nb_states)}\n'
+                           f'dbscan_epsilon: {self.data.eps}\n'
+                           f'supervision_influence: {self.supervision_influence}\n'
+                           f'framerate: {self.framerate}')
         return out_txt
 
     def load_params(self, file_contents):
@@ -359,4 +360,5 @@ class Classifier(object):
         self.nb_states = misc_dict['nb_states']
         self.data.eps = misc_dict['dbscan_epsilon']
         self.supervision_influence = misc_dict['supervision_influence']
+        self.framerate = misc_dict['framerate']
         self.timestamp = numeric_timestamp()

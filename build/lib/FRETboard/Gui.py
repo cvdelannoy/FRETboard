@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import yaml
 import importlib
-import imp
+# import imp
 import traceback
 from multiprocessing import Process
 import threading
@@ -21,9 +21,9 @@ from cached_property import cached_property
 from bokeh.server.server import Server
 from bokeh.application import Application
 from bokeh.application.handlers.function import FunctionHandler
-from bokeh.layouts import row, column, widgetbox
+from bokeh.layouts import row, column
 from bokeh.plotting import figure, curdoc
-from bokeh.models import ColumnDataSource, LinearColorMapper
+from bokeh.models import ColumnDataSource, LinearColorMapper, Column
 from bokeh.models.tools import BoxSelectTool, WheelZoomTool, WheelPanTool, SaveTool, PanTool
 from bokeh.models.callbacks import CustomJS
 from bokeh.models.widgets import Slider, Select, Button, PreText, RadioGroup, Div, CheckboxButtonGroup, CheckboxGroup, Spinner, Toggle
@@ -323,6 +323,8 @@ possible, and the error message below
         self.algo_select.value = algo_inv_dict.get(file_contents.split('\n')[0], 'custom')
         self.classifier.load_params(file_contents)
         self.num_states_slider.value = self.classifier.nb_states
+        self.saveme_checkboxes.labels = [str(n) for n in range(1, self.classifier.nb_states + 1)]
+        self.saveme_checkboxes.active = list(range(self.classifier.nb_states))
         if np.isnan(self.data.eps):
             self.bg_checkbox.active = []
         else:
@@ -580,7 +582,7 @@ possible, and the error message below
         self.state_source.data = {'ys': ys, 'xs': xs, 'color': curve_colors}
 
     def update_algo(self, attr, old, new):
-        if old == new and new is not 'custom':
+        if old == new and new != 'custom':
             return
         algo = algo_dict.get(new, new)
         if algo == 'custom':
@@ -610,7 +612,7 @@ possible, and the error message below
         file_contents = base64.b64decode(b64_contents).decode('utf-8')
         custom_fn = tempfile.NamedTemporaryFile(delete=False, suffix='.py').name
         with open(custom_fn, 'w') as fh: fh.write(file_contents)
-        self._classifier_class = imp.load_source(os.path.splitext(os.path.basename(custom_fn))[0], custom_fn).Classifier
+        self._classifier_class = importlib.import_module(os.path.splitext(os.path.basename(custom_fn))[0], custom_fn).Classifier
         self.reload_classifier()
 
     def update_num_states(self, attr, old, new):
@@ -812,11 +814,10 @@ possible, and the error message below
 
         # --- 1. Load ---
         load_button = Button(label='Data')
-        load_button.callback = CustomJS(args=dict(file_source=self.new_source, new_counter=self.new_tot), code=upload_js)
+        load_button.js_on_click(CustomJS(args=dict(file_source=self.new_source, new_counter=self.new_tot), code=upload_js))
 
         load_model_button = Button(label='Model')
-        load_model_button.callback = CustomJS(args=dict(file_source=self.loaded_model_source),
-                                              code=upload_model_js)
+        load_model_button.js_on_click(CustomJS(args=dict(file_source=self.loaded_model_source), code=upload_model_js))
         revert_labels_button = Button(label='Undo changes')
         revert_labels_button.on_click(self.revert_manual_labels)
 
@@ -842,7 +843,7 @@ possible, and the error message below
 
         # --- 3. Save ---
         save_model_button = Button(label='Model')
-        save_model_button.callback = CustomJS(args=dict(file_source=self.classifier_source),
+        save_model_button._callback = CustomJS(args=dict(file_source=self.classifier_source),
                                               code=download_csv_js)
         save_data_button = Button(label='Data')
         save_data_button.on_click(self.generate_dats)
@@ -943,7 +944,7 @@ possible, and the error message below
         ts_manual.line('time', 'f_dex_dem', color='#4daf4a', source=self.source, **line_opts)
         ts_manual.line('time', 'f_dex_aem', color='#e41a1c', source=self.source, **line_opts)
         ts_manual.toolbar = self.ts_toolbar
-        pred_vs_manual_panel = Panel(child=widgetbox(column(ts_manual,revert_labels_button)), title='Predicted')
+        pred_vs_manual_panel = Panel(child=Column(column(ts_manual,revert_labels_button)), title='Predicted')
 
         # Additional settings panel
         self.alex_fret_checkboxes = CheckboxButtonGroup(labels=showme_states, active=[])
@@ -951,27 +952,27 @@ possible, and the error message below
                             self.alex_fret_checkboxes,
                             height=80, width=300)
 
-        settings_panel = Panel(child=widgetbox(row(
+        settings_panel = Panel(child=Column(row(
             column(
                 Div(text='<b>Data format options</b>', height=15, width=200),
-                row(Div(text='Frame rate .trace files (Hz): ', height=15, width=200),widgetbox(self.framerate_spinner, width=75)),
+                row(Div(text='Frame rate .trace files (Hz): ', height=15, width=200),Column(self.framerate_spinner, width=75)),
 
                 Div(text='<b>Filtering options</b>', height=15, width=200),
-                row(Div(text='DBSCAN filter epsilon: ', height=15, width=200), widgetbox(self.eps_spinner, width=75), widgetbox(self.bg_button, width=65), width=500),
+                row(Div(text='DBSCAN filter epsilon: ', height=15, width=200), Column(self.eps_spinner, width=75), Column(self.bg_button, width=65), width=500),
                 Div(text='<b>ALEX (experimental!)</b>', height=15, width=200),
-                row(Div(text='Load ALEX traces: ', height=15, width=130), widgetbox(self.alex_checkbox, width=30),
-                    Div(text='Switch order lasers: ', height=15, width=130), widgetbox(self.traceswitch_checkbox, width=30), width=500),
+                row(Div(text='Load ALEX traces: ', height=15, width=130), Column(self.alex_checkbox, width=30),
+                    Div(text='Switch order lasers: ', height=15, width=130), Column(self.traceswitch_checkbox, width=30), width=500),
                 alex_fret_col,
                 row(Div(text='<i>D</i>-only state: ', height=15, width=80),
-                    widgetbox(self.d_only_state_spinner, width=75),
+                    Column(self.d_only_state_spinner, width=75),
                     Div(text='<i>A</i>-only state: ', height=15, width=80),
-                    widgetbox(self.a_only_state_spinner, width=75),
+                    Column(self.a_only_state_spinner, width=75),
                     self.alex_estimate_button, width=200),
                 row(
-                    Div(text='gamma: ', height=15, width=80), widgetbox(self.gamma_factor_spinner, width=75),
-                    Div(text='<i>l</i>: ', height=15, width=35), widgetbox(self.l_spinner, width=75),
-                    Div(text='<i>d</i>: ', height=15, width=35), widgetbox(self.d_spinner, width=75),
-                    widgetbox(self.alex_corr_button, height=15, width=30)),
+                    Div(text='gamma: ', height=15, width=80), Column(self.gamma_factor_spinner, width=75),
+                    Div(text='<i>l</i>: ', height=15, width=35), Column(self.l_spinner, width=75),
+                    Div(text='<i>d</i>: ', height=15, width=35), Column(self.d_spinner, width=75),
+                    Column(self.alex_corr_button, height=15, width=30)),
                 width=500),
             column(Div(text=' ', height=15, width=250), width=75),
             column(
@@ -979,7 +980,7 @@ possible, and the error message below
                 self.supervision_slider,
                 self.buffer_slider,
                 row(Div(text='CI bootstrap iterations: ', height=15, width=200),
-                    widgetbox(self.bootstrap_size_spinner, width=100)),
+                    Column(self.bootstrap_size_spinner, width=100)),
                 Div(text='<b>Miscellaneous</b>', height=15, width=200),
                 row(Div(text='Remove last event before analysis: ', height=15, width=250), self.remove_last_checkbox, width=500),
 
@@ -1017,7 +1018,7 @@ possible, and the error message below
 
         # Stats in text
         stats_text = column( row(Div(text='Accuracy (%): ', width=150, height=18), self.acc_text, height=18),
-                             row(Div(text='Mean log-posterior: ', width=150, height=18), self.posterior_text, height=18),
+                             row(Div(text='Mean log-path probability: ', width=150, height=18), self.posterior_text, height=18),
                              row(Div(text='Manually classified (%): ', width=150, height=18), self.mc_text, height=18))
 
         # --- Define update behavior ---
@@ -1064,22 +1065,22 @@ possible, and the error message below
                          Div(text="<font size=4>1. Load</font>", width=280, height=15),
                          self.algo_select,
                          self.num_states_slider,
-                         row(widgetbox(load_model_button, width=150), widgetbox(load_button, width=150),
+                         row(Column(load_model_button, width=150), Column(load_button, width=150),
                              width=300),
                          row(Div(text="DBSCAN background subtraction ", width=250, height=15),
-                             widgetbox(self.bg_checkbox, width=25), width=300),
+                             Column(self.bg_checkbox, width=25), width=300),
                          Div(text="<font size=4>2. Teach</font>", width=280, height=15),
                          # row(Div(text='Change selection to state: '),
                          #     self.sel_state, width=300, height=15),
                          self.sel_state_slider,
                          # showme_col,
-                         row(widgetbox(self.del_trace_button, width=100), widgetbox(train_button, width=100), widgetbox(new_example_button, width=100)),
+                         row(Column(self.del_trace_button, width=100), Column(train_button, width=100), Column(new_example_button, width=100)),
                          self.guess_toggle,
                          Div(text="<font size=4>3. Save</font>", width=280, height=15),
                          saveme_col,
-                         row(widgetbox(report_button, width=100), widgetbox(save_data_button, width=100), widgetbox(save_model_button, width=100)),
+                         row(Column(report_button, width=100), Column(save_data_button, width=100), Column(save_model_button, width=100)),
                          Div(text='', height=30),
-                         widgetbox(example_data_button, width=100),
+                         Column(example_data_button, width=100),
                          width=300)
         hists = row(acc_hist, logprob_hist, state_block)
         graphs = column(self.example_select,

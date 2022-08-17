@@ -416,7 +416,10 @@ class Classifier(object):
                    + div + gui_state_dict_txt
                    + div + pg_gui_state_dict_txt
                    + div + str2num_state_dict_txt
-                   + div + f'nb_states: {str(self.nb_states)}\nbuffer: {self.buffer}\ndbscan_epsilon: {self.data.eps}')
+                   + div + f'nb_states: {str(self.nb_states)}\n'
+                           f'buffer: {self.buffer}\n'
+                           f'dbscan_epsilon: {self.data.eps}\n'
+                           f'framerate: {self.framerate}')
         return out_txt
 
     def load_params(self, file_contents):
@@ -440,3 +443,5 @@ class Classifier(object):
         self.nb_states = misc_dict['nb_states']
         self.buffer = misc_dict['buffer']
         self.data.eps = misc_dict['dbscan_epsilon']
+        self.framerate = misc_dict['framerate']
+        self.timestamp = numeric_timestamp()
