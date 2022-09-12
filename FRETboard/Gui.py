@@ -18,6 +18,7 @@ from jinja2 import Template
 from datetime import datetime
 
 from cached_property import cached_property
+from bokeh.client import session, websocket
 from bokeh.server.server import Server
 from bokeh.application import Application
 from bokeh.application.handlers.function import FunctionHandler
@@ -1105,6 +1106,7 @@ possible, and the error message below
         pred.run()
 
     def loop_update(self):
+        # while self.main_thread.is_alive():
         while self.app_is_up:
             self.data.update_index()
             if len(self.data.index_table) and self.model_loaded:
@@ -1116,7 +1118,10 @@ possible, and the error message below
                 if np.any(self.data.index_table.mod_timestamp == self.classifier.timestamp):
                     self.cur_trace_idx = self.data.index_table.index[self.data.index_table.mod_timestamp == self.classifier.timestamp][0]
                     self.new_example_trigger()
-            Event().wait(10.0)
+            Event().wait(1.0)
+            if not self.main_thread.is_alive(): break
+            # if self.server.get_sessions()[0].connection_count < 1:
+            #     self.shutdown_gracefully(None)
         sys.exit(0)
 
     def start_threads(self):
@@ -1137,6 +1142,9 @@ possible, and the error message below
             pp.join()
         self.file_parser_process.terminate()
         self.file_parser_process.join()
+        # self.loop.stop()
+
+        # sys.exit(0)
 
     def start_ioloop(self, port=0):
         app = Application(FunctionHandler(self.make_document))

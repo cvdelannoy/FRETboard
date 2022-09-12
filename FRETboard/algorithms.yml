@@ -1,3 +1,4 @@
 vanilla HMM: VanillaHmm
 boundary-aware HMM: BoundaryAwareHmm
 GMM-HMM: GmmHmm
+SMACKS: Smacks

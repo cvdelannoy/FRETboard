@@ -1,4 +1,4 @@
-import os
+import os, sys
 from os.path import splitext
 import numpy as np
 import warnings
@@ -64,6 +64,7 @@ class FileParser(object):
             update_idx = index_table.loc[index_table.data_timestamp != self.data_timestamp, :].index
             if not len(update_idx): continue
             self.update_traces(update_idx)
+        sys.exit(0)
 
     def update_traces(self, update_idx):
         chunk_limit = self.chunk_size - 1

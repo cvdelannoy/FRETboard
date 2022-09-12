@@ -9,5 +9,16 @@ MAINTAINER Carlos de Lannoy <carlos.delannoy@wur.nl>
 
 COPY . /FRETboard
 
-RUN apt update && apt install -y build-essential
+RUN apt update && apt install -y build-essential screen
 RUN pip install -e /FRETboard
+
+EXPOSE 5102
+EXPOSE 80
+
+CMD bokeh serve \
+    --allow-websocket-origin="*" \
+    --index=/FRETboard/FRETboard/templates/index.html \
+    --num-procs=1 \
+    --check-unused-sessions=1000 \
+    --port=5102 \
+    /FRETboard/FRETboard
