@@ -1,2 +1,2 @@
 allow_custom_scripts: False # Allow running of custom classification algorithms. WARNING: any custom code implies risk of code injection. Use only on machines not exposed to external networks.
-nb_cores: 5 # number cores to use per user, minimum 3
+nb_cores: 3 # number cores to use per user, minimum 3
