@@ -4,8 +4,6 @@ from FRETboard.Gui import Gui
 from bokeh.command.util import build_single_handler_application
 from bokeh.server.server import Server
 from bokeh.application.handlers import DirectoryHandler
-import os
-__location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
 
 def main(args=None):
     if args is None:

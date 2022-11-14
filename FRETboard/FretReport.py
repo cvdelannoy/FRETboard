@@ -13,8 +13,8 @@ import pandas as pd
 from jinja2 import Template
 from tabulate import tabulate
 from FRETboard.helper_functions import print_timestamp, multi_joint_plot
-
-__location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
+from pathlib import Path
+__location__ = Path(__file__).parent.resolve()
 
 
 class FretReport(object):
@@ -118,6 +118,8 @@ class FretReport(object):
                           'sd': [sd for si, sd in enumerate(self.data_states_sd) if si in active_states]},
                          tablefmt='html', headers=['mean E_FRET', 'sd E_FRET'], showindex=state_list_bold,
                          numalign='center', stralign='center')
+        table = str(table).replace('&lt;', '<')  # tabulate replaces < and > with html which does not render properly
+        table = table.replace('&gt;', '>')
         return table
 
     @cached_property
@@ -139,7 +141,10 @@ class FretReport(object):
         csv_df = pd.DataFrame({'rate': tm_vec[msk],
                                'low_bound': ci_vecs[:, :, 0][msk],
                                'high_bound': ci_vecs[:, :, 1][msk]}, index=transition_list)
-        return self.transition_np_to_html(tm_vec, ci_vecs, state_list), csv_df.to_csv().replace('\n', '\\n')
+        tm_html = self.transition_np_to_html(tm_vec, ci_vecs, state_list)
+        tm_html = str(tm_html).replace('&lt;', '<')
+        tm_html = tm_html.replace('&gt;', '>')
+        return tm_html, csv_df.to_csv().replace('\n', '\\n')
 
     @staticmethod
     def condense_sequence(seq):
@@ -169,7 +174,7 @@ class FretReport(object):
         # tm_table, em_table, tm_str = self.get_param_tables()
         data_tm, data_tm_csv = self.get_data_tm()
 
-        with open(f'{__location__}/templates/report_template.html', 'r') as fh:
+        with open(__location__ / 'templates/report_template.html', 'r') as fh:
             template = Template(fh.read())
         # thh, thd = components(tdp_hex)
         return template.render(ed_scatter=ed_scatter,

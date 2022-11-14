@@ -1,6 +1,7 @@
 import os, sys
 from os.path import splitext
 import numpy as np
+from pathlib import Path
 import warnings
 import pandas as pd
 import base64
@@ -71,7 +72,7 @@ class FileParser(object):
         out_dict = {}
         for ii, idx in enumerate(update_idx):
             with SafeH5(self.traces_store_fn, 'r') as fh:
-                trace_old = fh['/traces/' + idx][()]  # todo fn right?
+                trace_old = fh[str(Path('/traces/') / idx)][()]  # todo fn right?
             if self.alex:
                 trace_new = get_tuple(trace_old[(0, 1, 2, 5, 6), :], self.eps, self.l, self.d, self.gamma, self.traceswitch)  # todo indexing works here?
             else:

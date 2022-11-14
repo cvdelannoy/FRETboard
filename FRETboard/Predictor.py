@@ -1,5 +1,6 @@
 import os, sys
-sys.path.append('/tmp/')  # required for custom scripts
+from pathlib import Path
+sys.path.append(str(Path('/tmp/')))  # required for custom scripts
 import pandas as pd
 from FRETboard.SafeHDFStore import SafeHDFStore
 from FRETboard.SafeH5 import SafeH5
@@ -9,11 +10,11 @@ import pickle
 
 class Predictor(object):
     def __init__(self, classifier, h5_dir, main_process):
-        if h5_dir[-1] != '/': h5_dir += '/'
+        h5_dir = Path(h5_dir)
         self.h5_dir = h5_dir
         self.chunk_size = 5
-        self.traces_store_fn = h5_dir + 'traces_store.h5'
-        self.predict_store_fn = h5_dir + 'predict_store_fn.h5'
+        self.traces_store_fn = h5_dir / 'traces_store.h5'
+        self.predict_store_fn = h5_dir / 'predict_store_fn.h5'
         self.main_process = main_process
         self.classifier = classifier
         self.pid = os.getpid()
@@ -67,7 +68,7 @@ class Predictor(object):
         if mod_timestamp != self.classifier.timestamp:
             while True:
                 try:
-                    with open(f'{self.h5_dir}{mod_fn}', 'rb') as fh:
+                    with open(self.h5_dir / mod_fn, 'rb') as fh:
                         self.classifier = pickle.load(fh)
                 except:
                     continue

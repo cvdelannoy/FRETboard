@@ -35,6 +35,7 @@ FRETboard/algorithms/Smacks.py
 FRETboard/algorithms/SubstateHmm.py
 FRETboard/algorithms/SubstateHmm_sandbox.py
 FRETboard/algorithms/VanillaHmm.py
+FRETboard/algorithms/algorithm_template.py
 FRETboard/js_widgets/download_csv.js
 FRETboard/js_widgets/download_datzip.js
 FRETboard/js_widgets/download_model.js

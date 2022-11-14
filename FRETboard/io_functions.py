@@ -4,7 +4,7 @@ import warnings
 import numpy as np
 from joblib import Parallel, delayed, parallel_backend
 from FRETboard.MainTable import MainTable
-
+from pathlib import Path
 
 def parse_input_path(location, pattern=None):
     """
@@ -14,10 +14,8 @@ def parse_input_path(location, pattern=None):
         location = [location]
     all_files = []
     for loc in location:
-        loc = os.path.abspath(loc)
-        if os.path.isdir(loc):
-            if loc[-1] != '/':
-                loc += '/'
+        loc = Path(loc).resolve()
+        if loc.is_dir():
             for root, dirs, files in os.walk(loc):
                 if pattern:
                     for f in fnmatch.filter(files, pattern):
@@ -25,10 +23,10 @@ def parse_input_path(location, pattern=None):
                 else:
                     for f in files:
                         all_files.append(os.path.join(root, f))
-        elif os.path.exists(loc):
-            all_files.extend(loc)
+        elif loc.exists():
+            all_files.extend(str(loc))
         else:
-            warnings.warn('Given file/dir %s does not exist, skipping' % loc, RuntimeWarning)
+            warnings.warn('Given file/dir %s does not exist, skipping' % str(loc), RuntimeWarning)
     if not len(all_files):
         ValueError('Input file location(s) did not exist or did not contain any files.')
     return all_files

@@ -32,8 +32,9 @@ from bokeh.models.widgets.panels import Panel, Tabs
 from tornado.ioloop import IOLoop
 from tornado import gen
 
-__location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
-sys.path.append(f'{__location__}/..')
+from pathlib import Path
+__location__ = Path(__file__).parent.resolve()
+sys.path.append(str(__location__ / '..'))
 
 from FRETboard.SafeH5 import SafeH5
 from FRETboard.Predictor import Predictor
@@ -44,10 +45,10 @@ from FRETboard.OneshotHmm import OneshotHmm
 
 from FRETboard.helper_functions import get_tuple, colnames_alex, colnames, get_ssfret_dist
 
-__location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
+
 line_opts = dict(line_width=1)
 rect_opts = dict(alpha=1, line_alpha=0)
-with open(f'{__location__}/algorithms.yml', 'r') as fh: algo_dict = yaml.safe_load(fh)
+with open(__location__ / 'algorithms.yml', 'r') as fh: algo_dict = yaml.safe_load(fh)
 algo_dict['custom'] = 'custom'
 algo_inv_dict = {algo_dict[k]: k for k in algo_dict}
 white_blue_colors = ['#f7fbff', '#deebf7', '#c6dbef', '#9ecae1', '#6baed6', '#4292c6', '#2171b5', '#084594']
@@ -56,15 +57,15 @@ white_blue_colors = ['#f7fbff', '#deebf7', '#c6dbef', '#9ecae1', '#6baed6', '#42
 # diverging_colors = ['#d53e4f', '#f46d43', '#fdae61', '#fee08b', '#e6f598', '#abdda4', '#66c2a5', '#3288bd']
 colors = white_blue_colors
 
-with open(f'{__location__}/js_widgets/upload.js', 'r') as fh: upload_js = fh.read()
-with open(f'{__location__}/js_widgets/upload_model.js', 'r') as fh: upload_model_js = fh.read()
-with open(f'{__location__}/js_widgets/download_datzip.js', 'r') as fh: download_datzip_js = fh.read()
-with open(f'{__location__}/js_widgets/download_report.js', 'r') as fh: download_report_js = fh.read()
-with open(f'{__location__}/js_widgets/download_ssfret.js', 'r') as fh: download_ssfret_js = fh.read()
-with open(f'{__location__}/js_widgets/download_model.js', 'r') as fh: download_csv_js = fh.read()
-with open(f'{__location__}/js_widgets/upload_custom_script.js', 'r') as fh: upload_custom_script_js = fh.read()
+with open(__location__ / 'js_widgets/upload.js', 'r') as fh: upload_js = fh.read()
+with open(__location__ / 'js_widgets/upload_model.js', 'r') as fh: upload_model_js = fh.read()
+with open(__location__ / 'js_widgets/download_datzip.js', 'r') as fh: download_datzip_js = fh.read()
+with open(__location__ / 'js_widgets/download_report.js', 'r') as fh: download_report_js = fh.read()
+with open(__location__ / 'js_widgets/download_ssfret.js', 'r') as fh: download_ssfret_js = fh.read()
+with open(__location__ / 'js_widgets/download_model.js', 'r') as fh: download_csv_js = fh.read()
+with open(__location__ / 'js_widgets/upload_custom_script.js', 'r') as fh: upload_custom_script_js = fh.read()
 
-with open(f'{__location__}/templates/index.html', 'r') as fh: template = Template(fh.read())
+with open(__location__ / 'templates/index.html', 'r') as fh: template = Template(fh.read())
 
 class Gui(object):
     def __init__(self, nb_processes=3, nb_states=2, allow_custom_scripts=False, data=[]):
@@ -347,7 +348,7 @@ possible, and the error message below
         self.data.add_tuple(self.new_source.data['file_contents'][0], self.new_source.data['file_name'][0])
 
     def load_example_data(self):
-        example_df = pd.read_pickle(f'{__location__}/example_data.pkl')
+        example_df = pd.read_pickle(__location__ / 'example_data.pkl')
         for _, tup in example_df.iterrows():
             self.data.add_tuple(tup.example, tup.name)  # todo .name or .index?
 

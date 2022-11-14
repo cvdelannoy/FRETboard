@@ -1,8 +1,9 @@
 import os, sys, yaml
 import numpy as np
 import pomegranate as pg
-__location__ = os.path.realpath(os.path.join(os.getcwd(), os.path.dirname(__file__)))
-sys.path.append(__location__)
+from pathlib import Path
+__location__ = Path(__file__).parent.resolve()
+sys.path.append(str(__location__))
 import BoundaryAwareHmm
 from FRETboard.helper_functions import numeric_timestamp
 
