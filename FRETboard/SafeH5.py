@@ -18,6 +18,8 @@ class SafeH5(File):
                 break
             except FileExistsError:
                 time.sleep(probe_interval)
+            except PermissionError:
+                time.sleep(probe_interval)
         File.__init__(self, *args, **kwargs)
 
     def __exit__(self, *args, **kwargs):

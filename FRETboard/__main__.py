@@ -14,8 +14,8 @@ def main(args=None):
                         help='Number of states to detect initially.')
     parser.add_argument('-c', '--nb-cores', type=int, default=4,
                         help='Number of cores (processes) to use.')
-    parser.add_argument('-p', '--port', type=int, default=0,
-                        help='Port where bokeh will listen.')
+    parser.add_argument('-p', '--port', type=int, default=4237,
+                        help='Port where bokeh will listen [default: 4237]')
     parser.add_argument('--allow-custom-scripts', action='store_true',
                         help='Allow running of custom classification algorithms. WARNING: any custom code implies risk'
                              'of code injection. Use only on machines not exposed to external networks.')

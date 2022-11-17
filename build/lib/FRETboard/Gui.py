@@ -77,7 +77,7 @@ class Gui(object):
         self.feature_list = ['E_FRET', 'E_FRET_sd', 'i_sum', 'i_sum_sd',
                              'correlation_coefficient', 'f_dex_dem', 'f_dex_aem',
                              'f_aex_dem', 'f_aex_aem']
-        self.h5_dir = tempfile.mkdtemp()
+        self.h5_dir = Path(tempfile.mkdtemp())
         self.data = MainTable(10.0, np.nan, 0.0, 0.0, 1.0, 0, self.h5_dir, os.getpid())
         self.file_parser_process = self.data.init_table()
         self.app_is_up = True
@@ -270,7 +270,7 @@ possible, and the error message below
             self.classifier.train(data_dict=data_dict, supervision_influence=self.supervision_slider.value)
             self.model_loaded = True
             self.classifier_source.data = dict(params=[self.classifier.get_params()])
-            with open(f'{self.h5_dir}/{self.classifier.timestamp}.mod', 'wb') as fh:
+            with open(self.h5_dir / f'{self.classifier.timestamp}.mod', 'wb') as fh:
                 pickle.dump(self.classifier, fh, pickle.HIGHEST_PROTOCOL)
             # with SafeH5(f'{self.data.predict_store_fn}', 'w') as fh:
             #     for idx in fh: del fh[idx]
@@ -336,7 +336,7 @@ possible, and the error message below
 
         self.model_loaded = True
         self.classifier.timestamp = int(datetime.now().strftime('%H%M%S%f'))
-        with open(f'{self.h5_dir}/{self.classifier.timestamp}.mod', 'wb') as fh:
+        with open(self.h5_dir / f'{self.classifier.timestamp}.mod', 'wb') as fh:
             pickle.dump(self.classifier, fh, pickle.HIGHEST_PROTOCOL)
         self.notify('Model loaded')
         if self.data.index_table.shape[0] != 0:
@@ -845,8 +845,9 @@ possible, and the error message below
 
         # --- 3. Save ---
         save_model_button = Button(label='Model')
-        save_model_button._callback = CustomJS(args=dict(file_source=self.classifier_source),
-                                              code=download_csv_js)
+        save_model_button.js_on_click(CustomJS(args=dict(file_source=self.classifier_source), code=download_csv_js))
+        # save_model_button._callback = CustomJS(args=dict(file_source=self.classifier_source),
+        #                                       code=download_csv_js)
         save_data_button = Button(label='Data')
         save_data_button.on_click(self.generate_dats)
 
@@ -1108,7 +1109,7 @@ possible, and the error message below
 
     def loop_update(self):
         # while self.main_thread.is_alive():
-        while self.app_is_up:
+        while self.app_is_up and self.main_thread.is_alive():
             self.data.update_index()
             if len(self.data.index_table) and self.model_loaded:
                 self.update_example_list()
@@ -1120,9 +1121,8 @@ possible, and the error message below
                     self.cur_trace_idx = self.data.index_table.index[self.data.index_table.mod_timestamp == self.classifier.timestamp][0]
                     self.new_example_trigger()
             Event().wait(1.0)
-            if not self.main_thread.is_alive(): break
             # if self.server.get_sessions()[0].connection_count < 1:
-            #     self.shutdown_gracefully(None)
+        self.shutdown_gracefully(None)
         sys.exit(0)
 
     def start_threads(self):
@@ -1132,7 +1132,8 @@ possible, and the error message below
         self.loop_thread.start()
         self.pred_processes = []
         for p in range(self.nb_processes - 2):
-            pred_process = Process(target=self.start_predictor, name=f'predictor_{p}')
+            pred = Predictor(self.classifier, h5_dir=self.h5_dir)
+            pred_process = Process(target=pred.run, name=f'predictor_{p}')
             pred_process.start()
             self.pred_processes.append(pred_process)
 
@@ -1147,7 +1148,7 @@ possible, and the error message below
 
         # sys.exit(0)
 
-    def start_ioloop(self, port=0):
+    def start_ioloop(self, port=4237):
         app = Application(FunctionHandler(self.make_document))
         apps = {'/': app}
         server = Server(apps, port=port, websocket_max_message_size=100000000)

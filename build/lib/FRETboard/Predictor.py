@@ -9,13 +9,11 @@ from FRETboard.helper_functions import colnames, colnames_alex
 import pickle
 
 class Predictor(object):
-    def __init__(self, classifier, h5_dir, main_process):
-        h5_dir = Path(h5_dir)
+    def __init__(self, classifier, h5_dir):
         self.h5_dir = h5_dir
         self.chunk_size = 5
         self.traces_store_fn = h5_dir / 'traces_store.h5'
         self.predict_store_fn = h5_dir / 'predict_store_fn.h5'
-        self.main_process = main_process
         self.classifier = classifier
         self.pid = os.getpid()
         self.read_id = '/read_' + str(self.pid)

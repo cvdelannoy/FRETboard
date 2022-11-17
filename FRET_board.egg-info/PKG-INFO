@@ -7,7 +7,6 @@ Author: Carlos de Lannoy
 Author-email: carlos.delannoy@wur.nl
 License: MIT
 Keywords: FRET Forster resonance energy transfer supervised machine learning
-Platform: UNKNOWN
 Classifier: Programming Language :: Python :: 3
 Classifier: License :: OSI Approved :: MIT License
 Requires-Python: >=3.7
@@ -17,7 +16,7 @@ License-File: LICENSE
 
 [![DOI](https://zenodo.org/badge/213605221.svg)](https://zenodo.org/badge/latestdoi/213605221)
 
-FRETboard helps you train algorithms for the detection of Förster resonance energy transfer events in a 
+FRETboard helps you train algorithms for the detection of FÃ¶rster resonance energy transfer events in a 
 (semi-)supervised manner.
 
 ## Running
@@ -90,7 +89,7 @@ two other FRET states must be present in your data.
 
 ##### Filtering options
 Stringency of the DBSCAN background intensity filter is controlled by the tunable parameter `epsilon`, 
-which is defined as the maximum distance between a cluster’s core point and distant points of 
+which is defined as the maximum distance between a clusterâ€™s core point and distant points of 
 the same cluster. The preset value of 15 typically works well, but if too much is subtracted
 this can be set to a lower value. 
 
@@ -143,4 +142,3 @@ if you think your implementation may be useful to others! Of course, contributor
 
 ---
 with &hearts; from Wageningen University
-

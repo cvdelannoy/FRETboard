@@ -16,10 +16,9 @@ class MainTable(object):
         self.main_process = main_process
         self.index_table = None  # contains names and meta data of traces in hdf store
         self.manual_table = None # contains info as entered by user: is_labeled, is_junk
-        if h5_dir[-1] != '/': h5_dir += '/'
-        self.traces_store_fn = h5_dir + 'traces_store.h5'
-        self.predict_store_fn = h5_dir + 'predict_store_fn.h5'
-        self.toparse_fn = h5_dir + 'to_parse.h5'
+        self.traces_store_fn = h5_dir / 'traces_store.h5'
+        self.predict_store_fn = h5_dir / 'predict_store_fn.h5'
+        self.toparse_fn = h5_dir / 'to_parse.h5'
         self.label_dict = dict()
         self._eps, self._l, self._d, self._gamma, self._alex, self._traceswitch = eps, l, d, gamma, alex, 0
         self.framerate = framerate
@@ -192,11 +191,8 @@ class MainTable(object):
         """
         if not len(self.label_dict):
             return np.array([np.nan], dtype=float), np.nan
-        try:
-            with SafeH5(self.predict_store_fn, 'r') as fh:
-                pred_dict = {idx: fh.get('/' + idx, None)[()] for idx in self.label_dict}
-        except:
-            cp=1
+        with SafeH5(self.predict_store_fn, 'r') as fh:
+            pred_dict = {idx: fh.get('/' + idx, None)[()] for idx in self.label_dict}
         nb_correct = np.array([np.sum(self.label_dict[idx] == pred_dict[idx])
                                for idx in self.label_dict if pred_dict[idx] is not None])
         nb_points = np.array([len(self.label_dict[idx]) for idx in self.label_dict if pred_dict[idx] is not None])

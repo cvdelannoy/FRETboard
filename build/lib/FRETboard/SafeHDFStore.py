@@ -18,7 +18,8 @@ class SafeHDFStore(HDFStore):
                 break
             except FileExistsError:
                 time.sleep(probe_interval)
-
+            except PermissionError:
+                time.sleep(probe_interval)
         HDFStore.__init__(self, *args, **kwargs)
 
     def __exit__(self, *args, **kwargs):
