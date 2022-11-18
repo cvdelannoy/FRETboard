@@ -20,7 +20,7 @@ setup(
                       'seaborn==0.11.2',
                       'scikit-learn==1.0.2',
                       'h5py==3.6.0',
-                      'tables==3.7.0',
+                      'tables==3.6.1',
                       'psutil==5.9.0'
                       ],
     classifiers=[
