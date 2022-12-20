@@ -16,12 +16,12 @@ License-File: LICENSE
 
 [![DOI](https://zenodo.org/badge/213605221.svg)](https://zenodo.org/badge/latestdoi/213605221)
 
-FRETboard helps you train algorithms for the detection of FÃ¶rster resonance energy transfer events in a 
+FRETboard helps you train algorithms for the detection of Förster resonance energy transfer events in a 
 (semi-)supervised manner.
 
 ## Running
 FRETboard is available as web application on [our server at Wageningen University](https://www.bioinformatics.nl/FRETboard/), or can be installed on your own 
-Linux or MacOS system using pip:
+Windows, Linux or MacOS system using pip:
 
 ```
 pip install git+https://github.com/cvdelannoy/FRETboard.git
@@ -89,7 +89,7 @@ two other FRET states must be present in your data.
 
 ##### Filtering options
 Stringency of the DBSCAN background intensity filter is controlled by the tunable parameter `epsilon`, 
-which is defined as the maximum distance between a clusterâ€™s core point and distant points of 
+which is defined as the maximum distance between a cluster’s core point and distant points of 
 the same cluster. The preset value of 15 typically works well, but if too much is subtracted
 this can be set to a lower value. 
 
@@ -109,19 +109,17 @@ intervals (CIs) on the transition rates when generating a report.
 ## Accepted data format
 The following data formats are accepted:
 
-| Format      | Description                                                                                                                                                                                   | Extension |
-|-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------|
-| plain text  | Three tab-separated columns: time (s), donor intensity, acceptor intensity.  No header.                                                                                                       | .dat      |
-| binary      | 16-bits, only equal-duration traces. First three numbers are trace duration,  any (unused placeholder), number of traces. Time step size and ALEX/non-ALEX must be set in the `settings` tab. | .traces   |
-| photon-HDF5 | As defined [here](https://photon-hdf5.readthedocs.io/). Donor and acceptor pixel ID should be stored as `spectral_ch1` and `spectral_ch2`. Each `photon_data` group is treated as a separate trace. | .hdf5     |
-
+| Format      | Description                                                                                                                                                                                                          | Extension |
+|-------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------|
+| plain text  | Three tab-separated columns: time (s), donor intensity, acceptor intensity.  No header.                                                                                                                              | .dat      |
+| binary      | 16-bits, only equal-duration traces. First three numbers are trace duration,  any (unused placeholder), number of traces. Time step size and ALEX/non-ALEX must be set in the `settings` tab.                        | .traces   |
+| photon-HDF5 | As defined [here](https://photon-hdf5.readthedocs.io/). Donor and acceptor pixel ID should be stored as `spectral_ch1` and `spectral_ch2`. Each `photon_data` group is treated as a separate trace.                  | .hdf5     |
+| NetCDF-4    | Should contain at least `intensity` and `time`, where `intensity` is a 3D array of shape (number of traces, number of channels, trace duration), and the length of `time` matches the last dimension of `intensity`. | .nc       |
 Examples are stored in the data_format_examples directory. 
 
 ## Known issues
 - Please note that FRETboard cannot (yet) handle traces longer than 100k data points. This is mainly a 
 grahical issue, so we expect to be able to fix this rather soon.
-- Currently keystrokes to change the state slider and perform the next/train/delete actions only work in 
-server mode. 
 
 ## Setting up your own server
 The easiest way to set up your own FRETboard server would be to make use of the docker image. First start up the container in interactive mode:

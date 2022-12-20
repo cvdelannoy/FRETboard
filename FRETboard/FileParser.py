@@ -52,6 +52,8 @@ class FileParser(object):
                         self.parse_trace_file(fn, to_parse_dict[fn])
                     elif fn.endswith('.dat'):
                         self.parse_dat_file(fn, to_parse_dict[fn])
+                    elif fn.endswith('.nc'):
+                        self.parse_nc_file(fn, to_parse_dict[fn])
                     elif fn.endswith('.hdf5') or fn.endswith('h5'):
                         self.parse_photonhdf5(to_parse_dict[fn])
 
@@ -94,6 +96,24 @@ class FileParser(object):
             self.write_away_traces(self.dat_dict)
             self.dat_dict = dict()
 
+    def parse_nc_file(self, fn, fc):
+        fn_clean = Path(fn).stem
+        with io.BytesIO(fc) as fh:
+            with h5py.File(fh) as h5f:
+                intensity_array = np.array(h5f['intensity'])
+                time = np.array(h5f['time'])
+        chunk_lim = self.chunk_size = 1
+        out_dict = {}
+        for fi, f in enumerate(np.vsplit(intensity_array, intensity_array.shape[0])):
+            out_dict[f'{fn_clean}_{fi}.dat'] = get_tuple(np.row_stack((time, f.squeeze())),
+                                                         self.eps, self.l, self.d, self.gamma, False)
+            if fi >= chunk_lim:
+                self.write_away_traces(out_dict)
+                out_dict = {}
+                chunk_lim += self.chunk_size
+        if len(out_dict):
+            self.write_away_traces(out_dict)
+
     def parse_trace_file(self, fn, fc):
         self.nb_files -= 1
         # nb_frames, _, nb_traces = np.frombuffer(file_contents, dtype=np.int16, count=3)
@@ -109,8 +129,7 @@ class FileParser(object):
         traces_vec = traces_vec[:nb_points_expected]
         sampling_freq = 1.0 / self.framerate
         if self.alex:
-            # todo direct copy of procedure in matlab script
-            Data = traces_vec.reshape((nb_traces, nb_frames * 2), order='F')
+            Data = traces_vec.reshape((nb_traces, nb_frames * 2), order='F')  # CL: Direct copy of procedure in matlab script
             GRem = Data[np.arange(0, nb_traces, 2), :]
             REem = Data[np.arange(0, nb_traces, 2) + 1, :]
             GRexGRem = GRem[:, np.arange(0, GRem.shape[1], 2)]

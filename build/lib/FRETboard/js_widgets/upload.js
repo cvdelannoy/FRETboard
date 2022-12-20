@@ -14,9 +14,9 @@ function read_file(filename, idx) {
     // readAsDataURL represents the file's data as a base64 encoded string
     var re = /(?:\.([^.]+))?$/g;
     var ext = (re.exec(input.files[idx].name))[1];
-    if (ext === "dat" || ext === "traces" || ext === "hdf5" || ext === "h5" ){
+    if (ext === "dat" || ext === "traces" || ext === "hdf5" || ext === "h5" || ext === "nc" ){
         reader.readAsDataURL(filename);
-    } else{ alert(ext + " extension found, only .dat and .traces files accepted for now")}
+    } else{ alert(ext + " extension found, only .dat, .traces, .nc (netcdf) and .h5 (photonhdf) files accepted for now")}
 }
 
 function error_handler(evt) {
