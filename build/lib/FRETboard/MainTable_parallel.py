@@ -115,7 +115,7 @@ class MainTable(object):
             columns=[
                 'trace', 'eps', 'l', 'd', 'gamma', 'data_timestamp','logprob', 'mod_timestamp'
             ]).set_index('trace')
-        self.manual_table = df_empty(columns=['trace', 'is_labeled', 'is_junk'], dtypes=[str, np.bool, np.bool]).set_index('trace')
+        self.manual_table = df_empty(columns=['trace', 'is_labeled', 'is_junk'], dtypes=[str, bool, bool]).set_index('trace')
         with SafeHDFStore(self.traces_store_fn, 'a') as fh:
             fh.put('index_table', value=self.index_table, format='table', append=True)
 
