@@ -10,7 +10,7 @@ setup(
     packages=['FRETboard'],
     install_requires=['joblib==0.14.1',
                       'cython==0.29.20',
-                      'pandas==1.0.5',
+                      'pandas==1.5.2',
                       'statsmodels==0.13.2',
                       'pomegranate==0.13.4',
                       'bokeh==2.4.2',
@@ -20,7 +20,7 @@ setup(
                       'seaborn==0.11.2',
                       'scikit-learn==1.0.2',
                       'h5py==3.6.0',
-                      'tables==3.6.1',
+                      'tables==3.7.0',
                       'psutil==5.9.0'
                       ],
     classifiers=[
