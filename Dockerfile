@@ -3,7 +3,7 @@
 # - start up FRETboard: bokeh serve  /FRETboard/FRETboard --num-procs=1 --check-unused-sessions 1000 --port=5102 --address=0.0.0.0
 # - detach: ctrl-p --> ctrl-q
 
-FROM python:3.7
+FROM python:3.8
 
 MAINTAINER Carlos de Lannoy <carlos.delannoy@wur.nl>
 
