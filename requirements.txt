@@ -12,6 +12,5 @@ tabulate
 joblib==0.14.1
 jinja2
 pyyaml
-psutil
 h5py
 tables

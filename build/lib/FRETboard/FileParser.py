@@ -6,7 +6,6 @@ import warnings
 import pandas as pd
 import base64
 import h5py
-import psutil
 import io
 from FRETboard.H5Walker import H5Walker
 from FRETboard.helper_functions import get_tuple
