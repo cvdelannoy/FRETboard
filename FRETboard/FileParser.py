@@ -56,7 +56,7 @@ class FileParser(object):
                     elif fn.endswith('.hdf5') or fn.endswith('h5'):
                         self.parse_photonhdf5(to_parse_dict[fn])
 
-            # Check for traces requiring update to data
+            # Check for traces requiring update to data todo why was this necessary again?
             with SafeHDFStore(self.traces_store_fn, 'r') as fh:
                 if 'index_table' in fh:
                     index_table = fh.get('index_table')
@@ -104,14 +104,14 @@ class FileParser(object):
         chunk_lim = self.chunk_size = 1
         out_dict = {}
         for fi, f in enumerate(np.vsplit(intensity_array, intensity_array.shape[0])):
-            out_dict[f'{fn_clean}_{fi}.dat'] = get_tuple(np.row_stack((time, f.squeeze())),
+            out_dict[f'{fn}:trace_{fi}'] = get_tuple(np.row_stack((time, f.squeeze())),
                                                          self.eps, self.l, self.d, self.gamma, False)
             if fi >= chunk_lim:
-                self.write_away_traces(out_dict)
+                self.write_away_traces(out_dict, fc, fn)
                 out_dict = {}
                 chunk_lim += self.chunk_size
         if len(out_dict):
-            self.write_away_traces(out_dict)
+            self.write_away_traces(out_dict, fc, fn)
 
     def parse_trace_file(self, fn, fc):
         self.nb_files -= 1
@@ -186,12 +186,12 @@ class FileParser(object):
 
                 out_dict[f'{fn_base}_{pdn}'] = get_tuple(ft, self.eps, self.l, self.d, self.gamma, self.traceswitch)
                 if fi >= chunk_lim:
-                    self.write_away_traces(out_dict)
+                    self.write_away_traces(out_dict, file_contents)
                     out_dict = {}
                     chunk_lim += self.chunk_size
 
             if len(out_dict):
-                self.write_away_traces(out_dict)
+                self.write_away_traces(out_dict, file_contents)
 
 
     def update_filter_params(self, fh):
@@ -204,12 +204,17 @@ class FileParser(object):
                                  fh.attrs['l'], fh.attrs['d'], fh.attrs['gamma'],
                                  fh.attrs['eps'], fh.attrs['alex'], fh.attrs['traceswitch'])
 
-    def write_away_traces(self, out_dict):
+    def write_away_traces(self, out_dict, fc=None, fn=None):
         # note: mod_timestamp set to -1 to signify nan integer
         index_table = pd.DataFrame({'trace': list(out_dict),
                       'eps': self.eps, 'l': self.l, 'd': self.d, 'gamma': self.gamma, 'data_timestamp': self.data_timestamp,
                       'logprob': np.nan, 'mod_timestamp': -1}).set_index('trace')
         with SafeH5(self.traces_store_fn, 'a') as fh:
+            # store raw data
+            if fn is not None and fc is not None:
+                if 'raw/' + fn not in fh:
+                    fh['raw/' + fn] = fc
+            # store traces in FRETboard readable format
             for tk in out_dict:
                 if 'traces/' + tk in fh:
                     del fh['traces/' + tk]

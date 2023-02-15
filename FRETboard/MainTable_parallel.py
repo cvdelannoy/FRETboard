@@ -122,6 +122,7 @@ class MainTable(object):
         # make traces group
         with SafeH5(self.traces_store_fn, 'a') as fh:
             fh.create_group('traces')
+            fh.create_group('raw')
 
         # hdf5 file for transfer to file parser
         self.data_timestamp = numeric_timestamp()
@@ -140,6 +141,11 @@ class MainTable(object):
                              name='file_parser')
         fp_process.start()
         return fp_process
+
+    def get_raw(self, raw_fn):
+        with SafeH5(self.traces_store_fn, 'r') as fh:
+            raw_out = fh['raw/' + raw_fn][()]
+        return raw_out
 
     def get_trace(self, idx, await_labels=False):
         with SafeH5(self.traces_store_fn, 'r') as fh:
