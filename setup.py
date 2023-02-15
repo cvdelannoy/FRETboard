@@ -8,7 +8,7 @@ setup(
     name='FRET-board',
     version='0.0.4',
     packages=['FRETboard'],
-    install_requires=['joblib==0.14.1',
+    install_requires=['joblib==1.2.0',
                       'cython==0.29.20',
                       'pandas==1.5.2',
                       'statsmodels==0.13.2',
