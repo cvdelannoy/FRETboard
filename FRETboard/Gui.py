@@ -683,7 +683,13 @@ possible, and the error message below
         fc = self.data.get_raw(raw_fn)
         with io.BytesIO(fc) as fh:
             with h5py.File(fh, 'w') as h5f:
-                h5f['FRETboard_classification'] = [td[tdi].predicted.to_numpy() for tdi in td]
+                if 'FRETboard_classification' in h5f:
+                    del h5f['FRETboard_classification']
+                h5f['FRETboard_classification'] = [td[tdi].predicted.to_numpy().astype(int) for tdi in td]
+                h5f['FRETboard_classification'].make_scale()
+                h5f['FRETboard_classification'].attrs['datetime'] = str(datetime.now())
+                h5f['FRETboard_classification'].attrs['classifier'] = self.algo_select.value
+                h5f['FRETboard_classification'].attrs['nb_classes'] = self.num_states_slider.value
             _ = fh.seek(0)
             with open(f'{tfh.name}/{raw_fn}', 'wb') as fh_out:
                 fh_out.write(fh.read())
