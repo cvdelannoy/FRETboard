@@ -7,6 +7,7 @@ Author: Carlos de Lannoy
 Author-email: carlos.delannoy@wur.nl
 License: MIT
 Keywords: FRET Forster resonance energy transfer supervised machine learning
+Platform: UNKNOWN
 Classifier: Programming Language :: Python :: 3
 Classifier: License :: OSI Approved :: MIT License
 Requires-Python: >=3.7
@@ -140,3 +141,4 @@ if you think your implementation may be useful to others! Of course, contributor
 
 ---
 with &hearts; from Wageningen University
+

@@ -285,6 +285,14 @@ def get_tuple(fc, eps, l, d, gamma, traceswitch):
                           E_FRET, E_FRET_sd, i_sum, i_sum_sd, correlation_coefficient])
 
 
+def split_trace_dict_on_source(td):
+    origin_list = [t.split(':')[0] if len(t.split(':')) > 1 else 'txt' for t in td]
+    out_dict = {f: {} for f in set(origin_list)}
+    for o, t in zip(origin_list, td):
+        out_dict[o][t] = td[t]
+    return out_dict
+
+
 def get_edge_labels(labels, buffer_size):
     """
     Encode transitions between differing states X and Y as strings of shape 'eX_Y'

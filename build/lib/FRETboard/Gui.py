@@ -1,3 +1,4 @@
+import io
 import os
 import sys
 import tempfile
@@ -8,6 +9,7 @@ import pandas as pd
 import yaml
 import importlib
 # import imp
+import h5py
 import traceback
 from multiprocessing import Process
 import threading
@@ -43,7 +45,7 @@ from FRETboard.FretReport import FretReport
 from FRETboard.MainTable_parallel import MainTable
 from FRETboard.OneshotHmm import OneshotHmm
 
-from FRETboard.helper_functions import get_tuple, colnames_alex, colnames, get_ssfret_dist
+from FRETboard.helper_functions import get_tuple, colnames_alex, colnames, get_ssfret_dist, split_trace_dict_on_source
 
 
 line_opts = dict(line_width=1)
@@ -677,25 +679,43 @@ possible, and the error message below
         self.ssfret_source.data['ssfret_text'] = [ssdf.to_csv(header=True, index=True, sep='\t')]
         self.ssfret_holder.text += ' '
 
+    def write_nc(self, td, raw_fn, tfh):
+        fc = self.data.get_raw(raw_fn)
+        with io.BytesIO(fc) as fh:
+            with h5py.File(fh, 'w') as h5f:
+                h5f['FRETboard_classification'] = [td[tdi].predicted.to_numpy() for tdi in td]
+            _ = fh.seek(0)
+            with open(f'{tfh.name}/{raw_fn}', 'wb') as fh_out:
+                fh_out.write(fh.read())
+
+    def write_dats(self, td, tfh):
+        for fn in td:
+            if fn in self.data.label_dict:
+                labels = self.data.label_dict[fn].astype(int) + 1
+                sm_test = self.data.label_dict[fn]
+            else:
+                labels = [None] * len(td[fn])
+                sm_test = td[fn].predicted
+            sm_bool = [True for sm in self.saveme_checkboxes.active if sm in sm_test]
+            if not any(sm_bool): continue
+            td[fn].loc[:, 'label'] = labels
+            td[fn].loc[:, 'predicted'] = td[fn].predicted.astype(int) + 1  # change to 1-based integers todo: set to integer upstream someday
+            td[fn].to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
 
     def generate_dats(self):
         if not self.prediction_complete():
             self.notify('Please wait for prediction to finish before downloading labeled data...')
             return
         trace_dict = self.data.get_trace_dict()
+        split_trace_dict = split_trace_dict_on_source(trace_dict)   # sort trace_dict keys on raw source
         tfh = tempfile.TemporaryDirectory()
-        for fn in trace_dict:
-            if fn in self.data.label_dict:
-                labels = self.data.label_dict[fn].astype(int) + 1
-                sm_test = self.data.label_dict[fn]
+        for raw_fn in split_trace_dict:
+            if raw_fn.endswith('.nc'):
+                self.write_nc(split_trace_dict[raw_fn], raw_fn, tfh)
+            elif raw_fn == 'txt':
+                self.write_dats(split_trace_dict[raw_fn], tfh)
             else:
-                labels = [None] * len(trace_dict[fn])
-                sm_test = trace_dict[fn].predicted
-            sm_bool = [True for sm in self.saveme_checkboxes.active if sm in sm_test]
-            if not any(sm_bool): continue
-            trace_dict[fn].loc[:, 'label'] = labels
-            trace_dict[fn].loc[:, 'predicted'] = trace_dict[fn].predicted.astype(int) + 1  # change to 1-based integers todo: set to integer upstream someday
-            trace_dict[fn].to_csv(f'{tfh.name}/{fn}', sep='\t', na_rep='NA', index=False)
+                raise ValueError(f'exporting traces not supported for file {raw_fn}')  # should not happen
         zip_dir = tempfile.TemporaryDirectory()
         zip_fn = shutil.make_archive(f'{zip_dir.name}/dat_files', 'zip', tfh.name)
         with open(zip_fn, 'rb') as f:
