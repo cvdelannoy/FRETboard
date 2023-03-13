@@ -686,7 +686,13 @@ possible, and the error message below
                 if 'FRETboard_classification' in h5f:
                     del h5f['FRETboard_classification']
                 h5f['FRETboard_classification'] = [td[tdi].predicted.to_numpy().astype(int) for tdi in td]
-                h5f['FRETboard_classification'].make_scale()
+                try:
+                    h5f['FRETboard_classification'].dims[0].attach_scale(h5f['molecule'])
+                    h5f['FRETboard_classification'].dims[1].attach_scale(h5f['frame'])
+                except:
+                    self.notify(f'Warning: could not attach scales for nc file {raw_fn}. This may happen e.g.'
+                                f'if you delete traces. nc output was still generated but reading may fail '
+                                f'for some applications.')
                 h5f['FRETboard_classification'].attrs['datetime'] = str(datetime.now())
                 h5f['FRETboard_classification'].attrs['classifier'] = self.algo_select.value
                 h5f['FRETboard_classification'].attrs['nb_classes'] = self.num_states_slider.value
