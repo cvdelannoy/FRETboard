@@ -1,10 +1,11 @@
-import os
+import os, shutil
 import fnmatch
 import warnings
 import numpy as np
-from joblib import Parallel, delayed, parallel_backend
+from joblib import Parallel, delayed
 from FRETboard.MainTable import MainTable
 from pathlib import Path
+
 
 def parse_input_path(location, pattern=None):
     """
@@ -32,6 +33,14 @@ def parse_input_path(location, pattern=None):
     return all_files
 
 
+def parse_output_path(out_dir, clean=False):
+    out_dir = os.path.abspath(out_dir) + '/'
+    if clean:
+        shutil.rmtree(out_dir, ignore_errors=True)
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    return out_dir
+
+
 def parallel_fn(f_array, fn_list, dt):
     for fi, f in enumerate(np.hsplit(f_array, f_array.shape[1])):
         f = f.squeeze()
@@ -57,5 +66,5 @@ def parse_trace_file(file_contents, fn, threads, eps):
     fn_chunks = np.array_split(fn_list, threads)
 
     df_list = Parallel(n_jobs=threads)(delayed(parallel_fn)(fc, fnc, MainTable([], eps))
-                   for fc, fnc in zip(file_chunks, fn_chunks))
+                                       for fc, fnc in zip(file_chunks, fn_chunks))
     return df_list
