@@ -157,7 +157,7 @@ class FRETboardAnalyzer(object):
         #     sampling_freq *= 2
         # else:
         #     file_contents = traces_vec.reshape((nb_colors, nb_samples, nb_frames), order='F')
-        fn_clean = os.path.splitext(fn)[0]
+        fn_clean = Path(fn).stem
         for fi, f in enumerate(np.hsplit(file_contents, file_contents.shape[1])):
             f = f.squeeze()
             time = np.arange(f.shape[1]) * sampling_freq
