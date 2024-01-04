@@ -104,7 +104,8 @@ class FileParser(object):
         chunk_lim = self.chunk_size = 1
         out_dict = {}
         for fi, f in enumerate(np.vsplit(intensity_array, intensity_array.shape[0])):
-            out_dict[f'{fn}:trace_{fi}'] = get_tuple(np.row_stack((time, f.squeeze())),
+            fi_str = str(fi).rjust(6, '0')
+            out_dict[f'{fn}:trace_{fi_str}'] = get_tuple(np.row_stack((time, f.squeeze())),
                                                          self.eps, self.l, self.d, self.gamma, False)
             if fi >= chunk_lim:
                 self.write_away_traces(out_dict, fc, fn)
