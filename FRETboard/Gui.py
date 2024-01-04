@@ -681,11 +681,12 @@ possible, and the error message below
 
     def write_nc(self, td, raw_fn, tfh):
         fc = self.data.get_raw(raw_fn)
+        td_list = sorted(list(td))
         with io.BytesIO(fc) as fh:
             with h5py.File(fh, 'w') as h5f:
                 if 'FRETboard_classification' in h5f:
                     del h5f['FRETboard_classification']
-                h5f['FRETboard_classification'] = [td[tdi].predicted.to_numpy().astype(int) for tdi in td]
+                h5f['FRETboard_classification'] = [td[tdi].predicted.to_numpy().astype(int) for tdi in td_list]
                 try:
                     h5f['FRETboard_classification'].dims[0].attach_scale(h5f['molecule'])
                     h5f['FRETboard_classification'].dims[1].attach_scale(h5f['frame'])
