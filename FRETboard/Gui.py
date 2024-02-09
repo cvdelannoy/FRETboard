@@ -686,7 +686,13 @@ possible, and the error message below
             with h5py.File(fh, 'w') as h5f:
                 if 'FRETboard_classification' in h5f:
                     del h5f['FRETboard_classification']
-                h5f['FRETboard_classification'] = [td[tdi].predicted.to_numpy().astype(int) for tdi in td_list]
+                trace_list = []
+                for tdi in td_list:
+                    if tdi in self.data.label_dict:
+                        trace_list.append(self.data.label_dict[tdi].astype(int))
+                    else:
+                        trace_list.append(td[tdi].predicted.to_numpy().astype(int))
+                h5f['FRETboard_classification'] = trace_list
                 try:
                     h5f['FRETboard_classification'].dims[0].attach_scale(h5f['molecule'])
                     h5f['FRETboard_classification'].dims[1].attach_scale(h5f['frame'])
