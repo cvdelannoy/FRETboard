@@ -12,7 +12,7 @@ setup(
                       'cython==0.29.20',
                       'pandas==1.5.2',
                       'statsmodels==0.13.2',
-                      'pomegranate==0.13.4',
+                      'pomegranate==0.14.9',
                       'bokeh==2.4.2',
                       'cached-property==1.5.1',
                       'tabulate==0.8.9',
