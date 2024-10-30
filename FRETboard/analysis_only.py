@@ -1,8 +1,9 @@
 import argparse, os, sys, pickle, shutil, h5py, importlib
-
+from tqdm import tqdm
 import multiprocessing as mp
 import numpy as np
 import pandas as pd
+from time import sleep
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -15,15 +16,29 @@ from FRETboard.Gui import algo_dict, algo_inv_dict
 from FRETboard.helper_functions import get_tuple, colnames, colnames_alex
 from FRETboard.MainTable_dummy import MainTable
 
-def classify_parallel(npy_list, mod_fn, out_dir):
+
+def classify(npy_list, mod_fn, out_dir):
     with open(mod_fn, 'rb') as fh:
         mod = pickle.load(fh)
-    for npy_fn in npy_list:
-        tup = np.load(npy_fn)
+
+    for npy_fn in tqdm(npy_list):
+        tup = np.load(npy_fn, allow_pickle=True)
         trace_df = pd.DataFrame(data=tup.T, columns=colnames_alex)
         pred, logprob = mod.predict(trace_df)
         trace_df.loc[:, 'predicted'] = pred
         trace_df.to_csv(f'{out_dir}{str(Path(npy_fn).stem)}.csv', sep='\t', na_rep='NA', index=False)
+
+
+def classify_parallel(npy_list, mod_fn, out_dir):
+    with open(mod_fn, 'rb') as fh:
+        mod = pickle.load(fh)
+    for npy_fn in npy_list:
+        tup = np.load(npy_fn, allow_pickle=True)
+        trace_df = pd.DataFrame(data=tup.T, columns=colnames_alex)
+        pred, logprob = mod.predict(trace_df)
+        trace_df.loc[:, 'predicted'] = pred
+        trace_df.to_csv(f'{out_dir}{str(Path(npy_fn).stem)}.csv', sep='\t', na_rep='NA', index=False)
+    print('core done')
 
 class FRETboardAnalyzer(object):
     def __init__(self, model_fn, nb_cores, l=0.0, d=0.0, gamma=1.0, eps=None):
@@ -61,6 +76,7 @@ class FRETboardAnalyzer(object):
         nc_list = []
         with TemporaryDirectory() as td:
             # 1. write away traces in unified format
+            print("loading traces...")
             for tr in traces:
                 if tr.endswith('.dat'):
                     self.parse_dat_file(tr, td)
@@ -71,17 +87,20 @@ class FRETboardAnalyzer(object):
                     self.parse_trace_file(tr, td)
                 else:
                     raise ValueError(f'Cannot (yet) parse file with extension {os.path.splitext(tr)[1]}')
-
-            # 2. Process in parallel
+            print('Done')
             npy_list = parse_input_path(td)
-            p_list = [mp.Process(target=classify_parallel, args=(sub_list, mod_fn, dat_dir))
-                      for sub_list in np.array_split(npy_list, self.nb_cores)]
-            for p in p_list:
-                p.start()
-            while True:
-                running = any(p.is_alive() for p in p_list)
-                if not running:
-                    break
+            classify(npy_list, mod_fn, out_dir)
+            # 2. Process in parallel
+            # npy_list = parse_input_path(td)
+            # p_list = [mp.Process(target=classify_parallel, args=(sub_list, mod_fn, dat_dir))
+            #           for sub_list in np.array_split(npy_list, self.nb_cores)]
+            # for p in p_list:
+            #     p.start()
+            # while True:
+            #     running = any(p.is_alive() for p in p_list)
+            #     if not running:
+            #         break
+        # sleep(120)
 
         # Join files in nc format if necessary
         if len(nc_list):
@@ -94,6 +113,7 @@ class FRETboardAnalyzer(object):
                 shutil.copyfile(nc_fn, nc_fn_out)
                 nc_dat_tuples = [pd.read_csv(ncd, sep='\t').predicted.to_numpy().astype(int) for ncd in nc_dat_list]
                 with h5py.File(nc_fn_out, 'r+') as h5f:
+                    if 'FRETboard_classification' in h5f: del h5f['FRETboard_classification']
                     h5f['FRETboard_classification'] = nc_dat_tuples
                     try:
                         h5f['FRETboard_classification'].dims[0].attach_scale(h5f['molecule'])
