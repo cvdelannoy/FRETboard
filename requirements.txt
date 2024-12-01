@@ -9,7 +9,7 @@ seaborn
 matplotlib
 cached-property
 tabulate
-joblib==0.14.1
+joblib==1.2.0
 jinja2
 pyyaml
 h5py
